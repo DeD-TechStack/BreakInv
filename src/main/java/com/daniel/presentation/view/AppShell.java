@@ -112,7 +112,7 @@ public final class AppShell {
         VBox brand = new VBox(4);
         brand.getStyleClass().add("sidebar-brand");
 
-        Label title = new Label("Investment Tracker");
+        Label title = new Label("BreakInv");
         title.getStyleClass().add("sidebar-title");
 
         Label sub = new Label("Controle de investimentos");

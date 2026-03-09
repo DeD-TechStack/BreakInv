@@ -205,7 +205,7 @@ public final class ConfiguracoesPage implements Page {
         Label title = new Label("SOBRE O APP");
         title.getStyleClass().add("card-title");
 
-        Label version = new Label("Investment Tracker v0.5.0");
+        Label version = new Label("BreakInv v0.5.0");
         version.getStyleClass().add("text-lg");
 
         Label apis = new Label("APIs utilizadas: Brapi (brapi.dev) para cotações da B3 e BCB (api.bcb.gov.br) para taxas oficiais.");

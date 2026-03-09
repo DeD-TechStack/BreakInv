@@ -7,7 +7,7 @@ import java.sql.Statement;
 
 public final class Database {
 
-    private static final String DEFAULT_URL = "jdbc:sqlite:investment_tracker.db";
+    private static final String DEFAULT_URL = "jdbc:sqlite:breakinv.db";
     private static String jdbcUrl = DEFAULT_URL;
     private static Connection connection = null;
 

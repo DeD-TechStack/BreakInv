@@ -130,7 +130,7 @@ public final class WelcomeOverlay {
         headerRow.setAlignment(Pos.CENTER_LEFT);
 
         // ── Title + subtitle ─────────────────────────────────────────────
-        Label title = new Label("Bem-vindo ao Investment Tracker");
+        Label title = new Label("Bem-vindo ao BreakInv");
         title.getStyleClass().add("welcome-title");
         title.setWrapText(true);
 

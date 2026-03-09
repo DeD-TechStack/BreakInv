@@ -4,9 +4,9 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.daniel</groupId>
-    <artifactId>investment-tracker</artifactId>
+    <artifactId>breakinv</artifactId>
     <version>0.4.0</version>
-    <name>Investment Tracker</name>
+    <name>BreakInv</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

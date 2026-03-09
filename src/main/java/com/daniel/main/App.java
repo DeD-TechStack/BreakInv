@@ -69,7 +69,7 @@ public class App extends Application {
 
         stage.setMinWidth(900);
         stage.setMinHeight(600);
-        stage.setTitle("Investment Tracker");
+        stage.setTitle("BreakInv");
         stage.setScene(scene);
         stage.show();
 
