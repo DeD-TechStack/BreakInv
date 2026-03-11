@@ -162,35 +162,54 @@ class ARCADiversificationStrategyTest {
 
     @Test
     void calculateSuggestionsByContribution_allZero_fullTarget() {
+        // User has nothing invested, wants to allocate 200k following a 50/50 profile
         Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
         profile.put(CategoryEnum.ACOES, 0.50);
         profile.put(CategoryEnum.RENDA_FIXA, 0.50);
 
         var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                200000L, Map.of(), profile
+                0L, 200000L, Map.of(), profile
         );
 
         var ac = findCategory(suggestions, CategoryEnum.ACOES);
         assertNotNull(ac);
-        assertEquals(100000L, ac.aporteNecessarioCents());
+        assertEquals(100000L, ac.aporteNecessarioCents()); // 50% of 200k aporte
     }
 
     @Test
     void calculateSuggestionsByContribution_noNegativeAportes() {
+        // RF is way above ideal; aporte should be distributed to other categories, never negative
         Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
         profile.put(CategoryEnum.RENDA_FIXA, 0.10);
 
         Map<CategoryEnum, Long> alloc = new EnumMap<>(CategoryEnum.class);
-        alloc.put(CategoryEnum.RENDA_FIXA, 90000L); // way above 10% of 100000
+        alloc.put(CategoryEnum.RENDA_FIXA, 90000L); // way above 10%
 
         var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                100000L, alloc, profile
+                100000L, 10000L, alloc, profile
         );
 
         suggestions.forEach(s ->
                 assertTrue(s.aporteNecessarioCents() >= 0,
                         "Negative aporte for " + s.category())
         );
+    }
+
+    @Test
+    void calculateSuggestionsByContribution_scalingWhenNeededExceedsAporte() {
+        // Current: 0 invested. Aporte = 1000. Profile 50/50. Total needed = 1000 → no scaling.
+        Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
+        profile.put(CategoryEnum.ACOES, 0.50);
+        profile.put(CategoryEnum.RENDA_FIXA, 0.50);
+
+        var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
+                50000L, 1000L, Map.of(), profile
+        );
+
+        // Sum of all aportes should not exceed aporteTotalCents
+        long totalAporte = suggestions.stream().mapToLong(s -> s.aporteNecessarioCents()).sum();
+        assertTrue(totalAporte <= 1000L + 1, // +1 for rounding tolerance
+                "Total aporte " + totalAporte + " exceeded available 1000");
     }
 
     // ===== Helper =====
