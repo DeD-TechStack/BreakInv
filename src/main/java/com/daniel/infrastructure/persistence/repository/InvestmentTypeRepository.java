@@ -17,8 +17,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
         String sql = "SELECT * FROM investment_type ORDER BY name";
 
         List<InvestmentType> list = new ArrayList<>();
-        try (Connection conn = Database.open();
-             Statement st = conn.createStatement();
+        try (Statement st = Database.open().createStatement();
              ResultSet rs = st.executeQuery(sql)) {
 
             while (rs.next()) {
@@ -34,8 +33,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
     public void save(String name) {
         String sql = "INSERT INTO investment_type (name) VALUES (?)";
 
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, name);
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -55,8 +53,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, name);
             ps.setString(2, category);
             ps.setString(3, liquidity);
@@ -100,8 +97,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
             WHERE id = ?
             """;
 
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, name);
             ps.setString(2, category);
             ps.setString(3, liquidity);
@@ -129,8 +125,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
     public void rename(int id, String newName) {
         String sql = "UPDATE investment_type SET name = ? WHERE id = ?";
 
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, newName);
             ps.setInt(2, id);
             ps.executeUpdate();
@@ -140,12 +135,11 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
     }
 
     @Override
-    public void delete(long id) {
+    public void delete(int id) {
         String sql = "DELETE FROM investment_type WHERE id = ?";
 
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, id);
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
+            ps.setInt(1, id);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Erro ao deletar: " + e.getMessage(), e);

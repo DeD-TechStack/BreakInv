@@ -83,8 +83,7 @@ public final class SnapshotRepository implements ISnapshotRepository {
     public void upsertInvestment(LocalDate date, long investmentTypeId, long valueCents, String note) {
         String normalizedNote = (note == null || note.isBlank()) ? null : note.trim();
 
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement("""
+        try (PreparedStatement ps = Database.open().prepareStatement("""
                 INSERT INTO investment_snapshots(date, investment_type_id, value_cents, note)
                 VALUES(?, ?, ?, ?)
                 ON CONFLICT(date, investment_type_id)
@@ -99,8 +98,7 @@ public final class SnapshotRepository implements ISnapshotRepository {
             RuntimeException wrapped = new RuntimeException("Failed to upsert investment snapshot", e);
             if (!looksLikeMissingColumn(wrapped)) throw wrapped;
 
-            try (Connection conn = Database.open();
-                 PreparedStatement ps = conn.prepareStatement("""
+            try (PreparedStatement ps = Database.open().prepareStatement("""
                     INSERT INTO investment_snapshots(date, investment_type_id, amount_cents, note)
                     VALUES(?, ?, ?, ?)
                     ON CONFLICT(date, investment_type_id)
@@ -141,8 +139,7 @@ public final class SnapshotRepository implements ISnapshotRepository {
     // ---------------- helpers ----------------
 
     private long querySingleLong(String sql, LocalDate date) {
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, date.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) return rs.getLong(1);
@@ -154,8 +151,7 @@ public final class SnapshotRepository implements ISnapshotRepository {
     }
 
     private void execUpdate(String sql, LocalDate date, long cents) {
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, date.toString());
             ps.setLong(2, cents);
             ps.executeUpdate();
@@ -166,8 +162,7 @@ public final class SnapshotRepository implements ISnapshotRepository {
 
     private Map<Long, Long> queryInvestmentMap(String sql, LocalDate date) {
         Map<Long, Long> out = new LinkedHashMap<>();
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, date.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -182,8 +177,7 @@ public final class SnapshotRepository implements ISnapshotRepository {
 
     private Map<String, Long> querySeries(String sql, long investmentTypeId) {
         Map<String, Long> out = new TreeMap<>();
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setLong(1, investmentTypeId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
