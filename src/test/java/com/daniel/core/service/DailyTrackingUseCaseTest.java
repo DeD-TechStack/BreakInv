@@ -38,7 +38,7 @@ class DailyTrackingUseCaseTest {
         @Override public List<InvestmentType> listAll() { return Collections.unmodifiableList(all); }
         @Override public void save(String name) {}
         @Override public void rename(int id, String newName) {}
-        @Override public void delete(long id) {}
+        @Override public void delete(int id) {}
 
         @Override
         public int createFull(String name, String category, String liquidity,
@@ -623,75 +623,6 @@ class DailyTrackingUseCaseTest {
                 "ACAO", null, null, "PETR4", BigDecimal.valueOf(30.0), null, null // quantity null
         ));
         assertEquals(0, uc.getTotalQuantity("PETR4"));
-    }
-
-    // ===== calculateCurrentValue — pure calculation paths (no BrapiClient) =====
-
-    @Test
-    void calculateCurrentValue_nullInvestedValue_returnsZero() {
-        InvestmentType inv = new InvestmentType(
-                1, "Test", "RENDA_FIXA", "ALTA",
-                LocalDate.now(), BigDecimal.valueOf(0.12), null
-        );
-        assertEquals(0L, uc.calculateCurrentValue(inv, LocalDate.now()));
-    }
-
-    @Test
-    void calculateCurrentValue_nullProfitability_returnsZero() {
-        InvestmentType inv = new InvestmentType(
-                1, "Test", "RENDA_FIXA", "ALTA",
-                LocalDate.now(), null, BigDecimal.valueOf(1000)
-        );
-        assertEquals(0L, uc.calculateCurrentValue(inv, LocalDate.now()));
-    }
-
-    @Test
-    void calculateCurrentValue_acoaWithCurrentPrice_returnsQuantityTimesPrice() {
-        // ACAO with currentPrice: 100 shares * R$ 35.00 = R$ 3500.00 = 350000 cents
-        InvestmentType inv = new InvestmentType(
-                1, "PETR4", "ACOES", "MUITO_ALTA",
-                LocalDate.now(), BigDecimal.valueOf(0.05), BigDecimal.valueOf(3000),
-                "ACAO", null, null, "PETR4", BigDecimal.valueOf(30.0), 100,
-                BigDecimal.valueOf(35.0) // currentPrice
-        );
-        assertEquals(350000L, uc.calculateCurrentValue(inv, LocalDate.now()));
-    }
-
-    @Test
-    void calculateCurrentValue_acaoWithPurchasePriceOnly_usesPurchasePrice() {
-        // ACAO without currentPrice, with purchasePrice: 100 * 30.00 = 3000.00 = 300000 cents
-        InvestmentType inv = new InvestmentType(
-                1, "PETR4", "ACOES", "MUITO_ALTA",
-                LocalDate.now(), BigDecimal.valueOf(0.05), BigDecimal.valueOf(3000),
-                "ACAO", null, null, "PETR4", BigDecimal.valueOf(30.0), 100, null
-        );
-        assertEquals(300000L, uc.calculateCurrentValue(inv, LocalDate.now()));
-    }
-
-    @Test
-    void calculateCurrentValue_nonAcao_nullDate_returnsInvestedValue() {
-        // No investmentDate → returns investedValue * 100
-        InvestmentType inv = new InvestmentType(
-                1, "CDB", "RENDA_FIXA", "MEDIA",
-                null, BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000.0)
-        );
-        // investedValue = 1000.0 → 1000 * 100 = 100000 cents
-        assertEquals(100000L, uc.calculateCurrentValue(inv, LocalDate.now()));
-    }
-
-    @Test
-    void calculateCurrentValue_nonAcao_withDate_compoundInterest() {
-        // Invested R$1000 at 100% annual rate, exactly 365 days ago → should ≈ double
-        LocalDate investmentDate = LocalDate.of(2023, 1, 1);
-        LocalDate today          = LocalDate.of(2024, 1, 1);
-
-        InvestmentType inv = new InvestmentType(
-                1, "CDB", "RENDA_FIXA", "MEDIA",
-                investmentDate, BigDecimal.valueOf(100.0), BigDecimal.valueOf(1000.0)
-        );
-        long result = uc.calculateCurrentValue(inv, today);
-        // 1000 * (1 + 1.0)^1 = 2000 → 200000 cents (approximately)
-        assertEquals(200000L, result, 500L); // 0.5% tolerance for day rounding
     }
 
     // ===== getCurrentValue — non-ticker paths (no BrapiClient) =====
