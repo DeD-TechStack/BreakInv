@@ -38,6 +38,7 @@ public final class DiversificationPage implements Page {
     private final ToggleButton rebalanceByTargetRadio = new ToggleButton("Patrimônio Alvo");
 
     private final TextField targetPatrimonyField = new TextField();
+    private final TextField aporteField = new TextField();
     private final VBox customInputsBox = new VBox(12);
     // customInputsBox gets .panel class in buildCustomInputs()
     private final Map<CategoryEnum, TextField> customPercentages = new HashMap<>();
@@ -123,6 +124,18 @@ public final class DiversificationPage implements Page {
         hint.getStyleClass().add("text-helper");
         hint.setWrapText(true);
 
+        // Aporte field (shown in contribution mode)
+        Label aporteLabel = new Label("Valor do Aporte:");
+        aporteLabel.getStyleClass().addAll("text-bold", "text-sm");
+        aporteField.setPromptText("R$ 0,00");
+        aporteField.setTextFormatter(Money.currencyFormatterEditable());
+        Money.applyFormatOnBlur(aporteField);
+
+        VBox aporteBox = new VBox(8, aporteLabel, aporteField);
+        aporteBox.setVisible(true);
+        aporteBox.setManaged(true);
+
+        // Target patrimony field (shown in target mode)
         Label targetLabel = new Label("Patrimônio Alvo:");
         targetLabel.getStyleClass().addAll("text-bold", "text-sm");
         targetPatrimonyField.setPromptText("R$ 100.000,00");
@@ -138,9 +151,11 @@ public final class DiversificationPage implements Page {
             boolean isTarget = newVal == rebalanceByTargetRadio;
             targetBox.setVisible(isTarget);
             targetBox.setManaged(isTarget);
+            aporteBox.setVisible(!isTarget);
+            aporteBox.setManaged(!isTarget);
             hint.setText(isTarget
                     ? "Calcula quanto aportar em cada categoria para atingir um patrimônio alvo"
-                    : "Recomenda aportes nas categorias abaixo do ideal (sem vender)");
+                    : "Informe o valor que pretende aportar e veja como distribuí-lo");
             refreshData();
         });
 
@@ -148,7 +163,7 @@ public final class DiversificationPage implements Page {
         recalculateBtn.getStyleClass().add("button");
         recalculateBtn.setOnAction(e -> refreshData());
 
-        box.getChildren().addAll(title, segCalc, hint, targetBox, recalculateBtn);
+        box.getChildren().addAll(title, segCalc, hint, aporteBox, targetBox, recalculateBtn);
         return box;
     }
 
@@ -512,9 +527,10 @@ public final class DiversificationPage implements Page {
                     currentPatrimony, targetPatrimony, currentData.valuesCents(), profile
             );
         } else {
+            long aporteCents = Money.textToCentsOrZero(aporteField.getText());
             referencePatrimony = currentPatrimony;
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                    currentPatrimony, currentData.valuesCents(), profile
+                    currentPatrimony, aporteCents, currentData.valuesCents(), profile
             );
         }
 
@@ -574,9 +590,10 @@ public final class DiversificationPage implements Page {
                         currentPatrimony, targetPatrimony, currentData.valuesCents(), customProfile
                 );
             } else {
+                long aporteCents = Money.textToCentsOrZero(aporteField.getText());
                 referencePatrimony = currentPatrimony;
                 suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                        currentPatrimony, currentData.valuesCents(), customProfile
+                        currentPatrimony, aporteCents, currentData.valuesCents(), customProfile
                 );
             }
 
@@ -642,51 +659,36 @@ public final class DiversificationPage implements Page {
 
     private static class AllocationRow {
         private final CategoryEnum category;
-        private final String value;
-        private final String percentage;
+        private final SimpleStringProperty categoryProp;
+        private final SimpleStringProperty valueProp;
+        private final SimpleStringProperty percentageProp;
 
         AllocationRow(CategoryEnum category, String value, String percentage) {
             this.category = category;
-            this.value = value;
-            this.percentage = percentage;
+            this.categoryProp = new SimpleStringProperty(category.getDisplayName());
+            this.valueProp = new SimpleStringProperty(value);
+            this.percentageProp = new SimpleStringProperty(percentage);
         }
 
-        public SimpleStringProperty categoryProperty() {
-            return new SimpleStringProperty(category.getDisplayName());
-        }
-
-        public SimpleStringProperty valueProperty() {
-            return new SimpleStringProperty(value);
-        }
-
-        public SimpleStringProperty percentageProperty() {
-            return new SimpleStringProperty(percentage);
-        }
-
-        public CategoryEnum getCategory() {
-            return category;
-        }
+        public SimpleStringProperty categoryProperty() { return categoryProp; }
+        public SimpleStringProperty valueProperty()    { return valueProp; }
+        public SimpleStringProperty percentageProperty(){ return percentageProp; }
+        public CategoryEnum getCategory() { return category; }
     }
 
     private static class SuggestionRow {
         private final CategoryEnum category;
-        private final String action;
+        private final SimpleStringProperty categoryProp;
+        private final SimpleStringProperty actionProp;
 
         SuggestionRow(CategoryEnum category, String action) {
             this.category = category;
-            this.action = action;
+            this.categoryProp = new SimpleStringProperty(category.getDisplayName());
+            this.actionProp   = new SimpleStringProperty(action);
         }
 
-        public SimpleStringProperty categoryProperty() {
-            return new SimpleStringProperty(category.getDisplayName());
-        }
-
-        public SimpleStringProperty actionProperty() {
-            return new SimpleStringProperty(action);
-        }
-
-        public CategoryEnum getCategory() {
-            return category;
-        }
+        public SimpleStringProperty categoryProperty() { return categoryProp; }
+        public SimpleStringProperty actionProperty()   { return actionProp; }
+        public CategoryEnum getCategory() { return category; }
     }
 }
