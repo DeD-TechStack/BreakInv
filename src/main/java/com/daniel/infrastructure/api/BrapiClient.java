@@ -81,11 +81,33 @@ public final class BrapiClient {
             double value
     ) {}
 
+    // ── Cache de cotações (TTL: 5 minutos) ──
+    private static final long STOCK_CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(5);
+
+    private record CachedStock(StockData data, long timestamp) {
+        boolean isExpired() {
+            return System.currentTimeMillis() - timestamp > STOCK_CACHE_TTL_MS;
+        }
+    }
+
+    private static final ConcurrentHashMap<String, CachedStock> stockCache = new ConcurrentHashMap<>();
+
     /**
-     * Busca dados de uma ação específica
+     * Busca dados de uma ação específica, usando cache de 5 minutos.
      */
     public static StockData fetchStockData(String ticker) throws IOException {
-        return fetchStockDataWithToken(ticker, getToken());
+        if (ticker != null && !ticker.isBlank()) {
+            String key = ticker.toUpperCase().trim();
+            CachedStock cached = stockCache.get(key);
+            if (cached != null && !cached.isExpired()) {
+                return cached.data();
+            }
+        }
+        StockData data = fetchStockDataWithToken(ticker, getToken());
+        if (ticker != null && !ticker.isBlank() && data.isValid()) {
+            stockCache.put(ticker.toUpperCase().trim(), new CachedStock(data, System.currentTimeMillis()));
+        }
+        return data;
     }
 
     public static StockData fetchStockDataWithToken(String ticker, String token) throws IOException {
