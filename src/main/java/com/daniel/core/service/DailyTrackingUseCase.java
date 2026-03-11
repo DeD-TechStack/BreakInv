@@ -1,24 +1,24 @@
 package com.daniel.core.service;
 
 import com.daniel.core.domain.entity.*;
-import com.daniel.core.domain.entity.Enums.InvestmentTypeEnum;
 import com.daniel.core.domain.repository.*;
+import com.daniel.core.util.MoneyFormat;
 
 import java.math.BigDecimal;
-import java.text.NumberFormat;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.logging.Logger;
 
 public final class DailyTrackingUseCase {
+
+    private static final Logger LOG = Logger.getLogger(DailyTrackingUseCase.class.getName());
 
     private final IFlowRepository flowRepo;
     private final IInvestmentTypeRepository typeRepo;
     private final ISnapshotRepository snapshotRepo;
     private final ITransactionRepository txRepo;
     private final IStockPriceProvider priceProvider;
-
-    private static final NumberFormat BRL = NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
 
     public DailyTrackingUseCase(
             IFlowRepository flowRepo,
@@ -118,50 +118,6 @@ public final class DailyTrackingUseCase {
 
     // ========== CÁLCULO AUTOMÁTICO DE VALOR ATUAL ==========
 
-    /**
-     * - Valor investido
-     * - Rentabilidade
-     * - Tempo desde a data de investimento
-     */
-    public long calculateCurrentValue(InvestmentType investment, LocalDate today) {
-        if (investment.investedValue() == null || investment.profitability() == null) {
-            return 0L;
-        }
-
-        // Para ações, usa preço atual * quantidade
-        if (investment.getInvestmentTypeEnum() == InvestmentTypeEnum.ACAO) {
-            if (investment.quantity() != null && investment.currentPrice() != null) {
-                long quantity = investment.quantity();
-                long priceCents = investment.currentPrice().multiply(BigDecimal.valueOf(100)).longValue();
-                return quantity * priceCents;
-            }
-
-            // Se não tem preço atual, usa preço de compra
-            if (investment.quantity() != null && investment.purchasePrice() != null) {
-                long quantity = investment.quantity();
-                long priceCents = investment.purchasePrice().multiply(BigDecimal.valueOf(100)).longValue();
-                return quantity * priceCents;
-            }
-        }
-
-        // Para outros tipos, calcula baseado em rentabilidade
-        if (investment.investmentDate() == null) {
-            // Se não tem data, retorna valor investido
-            return investment.investedValue().multiply(BigDecimal.valueOf(100)).longValue();
-        }
-
-        // Calcular tempo em anos
-        long daysSince = ChronoUnit.DAYS.between(investment.investmentDate(), today);
-        double years = daysSince / 365.0;
-
-        // Calcular valor com juros compostos
-        double rate = investment.profitability().doubleValue() / 100.0;
-        double investedValue = investment.investedValue().doubleValue();
-        double currentValue = investedValue * Math.pow(1 + rate, years);
-
-        return Math.round(currentValue * 100);
-    }
-
     public Map<Long, Long> getAllCurrentValues(LocalDate date) {
         List<InvestmentType> all = typeRepo.listAll();
         Map<Long, Long> values = new HashMap<>();
@@ -170,11 +126,10 @@ public final class DailyTrackingUseCase {
             long value = getCurrentValue(inv, date);
             values.put((long) inv.id(), value);
 
-            // DEBUG
             if (value > 0) {
-                System.out.println(String.format("📊 %s: %s", inv.name(), brl(value)));
+                LOG.fine(String.format("%s: %s", inv.name(), brl(value)));
             } else {
-                System.out.println(String.format("⚠️ %s: SEM VALOR", inv.name()));
+                LOG.fine(String.format("%s: SEM VALOR", inv.name()));
             }
         }
 
@@ -191,18 +146,15 @@ public final class DailyTrackingUseCase {
                     int quantity = inv.quantity();
                     long valueCents = (long)(currentPrice * quantity * 100);
 
-                    System.out.println(String.format(
-                            "✅ [AÇÃO] %s: Qtd=%d × R$%.2f = %s",
+                    LOG.fine(String.format(
+                            "[ACAO] %s: Qtd=%d x R$%.2f = %s",
                             inv.ticker(), quantity, currentPrice, brl(valueCents)
                     ));
 
                     return valueCents;
                 }
             } catch (Exception e) {
-                System.err.println(String.format(
-                        "⚠️ [BRAPI ERRO] %s: %s",
-                        inv.ticker(), e.getMessage()
-                ));
+                LOG.warning(String.format("[BRAPI] %s: %s", inv.ticker(), e.getMessage()));
             }
 
             // Fallback: usar preço de compra
@@ -210,8 +162,8 @@ public final class DailyTrackingUseCase {
             int quantity = inv.quantity();
             long valueCents = (long)(purchasePrice * quantity * 100);
 
-            System.out.println(String.format(
-                    "✅ [AÇÃO FALLBACK] %s: Qtd=%d × R$%.2f (preço compra) = %s",
+            LOG.fine(String.format(
+                    "[ACAO FALLBACK] %s: Qtd=%d x R$%.2f (preco compra) = %s",
                     inv.ticker(), quantity, purchasePrice, brl(valueCents)
             ));
 
@@ -234,8 +186,8 @@ public final class DailyTrackingUseCase {
             double monthlyRate = Math.pow(1 + annualRate, 1.0/12) - 1;
             double currentValue = investedCents * Math.pow(1 + monthlyRate, months);
 
-            System.out.println(String.format(
-                    "✅ [RENDA FIXA] %s: %s × %.2f%% a.a. × %d meses = %s",
+            LOG.fine(String.format(
+                    "[RENDA FIXA] %s: %s x %.2f%% a.a. x %d meses = %s",
                     inv.name(), brl(investedCents), annualRate * 100,
                     months, brl((long)currentValue)
             ));
@@ -248,18 +200,12 @@ public final class DailyTrackingUseCase {
                     .multiply(BigDecimal.valueOf(100))
                     .longValue();
 
-            System.out.println(String.format(
-                    "✅ [OUTRO] %s: %s (valor investido)",
-                    inv.name(), brl(valueCents)
-            ));
+            LOG.fine(String.format("[OUTRO] %s: %s (valor investido)", inv.name(), brl(valueCents)));
 
             return valueCents;
         }
 
-        System.err.println(String.format(
-                "❌ [SEM VALOR] %s: Não possui ticker, rentabilidade ou valor investido!",
-                inv.name()
-        ));
+        LOG.warning(String.format("[SEM VALOR] %s: sem ticker, rentabilidade ou valor investido", inv.name()));
 
         return 0L;
     }
@@ -270,7 +216,7 @@ public final class DailyTrackingUseCase {
                 .mapToLong(Long::longValue)
                 .sum();
 
-        System.out.println(String.format("💰 PATRIMÔNIO TOTAL: %s", brl(total)));
+        LOG.fine(String.format("PATRIMONIO TOTAL: %s", brl(total)));
         return total;
     }
 
@@ -295,10 +241,7 @@ public final class DailyTrackingUseCase {
 
         long profit = totalCurrent - totalInvested;
 
-        System.out.println(String.format(
-                "📊 LUCRO/PREJUÍZO: %s - %s = %s",
-                brl(totalCurrent), brl(totalInvested), brl(profit)
-        ));
+        LOG.fine(String.format("LUCRO/PREJUIZO: %s - %s = %s", brl(totalCurrent), brl(totalInvested), brl(profit)));
 
         return profit;
     }
@@ -454,18 +397,18 @@ public final class DailyTrackingUseCase {
         long totalInvCents = 0;
         long totalProfitCents = 0;
 
+        // Pre-index yesterday's values by id for O(1) lookup instead of O(n) inner loop
+        Map<Integer, Long> prevValueById = new HashMap<>();
+        for (var prevMap : prevEntry.investmentValuesCents().entrySet()) {
+            prevValueById.put(prevMap.getKey().id(),
+                    prevMap.getValue() != null ? prevMap.getValue() : 0L);
+        }
+
         for (var entryMap : entry.investmentValuesCents().entrySet()) {
             InvestmentType t = entryMap.getKey();
             long todayCents = entryMap.getValue() != null ? entryMap.getValue() : 0L;
 
-            // Buscar valor de ontem
-            long yesterdayCents = 0L;
-            for (var prevMap : prevEntry.investmentValuesCents().entrySet()) {
-                if (prevMap.getKey().id() == t.id()) {
-                    yesterdayCents = prevMap.getValue() != null ? prevMap.getValue() : 0L;
-                    break;
-                }
-            }
+            long yesterdayCents = prevValueById.getOrDefault(t.id(), 0L);
 
             investmentTodayCents.put((long) t.id(), todayCents);
 
@@ -547,10 +490,10 @@ public final class DailyTrackingUseCase {
     // ========== FORMATTING HELPERS ==========
 
     public String brl(long cents) {
-        return BRL.format(cents / 100.0);
+        return MoneyFormat.brl(cents);
     }
 
     public String brlAbs(long cents) {
-        return BRL.format(Math.abs(cents) / 100.0).replace("-", "");
+        return MoneyFormat.brlAbs(cents);
     }
 }
