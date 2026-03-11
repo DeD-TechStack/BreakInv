@@ -61,4 +61,6 @@ public final class Icons {
     public static FontIcon pieChart()   { return of(Feather.PIE_CHART,  "icon-muted"); }
     public static FontIcon trendingUp() { return of(Feather.TRENDING_UP,"icon-muted"); }
     public static FontIcon fileText()   { return of(Feather.FILE_TEXT,  "icon-muted"); }
+    public static FontIcon activity()   { return of(Feather.ACTIVITY,   "icon-muted"); }
+    public static FontIcon award()      { return of(Feather.AWARD,      "icon-muted"); }
 }
