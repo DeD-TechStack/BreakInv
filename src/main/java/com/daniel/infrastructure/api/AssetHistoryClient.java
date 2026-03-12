@@ -5,7 +5,9 @@ import com.google.gson.*;
 import okhttp3.*;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -107,29 +109,45 @@ public final class AssetHistoryClient {
 
             for (JsonElement el : hist) {
                 JsonObject entry = el.getAsJsonObject();
+
                 double close = getDoubleOrZero(entry, "close");
                 if (close <= 0) close = getDoubleOrZero(entry, "adjustedClose");
                 if (close <= 0) continue;
 
-                String dateStr = getStringOrNull(entry, "date");
-                if (dateStr == null) continue;
+                LocalDate date = parseEntryDate(entry);
+                if (date == null) continue;
 
-                try {
-                    // Brapi returns dates as "YYYY-MM-DD" or epoch seconds (number)
-                    LocalDate date;
-                    if (dateStr.contains("-")) {
-                        date = LocalDate.parse(dateStr.substring(0, 10), DATE_FMT);
-                    } else {
-                        long epoch = Long.parseLong(dateStr);
-                        date = LocalDate.ofEpochDay(epoch / 86400);
-                    }
-                    points.add(new HistoryPoint(date, close));
-                } catch (Exception ignored) {}
+                points.add(new HistoryPoint(date, close));
             }
         } catch (Exception e) {
             LOG.warning("[AssetHistory] parse error: " + e.getMessage());
         }
         return points;
+    }
+
+    private static LocalDate parseEntryDate(JsonObject entry) {
+        if (!entry.has("date") || entry.get("date").isJsonNull()) return null;
+        JsonElement dateEl = entry.get("date");
+        try {
+            if (dateEl.isJsonPrimitive()) {
+                JsonPrimitive prim = dateEl.getAsJsonPrimitive();
+                if (prim.isNumber()) {
+                    long raw = prim.getAsLong();
+                    // Epoch em ms (>1tri) → converter para segundos
+                    if (raw > 9_999_999_999L) raw = raw / 1000;
+                    return Instant.ofEpochSecond(raw)
+                            .atZone(ZoneId.of("America/Sao_Paulo"))
+                            .toLocalDate();
+                } else {
+                    // String: "2025-02-10" ou "2025-02-10T00:00:00.000Z"
+                    String s = prim.getAsString().substring(0, 10);
+                    return LocalDate.parse(s, DATE_FMT);
+                }
+            }
+        } catch (Exception e) {
+            LOG.fine("[AssetHistory] date parse failed: " + dateEl + " → " + e.getMessage());
+        }
+        return null;
     }
 
     private static String getStringOrNull(JsonObject obj, String key) {
