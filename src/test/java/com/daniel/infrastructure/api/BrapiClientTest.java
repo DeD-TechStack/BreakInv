@@ -162,7 +162,7 @@ class BrapiClientTest {
         return new BrapiClient.StockData(
                 "TEST", null, null,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                null, 0, error
+                null, 0, 0, error
         );
     }
 
@@ -170,7 +170,7 @@ class BrapiClientTest {
         return new BrapiClient.StockData(
                 ticker, null, null,
                 price, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                null, 0, error
+                null, 0, 0, error
         );
     }
 }
