@@ -471,6 +471,21 @@
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.28), 6, 0, 0, 2);
 }
 
+.chart-tooltip {
+    -fx-background-color: #1e293b;
+    -fx-background-radius: 6;
+    -fx-padding: 6 10 6 10;
+    -fx-border-color: #334155;
+    -fx-border-radius: 6;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 4, 0, 0, 2);
+}
+
+.chart-tooltip-label {
+    -fx-text-fill: #f1f5f9;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
 /* ── Level 3: Panel — embedded sub-section inside a card ── */
 .panel {
     -fx-background-color: derive(-color-bg-0, 4%);
