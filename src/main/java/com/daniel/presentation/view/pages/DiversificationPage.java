@@ -38,7 +38,6 @@ public final class DiversificationPage implements Page {
     private final ToggleButton rebalanceByTargetRadio = new ToggleButton("Patrimônio Alvo");
 
     private final TextField targetPatrimonyField = new TextField();
-    private final TextField aporteField = new TextField();
     private final VBox customInputsBox = new VBox(12);
     // customInputsBox gets .panel class in buildCustomInputs()
     private final Map<CategoryEnum, TextField> customPercentages = new HashMap<>();
@@ -48,6 +47,7 @@ public final class DiversificationPage implements Page {
     private final TableView<SuggestionRow> suggestionsTable = new TableView<>();
 
     private final Label totalPatrimonyLabel = new Label("—");
+    private final Label totalAporteLabel    = new Label();
 
     // Empty state — shown when no investments are registered
     private final VBox noInvestmentsPanel = buildNoInvestmentsPanel();
@@ -120,20 +120,9 @@ public final class DiversificationPage implements Page {
         HBox segCalc = new HBox(2, rebalanceByContributionRadio, rebalanceByTargetRadio);
         segCalc.getStyleClass().add("segmented");
 
-        Label hint = new Label("Recomenda aportes nas categorias abaixo do ideal (sem vender)");
+        Label hint = new Label("O sistema calcula automaticamente o aporte necessário para balancear sua carteira");
         hint.getStyleClass().add("text-helper");
         hint.setWrapText(true);
-
-        // Aporte field (shown in contribution mode)
-        Label aporteLabel = new Label("Valor do Aporte:");
-        aporteLabel.getStyleClass().addAll("text-bold", "text-sm");
-        aporteField.setPromptText("R$ 0,00");
-        aporteField.setTextFormatter(Money.currencyFormatterEditable());
-        Money.applyFormatOnBlur(aporteField);
-
-        VBox aporteBox = new VBox(8, aporteLabel, aporteField);
-        aporteBox.setVisible(true);
-        aporteBox.setManaged(true);
 
         // Target patrimony field (shown in target mode)
         Label targetLabel = new Label("Patrimônio Alvo:");
@@ -151,11 +140,9 @@ public final class DiversificationPage implements Page {
             boolean isTarget = newVal == rebalanceByTargetRadio;
             targetBox.setVisible(isTarget);
             targetBox.setManaged(isTarget);
-            aporteBox.setVisible(!isTarget);
-            aporteBox.setManaged(!isTarget);
             hint.setText(isTarget
                     ? "Calcula quanto aportar em cada categoria para atingir um patrimônio alvo"
-                    : "Informe o valor que pretende aportar e veja como distribuí-lo");
+                    : "O sistema calcula automaticamente o aporte necessário para balancear sua carteira");
             refreshData();
         });
 
@@ -163,7 +150,7 @@ public final class DiversificationPage implements Page {
         recalculateBtn.getStyleClass().add("button");
         recalculateBtn.setOnAction(e -> refreshData());
 
-        box.getChildren().addAll(title, segCalc, hint, aporteBox, targetBox, recalculateBtn);
+        box.getChildren().addAll(title, segCalc, hint, targetBox, recalculateBtn);
         return box;
     }
 
@@ -442,8 +429,9 @@ public final class DiversificationPage implements Page {
         suggPh.getStyleClass().add("text-helper");
         suggestionsTable.setPlaceholder(suggPh);
 
+        totalAporteLabel.getStyleClass().addAll("text-helper", "text-bold");
         VBox.setVgrow(suggestionsTable, Priority.ALWAYS);
-        box.getChildren().addAll(title, suggestionsTable);
+        box.getChildren().addAll(title, suggestionsTable, totalAporteLabel);
         return box;
     }
 
@@ -527,10 +515,9 @@ public final class DiversificationPage implements Page {
                     currentPatrimony, targetPatrimony, currentData.valuesCents(), profile
             );
         } else {
-            long aporteCents = Money.textToCentsOrZero(aporteField.getText());
             referencePatrimony = currentPatrimony;
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                    currentPatrimony, aporteCents, currentData.valuesCents(), profile
+                    currentPatrimony, currentData.valuesCents(), profile
             );
         }
 
@@ -558,6 +545,9 @@ public final class DiversificationPage implements Page {
         }
 
         suggestionsTable.setItems(suggestionRows);
+
+        long totalAporte = suggestions.stream().mapToLong(s -> s.aporteNecessarioCents()).sum();
+        totalAporteLabel.setText(totalAporte > 0 ? "Aporte total sugerido: " + daily.brl(totalAporte) : "");
     }
 
     private void updateCustomIdeal(long currentPatrimony, DiversificationData currentData) {
@@ -590,10 +580,9 @@ public final class DiversificationPage implements Page {
                         currentPatrimony, targetPatrimony, currentData.valuesCents(), customProfile
                 );
             } else {
-                long aporteCents = Money.textToCentsOrZero(aporteField.getText());
                 referencePatrimony = currentPatrimony;
                 suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                        currentPatrimony, aporteCents, currentData.valuesCents(), customProfile
+                        currentPatrimony, currentData.valuesCents(), customProfile
                 );
             }
 
@@ -621,6 +610,9 @@ public final class DiversificationPage implements Page {
             }
 
             suggestionsTable.setItems(suggestionRows);
+
+            long totalAporte = suggestions.stream().mapToLong(s -> s.aporteNecessarioCents()).sum();
+            totalAporteLabel.setText(totalAporte > 0 ? "Aporte total sugerido: " + daily.brl(totalAporte) : "");
 
         } catch (NumberFormatException e) {
             Label errPh2 = new Label("⚠️ Valores inválidos nas porcentagens");
