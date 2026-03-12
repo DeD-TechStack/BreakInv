@@ -13,7 +13,6 @@ public final class BrapiClient {
 
     private static final String BASE_URL = "https://brapi.dev/api";
     private static final String QUOTE_ENDPOINT = "/quote";
-    private static final String AVAILABLE_ENDPOINT = "/available";
 
     public static final String SETTINGS_KEY_TOKEN = "brapi_token";
 
@@ -50,6 +49,7 @@ public final class BrapiClient {
             double twoHundredDayAverage,
             String currency,
             double dividendYield,
+            double fiftyTwoWeekChange,
             String error
     ) {
         public boolean hasError() {
@@ -112,7 +112,7 @@ public final class BrapiClient {
 
     public static StockData fetchStockDataWithToken(String ticker, String token) throws IOException {
         if (ticker == null || ticker.isBlank()) {
-            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, "Ticker inválido");
+            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0, "Ticker inválido");
         }
 
         String url = appendToken(
@@ -126,7 +126,7 @@ public final class BrapiClient {
 
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
+                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
                         "Erro HTTP: " + response.code());
             }
 
@@ -135,12 +135,12 @@ public final class BrapiClient {
 
             if (root.has("error")) {
                 String errorMsg = root.get("error").getAsString();
-                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, errorMsg);
+                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0, errorMsg);
             }
 
             JsonArray results = root.getAsJsonArray("results");
             if (results == null || results.size() == 0) {
-                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
+                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
                         "Ação não encontrada");
             }
 
@@ -162,60 +162,63 @@ public final class BrapiClient {
                     getDoubleOrZero(stock, "twoHundredDayAverage"),
                     getStringOrNull(stock, "currency"),
                     getDoubleOrZero(stock, "dividendYield"),
+                    getDoubleOrZero(stock, "fiftyTwoWeekChange"),
                     null
             );
 
         } catch (JsonSyntaxException e) {
-            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
+            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
                     "Erro ao parsear JSON: " + e.getMessage());
         } catch (Exception e) {
-            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
+            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
                     "Erro: " + e.getMessage());
         }
     }
 
     /**
-     * Busca tickers por nome/código (autocomplete)
+     * Busca tickers por nome ou código via endpoint /quote/list?search=...
+     * Funciona sem token. Retorna até 8 sugestões com ticker + nome.
+     * Ex: "petrobras" → [{ticker:"PETR4", name:"PETROBRAS PN", type:"stock"}, ...]
      */
-    public static List<TickerSuggestion> searchTickers(String query) throws IOException {
+    public static List<TickerSuggestion> searchTickers(String query) {
         if (query == null || query.isBlank() || query.length() < 2) {
             return new ArrayList<>();
         }
-
-        String url = BASE_URL + AVAILABLE_ENDPOINT;
-
-        Request request = new Request.Builder()
-                .url(url)
-                .get()
-                .addHeader("User-Agent", "Investment-Tracker/1.0")
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                return new ArrayList<>();
-            }
-
-            String jsonResponse = response.body().string();
-            JsonObject root = gson.fromJson(jsonResponse, JsonObject.class);
-
-            List<TickerSuggestion> suggestions = new ArrayList<>();
-
-            if (root.has("stocks")) {
-                JsonArray stocks = root.getAsJsonArray("stocks");
-                for (JsonElement element : stocks) {
-                    String ticker = element.getAsString();
-                    if (ticker.toLowerCase().contains(query.toLowerCase())) {
-                        suggestions.add(new TickerSuggestion(ticker, ticker, "stock"));
+        try {
+            HttpUrl url = HttpUrl.parse(BASE_URL + "/quote/list")
+                    .newBuilder()
+                    .addQueryParameter("search", query.trim())
+                    .addQueryParameter("limit", "8")
+                    .build();
+            Request request = new Request.Builder()
+                    .url(url)
+                    .get()
+                    .addHeader("User-Agent", "Investment-Tracker/1.0")
+                    .build();
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful() || response.body() == null) return new ArrayList<>();
+                String body = response.body().string();
+                JsonObject root = gson.fromJson(body, JsonObject.class);
+                List<TickerSuggestion> results = new ArrayList<>();
+                JsonArray stocks = root.has("stocks") ? root.getAsJsonArray("stocks") : null;
+                if (stocks != null) {
+                    for (JsonElement el : stocks) {
+                        JsonObject obj = el.getAsJsonObject();
+                        String ticker = getStringOrNull(obj, "stock");
+                        if (ticker == null) ticker = getStringOrNull(obj, "ticker");
+                        String name = getStringOrNull(obj, "name");
+                        String type = getStringOrNull(obj, "type");
+                        if (ticker != null) {
+                            results.add(new TickerSuggestion(ticker, name, type));
+                        }
                     }
                 }
+                return results;
             }
-
-            // Limitar a 10 sugestões
-            return suggestions.size() > 10 ? suggestions.subList(0, 10) : suggestions;
-
         } catch (Exception e) {
             return new ArrayList<>();
         }
+
     }
 
     /**
@@ -240,70 +243,81 @@ public final class BrapiClient {
     }
 
     /**
-     * Busca múltiplas ações de uma vez
+     * Busca múltiplas ações de uma vez.
+     * Com token: requisição em lote (mais rápido).
+     * Sem token ou em caso de falha: fallback individual por ticker.
      */
     public static Map<String, StockData> fetchMultipleStocks(String tickers) throws IOException {
-        Map<String, StockData> results = new HashMap<>();
+        Map<String, StockData> results = fetchMultipleStocksBatch(tickers, getToken());
 
-        String url = appendToken(
-                BASE_URL + QUOTE_ENDPOINT + "/" + tickers.toUpperCase().trim(), getToken());
-
-        Request request = new Request.Builder()
-                .url(url)
-                .get()
-                .addHeader("User-Agent", "Investment-Tracker/1.0")
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                return results;
-            }
-
-            String jsonResponse = response.body().string();
-            JsonObject root = gson.fromJson(jsonResponse, JsonObject.class);
-
-            if (root.has("error")) {
-                return results;
-            }
-
-            JsonArray resultsArray = root.getAsJsonArray("results");
-            if (resultsArray == null) {
-                return results;
-            }
-
-            for (JsonElement element : resultsArray) {
-                JsonObject stock = element.getAsJsonObject();
-                String symbol = getStringOrNull(stock, "symbol");
-
-                if (symbol != null) {
-                    StockData data = new StockData(
-                            symbol,
-                            getStringOrNull(stock, "logourl"),
-                            getStringOrNull(stock, "longName"),
-                            getDoubleOrZero(stock, "regularMarketPrice"),
-                            getDoubleOrZero(stock, "regularMarketChange"),
-                            getDoubleOrZero(stock, "regularMarketChangePercent"),
-                            getDoubleOrZero(stock, "regularMarketOpen"),
-                            getDoubleOrZero(stock, "regularMarketDayHigh"),
-                            getDoubleOrZero(stock, "regularMarketDayLow"),
-                            getLongOrZero(stock, "regularMarketVolume"),
-                            getDoubleOrZero(stock, "fiftyTwoWeekHigh"),
-                            getDoubleOrZero(stock, "fiftyTwoWeekLow"),
-                            getDoubleOrZero(stock, "twoHundredDayAverage"),
-                            getStringOrNull(stock, "currency"),
-                            getDoubleOrZero(stock, "dividendYield"),
-                            null
-                    );
-
-                    results.put(symbol, data);
+        // Fallback individual quando o lote falha (sem token ou erro da API)
+        if (results.isEmpty()) {
+            for (String ticker : tickers.split(",")) {
+                String t = ticker.trim().toUpperCase();
+                if (t.isBlank()) continue;
+                try {
+                    StockData data = fetchStockData(t);
+                    if (data.isValid()) results.put(t, data);
+                } catch (Exception ignored) {
+                    // continua para o próximo ticker
                 }
             }
-
-            return results;
-
-        } catch (Exception e) {
-            return results;
         }
+        return results;
+    }
+
+    /** Busca em lote — uma requisição para todos os tickers. */
+    private static Map<String, StockData> fetchMultipleStocksBatch(String tickers, String token) {
+        Map<String, StockData> results = new HashMap<>();
+        try {
+            String base = BASE_URL + QUOTE_ENDPOINT + "/" + tickers.toUpperCase().trim() + "?fundamental=true";
+            String url  = appendToken(base, token);
+
+            Request request = new Request.Builder()
+                    .url(url)
+                    .get()
+                    .addHeader("User-Agent", "Investment-Tracker/1.0")
+                    .build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful() || response.body() == null) return results;
+
+                JsonObject root = gson.fromJson(response.body().string(), JsonObject.class);
+                if (root.has("error")) return results;
+
+                JsonArray resultsArray = root.getAsJsonArray("results");
+                if (resultsArray == null) return results;
+
+                for (JsonElement element : resultsArray) {
+                    JsonObject stock = element.getAsJsonObject();
+                    String symbol = getStringOrNull(stock, "symbol");
+                    if (symbol != null) {
+                        results.put(symbol, new StockData(
+                                symbol,
+                                getStringOrNull(stock, "logourl"),
+                                getStringOrNull(stock, "longName"),
+                                getDoubleOrZero(stock, "regularMarketPrice"),
+                                getDoubleOrZero(stock, "regularMarketChange"),
+                                getDoubleOrZero(stock, "regularMarketChangePercent"),
+                                getDoubleOrZero(stock, "regularMarketOpen"),
+                                getDoubleOrZero(stock, "regularMarketDayHigh"),
+                                getDoubleOrZero(stock, "regularMarketDayLow"),
+                                getLongOrZero(stock, "regularMarketVolume"),
+                                getDoubleOrZero(stock, "fiftyTwoWeekHigh"),
+                                getDoubleOrZero(stock, "fiftyTwoWeekLow"),
+                                getDoubleOrZero(stock, "twoHundredDayAverage"),
+                                getStringOrNull(stock, "currency"),
+                                getDoubleOrZero(stock, "dividendYield"),
+                                getDoubleOrZero(stock, "fiftyTwoWeekChange"),
+                                null
+                        ));
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // retorna o que tiver
+        }
+        return results;
     }
 
     // Helper methods
