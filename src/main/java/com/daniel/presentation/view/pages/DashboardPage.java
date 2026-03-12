@@ -98,7 +98,7 @@ public final class DashboardPage implements Page {
 
         comparisonChart.setTitle(null);
         comparisonChart.setMinHeight(300);
-        comparisonChart.setCreateSymbols(false);
+        comparisonChart.setCreateSymbols(true);
         comparisonChart.setAnimated(false);
 
         root.getStyleClass().add("page-root");
@@ -357,6 +357,15 @@ public final class DashboardPage implements Page {
                     iv.valueCents / 100.0
             );
             series.getData().add(bar);
+
+            final String tipName  = iv.name;
+            final long   tipCents = iv.valueCents;
+            bar.nodeProperty().addListener((obs, o, node) -> {
+                if (node == null) return;
+                Tooltip tp = new Tooltip(tipName + "\n" + daily.brl(tipCents));
+                tp.setShowDelay(javafx.util.Duration.millis(0));
+                Tooltip.install(node, tp);
+            });
         }
 
         waterfallChart.getData().add(series);
@@ -408,7 +417,7 @@ public final class DashboardPage implements Page {
         compXAxis.setLabel(null);
         compYAxis.setLabel("Rentabilidade %");
         comparisonChart.setAnimated(false);
-        comparisonChart.setCreateSymbols(false);
+        comparisonChart.setCreateSymbols(true);
         comparisonChart.setLegendVisible(true);
         comparisonChart.setMinHeight(300);
 
@@ -602,6 +611,39 @@ public final class DashboardPage implements Page {
         }
 
         comparisonChart.getData().addAll(carteiraSeries, benchSeries);
+
+        // Instalar tooltips nos nós do gráfico de comparação
+        for (XYChart.Data<String, Number> d : carteiraSeries.getData()) {
+            final String lbl = d.getXValue() + "\nCarteira: "
+                    + String.format("%.2f%%", d.getYValue().doubleValue()).replace('.', ',');
+            d.nodeProperty().addListener((obs, o, node) -> {
+                if (node == null) return;
+                node.setStyle("-fx-background-color: rgba(34,197,94,0.8); -fx-padding: 4; -fx-background-radius: 50;");
+                Tooltip tp = new Tooltip(lbl);
+                tp.setShowDelay(javafx.util.Duration.millis(0));
+                Tooltip.install(node, tp);
+                node.setOnMouseEntered(e -> node.setStyle(
+                        "-fx-background-color: rgba(34,197,94,1.0); -fx-padding: 5; -fx-background-radius: 50;"));
+                node.setOnMouseExited(e -> node.setStyle(
+                        "-fx-background-color: rgba(34,197,94,0.8); -fx-padding: 4; -fx-background-radius: 50;"));
+            });
+        }
+        for (XYChart.Data<String, Number> d : benchSeries.getData()) {
+            final String serName = benchSeries.getName();
+            final String lbl = d.getXValue() + "\n" + serName + ": "
+                    + String.format("%.2f%%", d.getYValue().doubleValue()).replace('.', ',');
+            d.nodeProperty().addListener((obs, o, node) -> {
+                if (node == null) return;
+                node.setStyle("-fx-background-color: rgba(59,130,246,0.8); -fx-padding: 4; -fx-background-radius: 50;");
+                Tooltip tp = new Tooltip(lbl);
+                tp.setShowDelay(javafx.util.Duration.millis(0));
+                Tooltip.install(node, tp);
+                node.setOnMouseEntered(e -> node.setStyle(
+                        "-fx-background-color: rgba(59,130,246,1.0); -fx-padding: 5; -fx-background-radius: 50;"));
+                node.setOnMouseExited(e -> node.setStyle(
+                        "-fx-background-color: rgba(59,130,246,0.8); -fx-padding: 4; -fx-background-radius: 50;"));
+            });
+        }
 
         // Atualizar métricas laterais — sincronizadas com o período do filtro selecionado
         double rentCartPeriodo  = (Math.pow(1 + taxaMensalCarteira, (double) totalMeses) - 1) * 100;
