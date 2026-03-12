@@ -44,7 +44,6 @@ public final class Icons {
     public static FontIcon search()     { return of(Feather.SEARCH, "icon-muted"); }
     public static FontIcon close()      { return of(Feather.X, "icon-muted"); }
     public static FontIcon filter()     { return of(Feather.SLIDERS, "icon-muted"); }
-    public static FontIcon chart()      { return of(Feather.BAR_CHART_2, "icon-muted"); }
     public static FontIcon dollar()     { return of(Feather.DOLLAR_SIGN, "icon-accent"); }
     public static FontIcon calendar()   { return of(Feather.CALENDAR, "icon-muted"); }
     public static FontIcon chevronDown(){ return of(Feather.CHEVRON_DOWN, "icon-muted"); }
