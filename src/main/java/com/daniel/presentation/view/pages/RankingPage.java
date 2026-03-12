@@ -1,9 +1,6 @@
 package com.daniel.presentation.view.pages;
 
 import com.daniel.core.service.DailyTrackingUseCase;
-import com.daniel.infrastructure.api.AssetHistoryClient;
-import com.daniel.infrastructure.api.AssetHistoryClient.HistoryPoint;
-import com.daniel.infrastructure.api.AssetHistoryClient.Period;
 import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.infrastructure.api.BrapiClient.StockData;
 import com.daniel.presentation.view.PageHeader;
@@ -20,19 +17,17 @@ import javafx.scene.chart.*;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.logging.Logger;
 
 /**
  * Página de Ranking de Ativos da carteira por variação diária.
- * Exibe top altas e top baixas, com gráfico de linha comparativo (até 3 tickers).
+ * Exibe top altas e top baixas, com BarChart de variação % dos ativos selecionados.
  */
 public final class RankingPage implements Page {
 
     private static final Logger LOG = Logger.getLogger(RankingPage.class.getName());
-    private static final DateTimeFormatter DMY = DateTimeFormatter.ofPattern("dd/MM");
 
     private final DailyTrackingUseCase daily;
 
@@ -43,13 +38,10 @@ public final class RankingPage implements Page {
     private final TableView<RankingRow> gainersTable = new TableView<>();
     private final TableView<RankingRow> losersTable  = new TableView<>();
 
-    // ── Comparison chart ──
-    private final CategoryAxis xAxis = new CategoryAxis();
-    private final NumberAxis   yAxis = new NumberAxis();
-    private final LineChart<String, Number> lineChart = new LineChart<>(xAxis, yAxis);
-
-    // ── Period toggle ──
-    private final ToggleGroup periodGroup = new ToggleGroup();
+    // ── Bar chart ──
+    private final CategoryAxis barXAxis = new CategoryAxis();
+    private final NumberAxis   barYAxis = new NumberAxis();
+    private final BarChart<String, Number> barChart = new BarChart<>(barXAxis, barYAxis);
 
     // ── State ──
     private Map<String, StockData> lastStocks = new HashMap<>();
@@ -67,16 +59,15 @@ public final class RankingPage implements Page {
         PageHeader header = new PageHeader("Ranking de Ativos",
                 "Desempenho diário dos ativos da sua carteira");
 
-        HBox toolbar = buildPeriodToolbar();
-        emptyState   = buildEmptyState();
-        contentArea  = buildContent();
+        emptyState  = buildEmptyState();
+        contentArea = buildContent();
 
         loadingLabel = new Label("Carregando dados...");
         loadingLabel.getStyleClass().add("section-subtitle");
         loadingLabel.setVisible(false);
         loadingLabel.setManaged(false);
 
-        root.getChildren().addAll(header, toolbar, loadingLabel, emptyState, contentArea);
+        root.getChildren().addAll(header, loadingLabel, emptyState, contentArea);
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
@@ -95,27 +86,6 @@ public final class RankingPage implements Page {
 
     // ── Build helpers ──────────────────────────────────────────────────────
 
-    private HBox buildPeriodToolbar() {
-        HBox bar = new HBox(6);
-        bar.setAlignment(Pos.CENTER_LEFT);
-        bar.getStyleClass().add("toolbar");
-
-        for (Period p : Period.values()) {
-            ToggleButton tb = new ToggleButton(p.label);
-            tb.setToggleGroup(periodGroup);
-            tb.setUserData(p);
-            tb.getStyleClass().add("period-btn");
-            bar.getChildren().add(tb);
-            if (p == Period.ONE_WEEK) tb.setSelected(true);
-        }
-
-        periodGroup.selectedToggleProperty().addListener((obs, old, now) -> {
-            if (now != null && !lastStocks.isEmpty()) reloadChart();
-        });
-
-        return bar;
-    }
-
     private VBox buildEmptyState() {
         VBox box = new VBox(8);
         box.getStyleClass().add("empty-state");
@@ -132,34 +102,37 @@ public final class RankingPage implements Page {
 
     private VBox buildContent() {
         // ── Gainers / Losers tables side by side ──
-        VBox gainersCard = buildTableCard("📈 Maiores Altas", gainersTable, true);
-        VBox losersCard  = buildTableCard("📉 Maiores Baixas", losersTable, false);
+        VBox gainersCard = buildTableCard("📈 Maiores Altas", gainersTable);
+        VBox losersCard  = buildTableCard("📉 Maiores Baixas", losersTable);
 
         HBox tables = new HBox(16, gainersCard, losersCard);
         HBox.setHgrow(gainersCard, Priority.ALWAYS);
         HBox.setHgrow(losersCard,  Priority.ALWAYS);
 
-        // ── Line chart card ──
-        lineChart.setAnimated(true);
-        lineChart.setCreateSymbols(false);
-        lineChart.setMinHeight(300);
-        lineChart.getStyleClass().add("line-chart");
-        xAxis.setTickLabelRotation(-30);
+        // ── Bar chart card ──
+        barChart.setAnimated(false);
+        barChart.setLegendVisible(false);
+        barChart.setMinHeight(280);
+        barChart.setCategoryGap(30);
+        barChart.getStyleClass().add("bar-chart");
+        barYAxis.setAutoRanging(false);
+        barYAxis.setLabel("Variação (%)");
+        barXAxis.setLabel("");
 
-        Label chartTitle = new Label("COMPARATIVO DE PREÇOS");
+        Label chartTitle = new Label("VARIAÇÃO DO DIA (%)");
         chartTitle.getStyleClass().add("card-title");
 
-        Label chartHint = new Label("Selecione até 3 linhas na tabela para comparar");
+        Label chartHint = new Label("Clique em ativos para filtrar (clique novamente para desmarcar)");
         chartHint.getStyleClass().add("section-subtitle");
 
-        VBox chartCard = new VBox(8, chartTitle, chartHint, lineChart);
+        VBox chartCard = new VBox(8, chartTitle, chartHint, barChart);
         chartCard.getStyleClass().add("chart-card");
 
         VBox content = new VBox(16, tables, chartCard);
         return content;
     }
 
-    private VBox buildTableCard(String title, TableView<RankingRow> table, boolean gainers) {
+    private VBox buildTableCard(String title, TableView<RankingRow> table) {
         Label lbl = new Label(title);
         lbl.getStyleClass().add("card-title");
 
@@ -199,9 +172,21 @@ public final class RankingPage implements Page {
         table.setPrefHeight(220);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
-        table.getSelectionModel().selectedItemProperty().addListener((obs, old, now) -> {
-            onTableSelectionChanged();
+        // Toggle deselect: clicar em linha já selecionada → desmarcar
+        table.setRowFactory(tv -> {
+            TableRow<RankingRow> row = new TableRow<>();
+            row.setOnMouseClicked(event -> {
+                if (!row.isEmpty() && row.isSelected()) {
+                    tv.getSelectionModel().clearSelection(
+                            tv.getItems().indexOf(row.getItem()));
+                    event.consume();
+                }
+            });
+            return row;
         });
+
+        table.getSelectionModel().selectedItemProperty().addListener((obs, old, now) ->
+                onTableSelectionChanged());
 
         VBox card = new VBox(8, lbl, table);
         card.getStyleClass().add("card");
@@ -239,7 +224,10 @@ public final class RankingPage implements Page {
             loadingLabel.setManaged(false);
 
             if (stocks.isEmpty()) {
-                ToastHost.showError("Não foi possível carregar cotações. Verifique o token Brapi.");
+                String hint = BrapiClient.hasToken()
+                        ? "Erro ao carregar cotações. Verifique sua conexão."
+                        : "Configure um token BRAPI em Configurações para carregar cotações.";
+                ToastHost.showWarn(hint);
                 setContentVisible(false);
                 return;
             }
@@ -252,16 +240,12 @@ public final class RankingPage implements Page {
     }
 
     private void populateTables(Map<String, StockData> stocks) {
-        List<RankingRow> gainers = RankingViewModel.topGainers(stocks);
-        List<RankingRow> losers  = RankingViewModel.topLosers(stocks);
-
-        gainersTable.setItems(FXCollections.observableArrayList(gainers));
-        losersTable.setItems(FXCollections.observableArrayList(losers));
+        gainersTable.setItems(FXCollections.observableArrayList(RankingViewModel.topGainers(stocks)));
+        losersTable.setItems(FXCollections.observableArrayList(RankingViewModel.topLosers(stocks)));
     }
 
     private void onTableSelectionChanged() {
         Set<String> selected = new LinkedHashSet<>();
-
         for (RankingRow row : gainersTable.getSelectionModel().getSelectedItems()) {
             if (row != null) selected.add(row.ticker());
         }
@@ -269,61 +253,67 @@ public final class RankingPage implements Page {
             if (row != null) selected.add(row.ticker());
         }
 
-        if (!selected.isEmpty()) {
-            List<String> tickers = new ArrayList<>(selected);
-            if (tickers.size() > 3) tickers = tickers.subList(0, 3);
-            reloadChartForTickers(tickers);
+        if (selected.isEmpty()) {
+            reloadChart(); // sem seleção → mostrar todos
+        } else {
+            reloadChartForTickers(new ArrayList<>(selected));
         }
     }
 
     private void reloadChart() {
-        // Default: show top 3 gainers
-        List<String> tickers = gainersTable.getItems().stream()
-                .limit(3)
-                .map(RankingRow::ticker)
-                .toList();
-
-        if (tickers.isEmpty()) {
-            tickers = losersTable.getItems().stream()
-                    .limit(3)
-                    .map(RankingRow::ticker)
-                    .toList();
-        }
-
+        // Mostrar todos os ativos carregados (limite visual de 8)
+        List<String> tickers = new ArrayList<>(lastStocks.keySet());
+        if (tickers.size() > 8) tickers = tickers.subList(0, 8);
         reloadChartForTickers(tickers);
     }
 
     private void reloadChartForTickers(List<String> tickers) {
+        barChart.getData().clear();
+
         if (tickers.isEmpty()) return;
 
-        Toggle selected = periodGroup.getSelectedToggle();
-        Period period = selected != null ? (Period) selected.getUserData() : Period.ONE_WEEK;
-
-        lineChart.getData().clear();
+        List<Double> pcts = new ArrayList<>();
 
         for (String ticker : tickers) {
-            CompletableFuture.supplyAsync(() -> {
-                try {
-                    return Map.entry(ticker, AssetHistoryClient.fetchHistory(ticker, period));
-                } catch (Exception e) {
-                    return Map.entry(ticker, List.<HistoryPoint>of());
-                }
-            }).thenAccept(entry -> Platform.runLater(() ->
-                    addChartSeries(entry.getKey(), entry.getValue())));
+            StockData d = lastStocks.get(ticker);
+            if (d == null || !d.isValid()) continue;
+
+            double pct = d.regularMarketChangePercent();
+            pcts.add(pct);
+
+            XYChart.Series<String, Number> series = new XYChart.Series<>();
+            series.setName(ticker);
+            XYChart.Data<String, Number> bar = new XYChart.Data<>(ticker, pct);
+            series.getData().add(bar);
+            barChart.getData().add(series);
+
+            // Colorir e instalar tooltip após o nó ser criado
+            final double finalPct = pct;
+            final StockData finalD  = d;
+            bar.nodeProperty().addListener((obs, o, node) -> {
+                if (node == null) return;
+                String color = finalPct >= 0 ? "#22c55e" : "#ef4444";
+                node.setStyle("-fx-bar-fill: " + color + ";");
+                String sign = finalPct >= 0 ? "+" : "";
+                Tooltip tp = new Tooltip(
+                        ticker + "\n"
+                        + String.format("%s%.2f%%", sign, finalPct).replace('.', ',') + "\n"
+                        + String.format("R$ %.2f", finalD.regularMarketPrice()).replace('.', ',')
+                );
+                tp.setShowDelay(javafx.util.Duration.millis(0));
+                Tooltip.install(node, tp);
+            });
         }
-    }
 
-    private void addChartSeries(String ticker, List<HistoryPoint> points) {
-        if (points.isEmpty()) return;
-
-        XYChart.Series<String, Number> series = new XYChart.Series<>();
-        series.setName(ticker);
-
-        for (HistoryPoint p : points) {
-            series.getData().add(new XYChart.Data<>(DMY.format(p.date()), p.close()));
+        // Ajustar eixo Y ao range de variações com padding
+        if (!pcts.isEmpty()) {
+            double min = pcts.stream().mapToDouble(Double::doubleValue).min().orElse(-5);
+            double max = pcts.stream().mapToDouble(Double::doubleValue).max().orElse(5);
+            double pad = Math.max(Math.abs(max - min) * 0.2, 0.5);
+            barYAxis.setLowerBound(Math.min(min - pad, -0.1));
+            barYAxis.setUpperBound(max + pad);
+            barYAxis.setTickUnit(Math.max((max - min + 2 * pad) / 5.0, 0.1));
         }
-
-        lineChart.getData().add(series);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
