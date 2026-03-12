@@ -161,24 +161,33 @@ class ARCADiversificationStrategyTest {
     // ===== calculateSuggestionsByContribution =====
 
     @Test
-    void calculateSuggestionsByContribution_allZero_fullTarget() {
-        // User has nothing invested, wants to allocate 200k following a 50/50 profile
+    void calculateSuggestionsByContribution_unbalanced_suggestsDeficitCategory() {
+        // 100k patrimony: all in RF, nothing in ACOES. Profile 50/50.
+        // Should suggest aportar ~75k in ACOES and 0 in RF.
         Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
         profile.put(CategoryEnum.ACOES, 0.50);
         profile.put(CategoryEnum.RENDA_FIXA, 0.50);
 
+        Map<CategoryEnum, Long> alloc = new EnumMap<>(CategoryEnum.class);
+        alloc.put(CategoryEnum.RENDA_FIXA, 100000L);
+        alloc.put(CategoryEnum.ACOES, 0L);
+
         var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                0L, 200000L, Map.of(), profile
+                100000L, alloc, profile
         );
 
-        var ac = findCategory(suggestions, CategoryEnum.ACOES);
+        var rf  = findCategory(suggestions, CategoryEnum.RENDA_FIXA);
+        var ac  = findCategory(suggestions, CategoryEnum.ACOES);
+        assertNotNull(rf);
         assertNotNull(ac);
-        assertEquals(100000L, ac.aporteNecessarioCents()); // 50% of 200k aporte
+        assertEquals(0L, rf.aporteNecessarioCents()); // RF is above ideal, no aporte
+        assertTrue(ac.aporteNecessarioCents() > 0,    // ACOES is below ideal, needs aporte
+                "Expected positive aporte for ACOES");
     }
 
     @Test
     void calculateSuggestionsByContribution_noNegativeAportes() {
-        // RF is way above ideal; aporte should be distributed to other categories, never negative
+        // RF is way above ideal; aportes should never be negative
         Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
         profile.put(CategoryEnum.RENDA_FIXA, 0.10);
 
@@ -186,7 +195,7 @@ class ARCADiversificationStrategyTest {
         alloc.put(CategoryEnum.RENDA_FIXA, 90000L); // way above 10%
 
         var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                100000L, 10000L, alloc, profile
+                100000L, alloc, profile
         );
 
         suggestions.forEach(s ->
@@ -196,20 +205,22 @@ class ARCADiversificationStrategyTest {
     }
 
     @Test
-    void calculateSuggestionsByContribution_scalingWhenNeededExceedsAporte() {
-        // Current: 0 invested. Aporte = 1000. Profile 50/50. Total needed = 1000 → no scaling.
+    void calculateSuggestionsByContribution_balanced_yieldsZeroAportes() {
+        // Portfolio perfectly balanced 50/50 with 100k → no aportes needed
         Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
         profile.put(CategoryEnum.ACOES, 0.50);
         profile.put(CategoryEnum.RENDA_FIXA, 0.50);
 
+        Map<CategoryEnum, Long> alloc = new EnumMap<>(CategoryEnum.class);
+        alloc.put(CategoryEnum.ACOES, 50000L);
+        alloc.put(CategoryEnum.RENDA_FIXA, 50000L);
+
         var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                50000L, 1000L, Map.of(), profile
+                100000L, alloc, profile
         );
 
-        // Sum of all aportes should not exceed aporteTotalCents
         long totalAporte = suggestions.stream().mapToLong(s -> s.aporteNecessarioCents()).sum();
-        assertTrue(totalAporte <= 1000L + 1, // +1 for rounding tolerance
-                "Total aporte " + totalAporte + " exceeded available 1000");
+        assertEquals(0L, totalAporte, "Balanced portfolio should need no aporte");
     }
 
     // ===== Helper =====
