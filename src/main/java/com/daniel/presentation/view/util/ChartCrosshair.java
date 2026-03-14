@@ -1,0 +1,248 @@
+package com.daniel.presentation.view.util;
+
+import javafx.geometry.Bounds;
+import javafx.geometry.Point2D;
+import javafx.scene.Node;
+import javafx.scene.chart.*;
+import javafx.scene.control.Label;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.Pane;
+import javafx.scene.layout.StackPane;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
+import javafx.scene.shape.Line;
+
+import java.util.List;
+import java.util.function.Function;
+
+/**
+ * Adiciona crosshair interativo (linhas guia verticais + horizontais) a gráficos JavaFX.
+ *
+ * <p>Uso básico:</p>
+ * <pre>
+ *   StackPane wrapper = ChartCrosshair.install(myLineChart,
+ *       y -> String.format("%.2f%%", y));
+ *   vbox.getChildren().add(wrapper);
+ * </pre>
+ *
+ * Para gráficos com eixo X numérico (ex: Simulação):
+ * <pre>
+ *   StackPane wrapper = ChartCrosshair.installNumeric(projectionChart,
+ *       x -> "Mês " + x,
+ *       y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+ * </pre>
+ */
+public final class ChartCrosshair {
+
+    private ChartCrosshair() {}
+
+    // ── API pública ──────────────────────────────────────────────────────────
+
+    /**
+     * Instala crosshair em chart com CategoryAxis (eixo X de Strings — datas, nomes, etc.).
+     * Séries com nome {@code "—"} são ignoradas (usadas como linhas de referência).
+     *
+     * @param chart      gráfico alvo (LineChart, AreaChart)
+     * @param yFormatter formata o valor do eixo Y para o tooltip
+     * @return StackPane contendo o chart + overlay de crosshair
+     */
+    public static StackPane install(XYChart<String, Number> chart,
+                                    Function<Double, String> yFormatter) {
+        CrosshairOverlay o = new CrosshairOverlay();
+
+        StackPane container = new StackPane(chart, o.pane);
+
+        container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
+            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
+
+            Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
+            Bounds  pb = plotBg.getBoundsInLocal();
+            if (outOfPlot(mp, pb)) { o.hide(); return; }
+
+            CategoryAxis xAxis = (CategoryAxis) chart.getXAxis();
+            NumberAxis   yAxis = (NumberAxis)   chart.getYAxis();
+
+            List<String> cats = xAxis.getCategories();
+            if (cats == null || cats.isEmpty()) { o.hide(); return; }
+
+            // Categoria mais próxima ao cursor
+            String nearest  = null;
+            double minDist  = Double.MAX_VALUE;
+            for (String cat : cats) {
+                double dist = Math.abs(xAxis.getDisplayPosition(cat) - mp.getX());
+                if (dist < minDist) { minDist = dist; nearest = cat; }
+            }
+            if (nearest == null) { o.hide(); return; }
+
+            // Converte coordenadas do plot para o container
+            Bounds plotInScene     = plotBg.localToScene(pb);
+            Bounds plotInContainer = container.sceneToLocal(plotInScene);
+            double plotX = plotInContainer.getMinX() + xAxis.getDisplayPosition(nearest);
+
+            // Coleta valores de todas as séries (ignora série de referência "—")
+            final String cat = nearest;
+            Double firstY = null;
+            StringBuilder sb = new StringBuilder(cat);
+            for (XYChart.Series<String, Number> ser : chart.getData()) {
+                if ("—".equals(ser.getName())) continue;
+                for (XYChart.Data<String, Number> d : ser.getData()) {
+                    if (cat.equals(d.getXValue())) {
+                        double yVal = d.getYValue().doubleValue();
+                        if (firstY == null) firstY = yVal;
+                        sb.append("\n").append(ser.getName()).append(": ")
+                          .append(yFormatter.apply(yVal));
+                        break;
+                    }
+                }
+            }
+            if (firstY == null) { o.hide(); return; }
+
+            double plotY = plotInContainer.getMinY() + yAxis.getDisplayPosition(firstY);
+            o.update(plotX, plotY, plotInContainer, sb.toString(), container.getWidth(), container.getHeight());
+        });
+
+        container.addEventFilter(MouseEvent.MOUSE_EXITED, e -> o.hide());
+        return container;
+    }
+
+    /**
+     * Instala crosshair em chart com NumberAxis em ambos os eixos (ex: gráfico de Simulação).
+     *
+     * @param chart      gráfico alvo (LineChart<Number,Number>)
+     * @param xFormatter formata o valor do eixo X (ex: "Mês 12")
+     * @param yFormatter formata o valor do eixo Y (ex: "R$ 1.200,00")
+     * @return StackPane contendo o chart + overlay de crosshair
+     */
+    public static StackPane installNumeric(XYChart<Number, Number> chart,
+                                           Function<Integer, String> xFormatter,
+                                           Function<Double, String> yFormatter) {
+        CrosshairOverlay o = new CrosshairOverlay();
+
+        StackPane container = new StackPane(chart, o.pane);
+
+        container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
+            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
+
+            Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
+            Bounds  pb = plotBg.getBoundsInLocal();
+            if (outOfPlot(mp, pb)) { o.hide(); return; }
+
+            NumberAxis xAxis = (NumberAxis) chart.getXAxis();
+            NumberAxis yAxis = (NumberAxis) chart.getYAxis();
+
+            int xVal = (int) Math.round(xAxis.getValueForDisplay(mp.getX()).doubleValue());
+
+            Bounds plotInScene     = plotBg.localToScene(pb);
+            Bounds plotInContainer = container.sceneToLocal(plotInScene);
+            double plotX = plotInContainer.getMinX() + xAxis.getDisplayPosition(xVal);
+
+            Double firstY = null;
+            StringBuilder sb = new StringBuilder(xFormatter.apply(xVal));
+            for (XYChart.Series<Number, Number> ser : chart.getData()) {
+                for (XYChart.Data<Number, Number> d : ser.getData()) {
+                    if (d.getXValue().intValue() == xVal) {
+                        double yVal = d.getYValue().doubleValue();
+                        if (firstY == null) firstY = yVal;
+                        sb.append("\n").append(ser.getName()).append(": ")
+                          .append(yFormatter.apply(yVal));
+                        break;
+                    }
+                }
+            }
+            if (firstY == null) { o.hide(); return; }
+
+            double plotY = plotInContainer.getMinY() + yAxis.getDisplayPosition(firstY);
+            o.update(plotX, plotY, plotInContainer, sb.toString(), container.getWidth(), container.getHeight());
+        });
+
+        container.addEventFilter(MouseEvent.MOUSE_EXITED, e -> o.hide());
+        return container;
+    }
+
+    // ── Overlay interno ──────────────────────────────────────────────────────
+
+    private static final class CrosshairOverlay {
+        final Pane   pane = new Pane();
+        final Line   vLine;
+        final Line   hLine;
+        final Circle dot;
+        final Label  tip;
+
+        CrosshairOverlay() {
+            vLine = makeLine();
+            hLine = makeLine();
+            dot   = makeDot();
+            tip   = makeTip();
+            pane.setMouseTransparent(true);
+            pane.setPickOnBounds(false);
+            pane.getChildren().addAll(hLine, vLine, dot, tip);
+        }
+
+        void update(double plotX, double plotY, Bounds plot,
+                    String text, double containerW, double containerH) {
+            vLine.setStartX(plotX); vLine.setEndX(plotX);
+            vLine.setStartY(plot.getMinY()); vLine.setEndY(plot.getMaxY());
+
+            hLine.setStartX(plot.getMinX()); hLine.setEndX(plot.getMaxX());
+            hLine.setStartY(plotY); hLine.setEndY(plotY);
+
+            dot.setCenterX(plotX);
+            dot.setCenterY(plotY);
+
+            tip.setText(text);
+
+            // Posiciona o tooltip evitando overflow
+            double tipX = plotX + 14;
+            double tipY = plotY - 50;
+            if (tipX + 140 > containerW) tipX = plotX - 150;
+            if (tipY < plot.getMinY())   tipY = plotY + 8;
+            tip.setLayoutX(tipX);
+            tip.setLayoutY(tipY);
+
+            vLine.setVisible(true); hLine.setVisible(true);
+            dot.setVisible(true); tip.setVisible(true);
+        }
+
+        void hide() {
+            vLine.setVisible(false); hLine.setVisible(false);
+            dot.setVisible(false); tip.setVisible(false);
+        }
+    }
+
+    // ── Fábricas ─────────────────────────────────────────────────────────────
+
+    private static Line makeLine() {
+        Line l = new Line();
+        l.setStroke(Color.rgb(180, 190, 210, 0.40));
+        l.setStrokeWidth(1.0);
+        l.getStrokeDashArray().addAll(4.0, 3.0);
+        l.setMouseTransparent(true);
+        l.setVisible(false);
+        return l;
+    }
+
+    private static Circle makeDot() {
+        Circle c = new Circle(4.5);
+        c.setFill(Color.rgb(226, 232, 240, 0.95));
+        c.setStroke(Color.WHITE);
+        c.setStrokeWidth(1.5);
+        c.setMouseTransparent(true);
+        c.setVisible(false);
+        return c;
+    }
+
+    private static Label makeTip() {
+        Label l = new Label();
+        l.getStyleClass().add("crosshair-tooltip");
+        l.setMouseTransparent(true);
+        l.setVisible(false);
+        return l;
+    }
+
+    private static boolean outOfPlot(Point2D mp, Bounds pb) {
+        return mp.getX() < 0 || mp.getX() > pb.getWidth()
+            || mp.getY() < 0 || mp.getY() > pb.getHeight();
+    }
+}
