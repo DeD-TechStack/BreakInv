@@ -61,6 +61,26 @@ public final class BrapiClient {
         }
     }
 
+    // ── Resultado tipado para fetch com causa de falha ──────────────────────
+
+    public enum FailureReason { NO_TOKEN, HTTP_ERROR, PARSE_ERROR, NETWORK_ERROR, NOT_FOUND }
+
+    public sealed interface FetchResult<T> permits FetchResult.Success, FetchResult.Failure {
+        record Success<T>(T data) implements FetchResult<T> {}
+        record Failure<T>(FailureReason reason, String detail) implements FetchResult<T> {}
+
+        default boolean isSuccess() { return this instanceof Success<?>; }
+
+        @SuppressWarnings("unchecked")
+        default T getData() { return ((Success<T>) this).data(); }
+
+        @SuppressWarnings("unchecked")
+        default FailureReason getReason() { return ((Failure<T>) this).reason(); }
+
+        @SuppressWarnings("unchecked")
+        default String getDetail() { return ((Failure<T>) this).detail(); }
+    }
+
     // Sugestão de ticker
     public record TickerSuggestion(
             String ticker,
@@ -108,6 +128,62 @@ public final class BrapiClient {
             stockCache.put(ticker.toUpperCase().trim(), new CachedStock(data, System.currentTimeMillis()));
         }
         return data;
+    }
+
+    /**
+     * Versão segura de fetchStockData que nunca lança exceção.
+     * Retorna FetchResult.Success ou FetchResult.Failure com o motivo classificado.
+     */
+    public static FetchResult<StockData> fetchStockDataSafe(String ticker) {
+        if (ticker == null || ticker.isBlank()) {
+            return new FetchResult.Failure<>(FailureReason.NOT_FOUND, "Ticker inválido");
+        }
+        String key = ticker.toUpperCase().trim();
+        CachedStock cached = stockCache.get(key);
+        if (cached != null && !cached.isExpired()) {
+            return new FetchResult.Success<>(cached.data());
+        }
+
+        String token = getToken();
+        String url = appendToken(BASE_URL + QUOTE_ENDPOINT + "/" + key, token);
+        Request request = new Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("User-Agent", "Investment-Tracker/1.0")
+                .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                FailureReason reason = (token == null || token.isBlank())
+                        ? FailureReason.NO_TOKEN
+                        : FailureReason.HTTP_ERROR;
+                return new FetchResult.Failure<>(reason, String.valueOf(response.code()));
+            }
+            if (response.body() == null) {
+                return new FetchResult.Failure<>(FailureReason.NETWORK_ERROR, "Body nulo");
+            }
+            JsonObject root;
+            try {
+                root = gson.fromJson(response.body().string(), JsonObject.class);
+            } catch (JsonSyntaxException e) {
+                return new FetchResult.Failure<>(FailureReason.PARSE_ERROR, e.getMessage());
+            }
+            if (root.has("error")) {
+                return new FetchResult.Failure<>(FailureReason.NOT_FOUND,
+                        root.get("error").getAsString());
+            }
+            JsonArray results = root.getAsJsonArray("results");
+            if (results == null || results.isEmpty()) {
+                return new FetchResult.Failure<>(FailureReason.NOT_FOUND, "Ação não encontrada");
+            }
+            StockData data = parseStockJson(results.get(0).getAsJsonObject());
+            if (data.isValid()) {
+                stockCache.put(key, new CachedStock(data, System.currentTimeMillis()));
+            }
+            return new FetchResult.Success<>(data);
+        } catch (IOException e) {
+            return new FetchResult.Failure<>(FailureReason.NETWORK_ERROR, e.getMessage());
+        }
     }
 
     public static StockData fetchStockDataWithToken(String ticker, String token) throws IOException {
@@ -266,6 +342,72 @@ public final class BrapiClient {
         return results;
     }
 
+    /**
+     * Versão segura de fetchMultipleStocks que nunca lança exceção.
+     * Classifica a falha em FailureReason para exibição ao usuário.
+     */
+    public static FetchResult<Map<String, StockData>> fetchMultipleStocksSafe(String tickers) {
+        String token = getToken();
+        boolean hasToken = token != null && !token.isBlank();
+        FailureReason failReason = hasToken ? FailureReason.NETWORK_ERROR : FailureReason.NO_TOKEN;
+        String failDetail = "";
+
+        Map<String, StockData> results = new HashMap<>();
+
+        // Tentativa em lote
+        try {
+            String base = BASE_URL + QUOTE_ENDPOINT + "/" + tickers.toUpperCase().trim() + "?fundamental=true";
+            String url = appendToken(base, token);
+            Request req = new Request.Builder()
+                    .url(url).get()
+                    .addHeader("User-Agent", "Investment-Tracker/1.0")
+                    .build();
+            try (Response resp = client.newCall(req).execute()) {
+                if (!resp.isSuccessful()) {
+                    failReason = FailureReason.HTTP_ERROR;
+                    failDetail = String.valueOf(resp.code());
+                } else if (resp.body() != null) {
+                    try {
+                        JsonObject root = gson.fromJson(resp.body().string(), JsonObject.class);
+                        if (!root.has("error")) {
+                            JsonArray arr = root.getAsJsonArray("results");
+                            if (arr != null) {
+                                for (JsonElement el : arr) {
+                                    JsonObject stock = el.getAsJsonObject();
+                                    String sym = getStringOrNull(stock, "symbol");
+                                    if (sym != null) results.put(sym, parseStockJson(stock));
+                                }
+                            }
+                        }
+                    } catch (JsonSyntaxException e) {
+                        failReason = FailureReason.PARSE_ERROR;
+                        failDetail = e.getMessage();
+                    }
+                }
+            }
+        } catch (IOException e) {
+            failReason = FailureReason.NETWORK_ERROR;
+            failDetail = e.getMessage();
+        }
+
+        // Fallback individual quando o lote falha
+        if (results.isEmpty()) {
+            for (String t : tickers.split(",")) {
+                String tk = t.trim().toUpperCase();
+                if (tk.isBlank()) continue;
+                try {
+                    StockData d = fetchStockData(tk);
+                    if (d.isValid()) results.put(tk, d);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        if (results.isEmpty()) {
+            return new FetchResult.Failure<>(failReason, failDetail);
+        }
+        return new FetchResult.Success<>(results);
+    }
+
     /** Busca em lote — uma requisição para todos os tickers. */
     private static Map<String, StockData> fetchMultipleStocksBatch(String tickers, String token) {
         Map<String, StockData> results = new HashMap<>();
@@ -321,6 +463,28 @@ public final class BrapiClient {
     }
 
     // Helper methods
+
+    private static StockData parseStockJson(JsonObject stock) {
+        return new StockData(
+                getStringOrNull(stock, "symbol"),
+                getStringOrNull(stock, "logourl"),
+                getStringOrNull(stock, "longName"),
+                getDoubleOrZero(stock, "regularMarketPrice"),
+                getDoubleOrZero(stock, "regularMarketChange"),
+                getDoubleOrZero(stock, "regularMarketChangePercent"),
+                getDoubleOrZero(stock, "regularMarketOpen"),
+                getDoubleOrZero(stock, "regularMarketDayHigh"),
+                getDoubleOrZero(stock, "regularMarketDayLow"),
+                getLongOrZero(stock, "regularMarketVolume"),
+                getDoubleOrZero(stock, "fiftyTwoWeekHigh"),
+                getDoubleOrZero(stock, "fiftyTwoWeekLow"),
+                getDoubleOrZero(stock, "twoHundredDayAverage"),
+                getStringOrNull(stock, "currency"),
+                getDoubleOrZero(stock, "dividendYield"),
+                getDoubleOrZero(stock, "fiftyTwoWeekChange"),
+                null
+        );
+    }
 
     private static String getStringOrNull(JsonObject obj, String key) {
         if (!obj.has(key) || obj.get(key).isJsonNull()) {
