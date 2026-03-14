@@ -10,7 +10,7 @@ public interface IInvestmentTypeRepository {
     List<InvestmentType> listAll();
     void save(String name);
     void rename(int id, String newName);
-    void delete(long id);
+    void delete(int id);
 
     default int createFull(String name, String category, String liquidity,
                            LocalDate investmentDate, BigDecimal profitability,

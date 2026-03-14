@@ -24,8 +24,7 @@ public final class FlowRepository implements IFlowRepository {
             """;
 
         List<Flow> out = new ArrayList<>();
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, date.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -60,8 +59,7 @@ public final class FlowRepository implements IFlowRepository {
             VALUES(?, ?, ?, ?, ?, ?, ?)
             """;
 
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, f.date().toString());
             ps.setString(2, f.fromKind().name());
             if (f.fromInvestmentTypeId() == null) ps.setNull(3, java.sql.Types.INTEGER);
@@ -86,8 +84,7 @@ public final class FlowRepository implements IFlowRepository {
     }
 
     public void delete(long id) {
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM flows WHERE id = ?")) {
+        try (PreparedStatement ps = Database.open().prepareStatement("DELETE FROM flows WHERE id = ?")) {
             ps.setLong(1, id);
             ps.executeUpdate();
         } catch (SQLException e) {

@@ -126,21 +126,4 @@ public final class DiversificationCalculator {
         );
     }
 
-    /**
-     * Calcula o patrimônio total somando cash + investimentos
-     */
-    public static long calculateTotalPatrimony(long cashCents, Map<Long, Long> investmentValues) {
-        long total = cashCents;
-        for (long value : investmentValues.values()) {
-            total += value;
-        }
-        return total;
-    }
-
-    /**
-     * Formata porcentagem para exibição
-     */
-    public static String formatPercentage(double percentage) {
-        return String.format("%.1f%%", percentage);
-    }
 }

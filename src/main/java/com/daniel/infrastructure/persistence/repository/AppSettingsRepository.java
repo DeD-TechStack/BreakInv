@@ -9,8 +9,7 @@ public final class AppSettingsRepository {
 
     public Optional<String> get(String key) {
         String sql = "SELECT value FROM app_settings WHERE key = ?";
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, key);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -26,8 +25,7 @@ public final class AppSettingsRepository {
     public void set(String key, String value) {
         String sql = "INSERT INTO app_settings (key, value) VALUES (?, ?) " +
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value";
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, key);
             ps.setString(2, value);
             ps.executeUpdate();
@@ -38,8 +36,7 @@ public final class AppSettingsRepository {
 
     public void delete(String key) {
         String sql = "DELETE FROM app_settings WHERE key = ?";
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, key);
             ps.executeUpdate();
         } catch (SQLException e) {

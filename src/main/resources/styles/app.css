@@ -471,6 +471,33 @@
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.28), 6, 0, 0, 2);
 }
 
+.chart-tooltip {
+    -fx-background-color: #1e293b;
+    -fx-background-radius: 6;
+    -fx-padding: 6 10 6 10;
+    -fx-border-color: #334155;
+    -fx-border-radius: 6;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 4, 0, 0, 2);
+}
+
+.chart-tooltip-label {
+    -fx-text-fill: #f1f5f9;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.crosshair-tooltip {
+    -fx-background-color: rgba(15, 23, 42, 0.92);
+    -fx-text-fill: #e2e8f0;
+    -fx-font-size: 11px;
+    -fx-padding: 6 10 6 10;
+    -fx-background-radius: 5;
+    -fx-border-color: rgba(100, 116, 139, 0.5);
+    -fx-border-width: 1;
+    -fx-border-radius: 5;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.55), 6, 0, 0, 2);
+}
+
 /* ── Level 3: Panel — embedded sub-section inside a card ── */
 .panel {
     -fx-background-color: derive(-color-bg-0, 4%);
@@ -1002,7 +1029,7 @@
 .default-color0.chart-legend-item-symbol { -fx-background-color: -color-warning, white; }
 .default-color1.chart-legend-item-symbol { -fx-background-color: -color-accent,  white; }
 
-/* Bar chart fill */
+/* Bar chart fill — cores aplicadas via inline style (verde/vermelho por código) */
 .default-color0.chart-bar { -fx-bar-fill: -color-accent-strong; }
 
 /* ═══════════════════════════════════════════════

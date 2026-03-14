@@ -13,7 +13,6 @@ public final class BrapiClient {
 
     private static final String BASE_URL = "https://brapi.dev/api";
     private static final String QUOTE_ENDPOINT = "/quote";
-    private static final String AVAILABLE_ENDPOINT = "/available";
 
     public static final String SETTINGS_KEY_TOKEN = "brapi_token";
 
@@ -50,6 +49,7 @@ public final class BrapiClient {
             double twoHundredDayAverage,
             String currency,
             double dividendYield,
+            double fiftyTwoWeekChange,
             String error
     ) {
         public boolean hasError() {
@@ -59,6 +59,26 @@ public final class BrapiClient {
         public boolean isValid() {
             return !hasError() && regularMarketPrice > 0;
         }
+    }
+
+    // ── Resultado tipado para fetch com causa de falha ──────────────────────
+
+    public enum FailureReason { NO_TOKEN, HTTP_ERROR, PARSE_ERROR, NETWORK_ERROR, NOT_FOUND }
+
+    public sealed interface FetchResult<T> permits FetchResult.Success, FetchResult.Failure {
+        record Success<T>(T data) implements FetchResult<T> {}
+        record Failure<T>(FailureReason reason, String detail) implements FetchResult<T> {}
+
+        default boolean isSuccess() { return this instanceof Success<?>; }
+
+        @SuppressWarnings("unchecked")
+        default T getData() { return ((Success<T>) this).data(); }
+
+        @SuppressWarnings("unchecked")
+        default FailureReason getReason() { return ((Failure<T>) this).reason(); }
+
+        @SuppressWarnings("unchecked")
+        default String getDetail() { return ((Failure<T>) this).detail(); }
     }
 
     // Sugestão de ticker
@@ -81,16 +101,94 @@ public final class BrapiClient {
             double value
     ) {}
 
+    // ── Cache de cotações (TTL: 5 minutos) ──
+    private static final long STOCK_CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(5);
+
+    private record CachedStock(StockData data, long timestamp) {
+        boolean isExpired() {
+            return System.currentTimeMillis() - timestamp > STOCK_CACHE_TTL_MS;
+        }
+    }
+
+    private static final ConcurrentHashMap<String, CachedStock> stockCache = new ConcurrentHashMap<>();
+
     /**
-     * Busca dados de uma ação específica
+     * Busca dados de uma ação específica, usando cache de 5 minutos.
      */
     public static StockData fetchStockData(String ticker) throws IOException {
-        return fetchStockDataWithToken(ticker, getToken());
+        if (ticker != null && !ticker.isBlank()) {
+            String key = ticker.toUpperCase().trim();
+            CachedStock cached = stockCache.get(key);
+            if (cached != null && !cached.isExpired()) {
+                return cached.data();
+            }
+        }
+        StockData data = fetchStockDataWithToken(ticker, getToken());
+        if (ticker != null && !ticker.isBlank() && data.isValid()) {
+            stockCache.put(ticker.toUpperCase().trim(), new CachedStock(data, System.currentTimeMillis()));
+        }
+        return data;
+    }
+
+    /**
+     * Versão segura de fetchStockData que nunca lança exceção.
+     * Retorna FetchResult.Success ou FetchResult.Failure com o motivo classificado.
+     */
+    public static FetchResult<StockData> fetchStockDataSafe(String ticker) {
+        if (ticker == null || ticker.isBlank()) {
+            return new FetchResult.Failure<>(FailureReason.NOT_FOUND, "Ticker inválido");
+        }
+        String key = ticker.toUpperCase().trim();
+        CachedStock cached = stockCache.get(key);
+        if (cached != null && !cached.isExpired()) {
+            return new FetchResult.Success<>(cached.data());
+        }
+
+        String token = getToken();
+        String url = appendToken(BASE_URL + QUOTE_ENDPOINT + "/" + key, token);
+        Request request = new Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("User-Agent", "Investment-Tracker/1.0")
+                .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                FailureReason reason = (token == null || token.isBlank())
+                        ? FailureReason.NO_TOKEN
+                        : FailureReason.HTTP_ERROR;
+                return new FetchResult.Failure<>(reason, String.valueOf(response.code()));
+            }
+            if (response.body() == null) {
+                return new FetchResult.Failure<>(FailureReason.NETWORK_ERROR, "Body nulo");
+            }
+            JsonObject root;
+            try {
+                root = gson.fromJson(response.body().string(), JsonObject.class);
+            } catch (JsonSyntaxException e) {
+                return new FetchResult.Failure<>(FailureReason.PARSE_ERROR, e.getMessage());
+            }
+            if (root.has("error")) {
+                return new FetchResult.Failure<>(FailureReason.NOT_FOUND,
+                        root.get("error").getAsString());
+            }
+            JsonArray results = root.getAsJsonArray("results");
+            if (results == null || results.isEmpty()) {
+                return new FetchResult.Failure<>(FailureReason.NOT_FOUND, "Ação não encontrada");
+            }
+            StockData data = parseStockJson(results.get(0).getAsJsonObject());
+            if (data.isValid()) {
+                stockCache.put(key, new CachedStock(data, System.currentTimeMillis()));
+            }
+            return new FetchResult.Success<>(data);
+        } catch (IOException e) {
+            return new FetchResult.Failure<>(FailureReason.NETWORK_ERROR, e.getMessage());
+        }
     }
 
     public static StockData fetchStockDataWithToken(String ticker, String token) throws IOException {
         if (ticker == null || ticker.isBlank()) {
-            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, "Ticker inválido");
+            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0, "Ticker inválido");
         }
 
         String url = appendToken(
@@ -104,7 +202,7 @@ public final class BrapiClient {
 
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
+                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
                         "Erro HTTP: " + response.code());
             }
 
@@ -113,12 +211,12 @@ public final class BrapiClient {
 
             if (root.has("error")) {
                 String errorMsg = root.get("error").getAsString();
-                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, errorMsg);
+                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0, errorMsg);
             }
 
             JsonArray results = root.getAsJsonArray("results");
             if (results == null || results.size() == 0) {
-                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
+                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
                         "Ação não encontrada");
             }
 
@@ -140,60 +238,63 @@ public final class BrapiClient {
                     getDoubleOrZero(stock, "twoHundredDayAverage"),
                     getStringOrNull(stock, "currency"),
                     getDoubleOrZero(stock, "dividendYield"),
+                    getDoubleOrZero(stock, "fiftyTwoWeekChange"),
                     null
             );
 
         } catch (JsonSyntaxException e) {
-            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
+            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
                     "Erro ao parsear JSON: " + e.getMessage());
         } catch (Exception e) {
-            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
+            return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
                     "Erro: " + e.getMessage());
         }
     }
 
     /**
-     * Busca tickers por nome/código (autocomplete)
+     * Busca tickers por nome ou código via endpoint /quote/list?search=...
+     * Funciona sem token. Retorna até 8 sugestões com ticker + nome.
+     * Ex: "petrobras" → [{ticker:"PETR4", name:"PETROBRAS PN", type:"stock"}, ...]
      */
-    public static List<TickerSuggestion> searchTickers(String query) throws IOException {
+    public static List<TickerSuggestion> searchTickers(String query) {
         if (query == null || query.isBlank() || query.length() < 2) {
             return new ArrayList<>();
         }
-
-        String url = BASE_URL + AVAILABLE_ENDPOINT;
-
-        Request request = new Request.Builder()
-                .url(url)
-                .get()
-                .addHeader("User-Agent", "Investment-Tracker/1.0")
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                return new ArrayList<>();
-            }
-
-            String jsonResponse = response.body().string();
-            JsonObject root = gson.fromJson(jsonResponse, JsonObject.class);
-
-            List<TickerSuggestion> suggestions = new ArrayList<>();
-
-            if (root.has("stocks")) {
-                JsonArray stocks = root.getAsJsonArray("stocks");
-                for (JsonElement element : stocks) {
-                    String ticker = element.getAsString();
-                    if (ticker.toLowerCase().contains(query.toLowerCase())) {
-                        suggestions.add(new TickerSuggestion(ticker, ticker, "stock"));
+        try {
+            HttpUrl url = HttpUrl.parse(BASE_URL + "/quote/list")
+                    .newBuilder()
+                    .addQueryParameter("search", query.trim())
+                    .addQueryParameter("limit", "8")
+                    .build();
+            Request request = new Request.Builder()
+                    .url(url)
+                    .get()
+                    .addHeader("User-Agent", "Investment-Tracker/1.0")
+                    .build();
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful() || response.body() == null) return new ArrayList<>();
+                String body = response.body().string();
+                JsonObject root = gson.fromJson(body, JsonObject.class);
+                List<TickerSuggestion> results = new ArrayList<>();
+                JsonArray stocks = root.has("stocks") ? root.getAsJsonArray("stocks") : null;
+                if (stocks != null) {
+                    for (JsonElement el : stocks) {
+                        JsonObject obj = el.getAsJsonObject();
+                        String ticker = getStringOrNull(obj, "stock");
+                        if (ticker == null) ticker = getStringOrNull(obj, "ticker");
+                        String name = getStringOrNull(obj, "name");
+                        String type = getStringOrNull(obj, "type");
+                        if (ticker != null) {
+                            results.add(new TickerSuggestion(ticker, name, type));
+                        }
                     }
                 }
+                return results;
             }
-
-            // Limitar a 10 sugestões
-            return suggestions.size() > 10 ? suggestions.subList(0, 10) : suggestions;
-
         } catch (Exception e) {
             return new ArrayList<>();
         }
+
     }
 
     /**
@@ -218,73 +319,172 @@ public final class BrapiClient {
     }
 
     /**
-     * Busca múltiplas ações de uma vez
+     * Busca múltiplas ações de uma vez.
+     * Com token: requisição em lote (mais rápido).
+     * Sem token ou em caso de falha: fallback individual por ticker.
      */
     public static Map<String, StockData> fetchMultipleStocks(String tickers) throws IOException {
-        Map<String, StockData> results = new HashMap<>();
+        Map<String, StockData> results = fetchMultipleStocksBatch(tickers, getToken());
 
-        String url = appendToken(
-                BASE_URL + QUOTE_ENDPOINT + "/" + tickers.toUpperCase().trim(), getToken());
-
-        Request request = new Request.Builder()
-                .url(url)
-                .get()
-                .addHeader("User-Agent", "Investment-Tracker/1.0")
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                return results;
-            }
-
-            String jsonResponse = response.body().string();
-            JsonObject root = gson.fromJson(jsonResponse, JsonObject.class);
-
-            if (root.has("error")) {
-                return results;
-            }
-
-            JsonArray resultsArray = root.getAsJsonArray("results");
-            if (resultsArray == null) {
-                return results;
-            }
-
-            for (JsonElement element : resultsArray) {
-                JsonObject stock = element.getAsJsonObject();
-                String symbol = getStringOrNull(stock, "symbol");
-
-                if (symbol != null) {
-                    StockData data = new StockData(
-                            symbol,
-                            getStringOrNull(stock, "logourl"),
-                            getStringOrNull(stock, "longName"),
-                            getDoubleOrZero(stock, "regularMarketPrice"),
-                            getDoubleOrZero(stock, "regularMarketChange"),
-                            getDoubleOrZero(stock, "regularMarketChangePercent"),
-                            getDoubleOrZero(stock, "regularMarketOpen"),
-                            getDoubleOrZero(stock, "regularMarketDayHigh"),
-                            getDoubleOrZero(stock, "regularMarketDayLow"),
-                            getLongOrZero(stock, "regularMarketVolume"),
-                            getDoubleOrZero(stock, "fiftyTwoWeekHigh"),
-                            getDoubleOrZero(stock, "fiftyTwoWeekLow"),
-                            getDoubleOrZero(stock, "twoHundredDayAverage"),
-                            getStringOrNull(stock, "currency"),
-                            getDoubleOrZero(stock, "dividendYield"),
-                            null
-                    );
-
-                    results.put(symbol, data);
+        // Fallback individual quando o lote falha (sem token ou erro da API)
+        if (results.isEmpty()) {
+            for (String ticker : tickers.split(",")) {
+                String t = ticker.trim().toUpperCase();
+                if (t.isBlank()) continue;
+                try {
+                    StockData data = fetchStockData(t);
+                    if (data.isValid()) results.put(t, data);
+                } catch (Exception ignored) {
+                    // continua para o próximo ticker
                 }
             }
-
-            return results;
-
-        } catch (Exception e) {
-            return results;
         }
+        return results;
+    }
+
+    /**
+     * Versão segura de fetchMultipleStocks que nunca lança exceção.
+     * Classifica a falha em FailureReason para exibição ao usuário.
+     */
+    public static FetchResult<Map<String, StockData>> fetchMultipleStocksSafe(String tickers) {
+        String token = getToken();
+        boolean hasToken = token != null && !token.isBlank();
+        FailureReason failReason = hasToken ? FailureReason.NETWORK_ERROR : FailureReason.NO_TOKEN;
+        String failDetail = "";
+
+        Map<String, StockData> results = new HashMap<>();
+
+        // Tentativa em lote
+        try {
+            String base = BASE_URL + QUOTE_ENDPOINT + "/" + tickers.toUpperCase().trim() + "?fundamental=true";
+            String url = appendToken(base, token);
+            Request req = new Request.Builder()
+                    .url(url).get()
+                    .addHeader("User-Agent", "Investment-Tracker/1.0")
+                    .build();
+            try (Response resp = client.newCall(req).execute()) {
+                if (!resp.isSuccessful()) {
+                    failReason = FailureReason.HTTP_ERROR;
+                    failDetail = String.valueOf(resp.code());
+                } else if (resp.body() != null) {
+                    try {
+                        JsonObject root = gson.fromJson(resp.body().string(), JsonObject.class);
+                        if (!root.has("error")) {
+                            JsonArray arr = root.getAsJsonArray("results");
+                            if (arr != null) {
+                                for (JsonElement el : arr) {
+                                    JsonObject stock = el.getAsJsonObject();
+                                    String sym = getStringOrNull(stock, "symbol");
+                                    if (sym != null) results.put(sym, parseStockJson(stock));
+                                }
+                            }
+                        }
+                    } catch (JsonSyntaxException e) {
+                        failReason = FailureReason.PARSE_ERROR;
+                        failDetail = e.getMessage();
+                    }
+                }
+            }
+        } catch (IOException e) {
+            failReason = FailureReason.NETWORK_ERROR;
+            failDetail = e.getMessage();
+        }
+
+        // Fallback individual quando o lote falha
+        if (results.isEmpty()) {
+            for (String t : tickers.split(",")) {
+                String tk = t.trim().toUpperCase();
+                if (tk.isBlank()) continue;
+                try {
+                    StockData d = fetchStockData(tk);
+                    if (d.isValid()) results.put(tk, d);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        if (results.isEmpty()) {
+            return new FetchResult.Failure<>(failReason, failDetail);
+        }
+        return new FetchResult.Success<>(results);
+    }
+
+    /** Busca em lote — uma requisição para todos os tickers. */
+    private static Map<String, StockData> fetchMultipleStocksBatch(String tickers, String token) {
+        Map<String, StockData> results = new HashMap<>();
+        try {
+            String base = BASE_URL + QUOTE_ENDPOINT + "/" + tickers.toUpperCase().trim() + "?fundamental=true";
+            String url  = appendToken(base, token);
+
+            Request request = new Request.Builder()
+                    .url(url)
+                    .get()
+                    .addHeader("User-Agent", "Investment-Tracker/1.0")
+                    .build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful() || response.body() == null) return results;
+
+                JsonObject root = gson.fromJson(response.body().string(), JsonObject.class);
+                if (root.has("error")) return results;
+
+                JsonArray resultsArray = root.getAsJsonArray("results");
+                if (resultsArray == null) return results;
+
+                for (JsonElement element : resultsArray) {
+                    JsonObject stock = element.getAsJsonObject();
+                    String symbol = getStringOrNull(stock, "symbol");
+                    if (symbol != null) {
+                        results.put(symbol, new StockData(
+                                symbol,
+                                getStringOrNull(stock, "logourl"),
+                                getStringOrNull(stock, "longName"),
+                                getDoubleOrZero(stock, "regularMarketPrice"),
+                                getDoubleOrZero(stock, "regularMarketChange"),
+                                getDoubleOrZero(stock, "regularMarketChangePercent"),
+                                getDoubleOrZero(stock, "regularMarketOpen"),
+                                getDoubleOrZero(stock, "regularMarketDayHigh"),
+                                getDoubleOrZero(stock, "regularMarketDayLow"),
+                                getLongOrZero(stock, "regularMarketVolume"),
+                                getDoubleOrZero(stock, "fiftyTwoWeekHigh"),
+                                getDoubleOrZero(stock, "fiftyTwoWeekLow"),
+                                getDoubleOrZero(stock, "twoHundredDayAverage"),
+                                getStringOrNull(stock, "currency"),
+                                getDoubleOrZero(stock, "dividendYield"),
+                                getDoubleOrZero(stock, "fiftyTwoWeekChange"),
+                                null
+                        ));
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // retorna o que tiver
+        }
+        return results;
     }
 
     // Helper methods
+
+    private static StockData parseStockJson(JsonObject stock) {
+        return new StockData(
+                getStringOrNull(stock, "symbol"),
+                getStringOrNull(stock, "logourl"),
+                getStringOrNull(stock, "longName"),
+                getDoubleOrZero(stock, "regularMarketPrice"),
+                getDoubleOrZero(stock, "regularMarketChange"),
+                getDoubleOrZero(stock, "regularMarketChangePercent"),
+                getDoubleOrZero(stock, "regularMarketOpen"),
+                getDoubleOrZero(stock, "regularMarketDayHigh"),
+                getDoubleOrZero(stock, "regularMarketDayLow"),
+                getLongOrZero(stock, "regularMarketVolume"),
+                getDoubleOrZero(stock, "fiftyTwoWeekHigh"),
+                getDoubleOrZero(stock, "fiftyTwoWeekLow"),
+                getDoubleOrZero(stock, "twoHundredDayAverage"),
+                getStringOrNull(stock, "currency"),
+                getDoubleOrZero(stock, "dividendYield"),
+                getDoubleOrZero(stock, "fiftyTwoWeekChange"),
+                null
+        );
+    }
 
     private static String getStringOrNull(JsonObject obj, String key) {
         if (!obj.has(key) || obj.get(key).isJsonNull()) {

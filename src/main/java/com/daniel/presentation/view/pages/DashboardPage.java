@@ -4,6 +4,8 @@ import com.daniel.core.domain.entity.InvestmentType;
 import com.daniel.core.domain.entity.Transaction;
 import com.daniel.core.domain.entity.Enums.CategoryEnum;
 import com.daniel.core.service.DailyTrackingUseCase;
+import com.daniel.presentation.view.util.ChartAxisUtils;
+import com.daniel.presentation.view.util.ChartCrosshair;
 import com.daniel.presentation.view.util.Motion;
 import com.daniel.core.service.DiversificationCalculator;
 import com.daniel.core.service.DiversificationCalculator.*;
@@ -47,6 +49,7 @@ public final class DashboardPage implements Page {
 
     private final PieChart pieChart = new PieChart();
     private final BarChart<String, Number> waterfallChart;
+    private final CategoryAxis waterfallXAxis = new CategoryAxis();
     private final CategoryAxis compXAxis = new CategoryAxis();
     private final NumberAxis compYAxis = new NumberAxis();
     private final LineChart<String, Number> comparisonChart = new LineChart<>(compXAxis, compYAxis);
@@ -88,17 +91,17 @@ public final class DashboardPage implements Page {
     public DashboardPage(DailyTrackingUseCase dailyTrackingUseCase) {
         this.daily = dailyTrackingUseCase;
 
-        CategoryAxis xAxis = new CategoryAxis();
         NumberAxis yAxis = new NumberAxis();
-        xAxis.setLabel("Investimentos");
+        waterfallXAxis.setLabel("Investimentos");
         yAxis.setLabel("Valor (R$)");
-        waterfallChart = new BarChart<>(xAxis, yAxis);
+        waterfallChart = new BarChart<>(waterfallXAxis, yAxis);
         waterfallChart.setTitle("Composição do Patrimônio");
         waterfallChart.setLegendVisible(false);
+        ChartAxisUtils.installSmartAxis(waterfallXAxis, waterfallChart);
 
         comparisonChart.setTitle(null);
         comparisonChart.setMinHeight(300);
-        comparisonChart.setCreateSymbols(false);
+        comparisonChart.setCreateSymbols(true);
         comparisonChart.setAnimated(false);
 
         root.getStyleClass().add("page-root");
@@ -316,22 +319,48 @@ public final class DashboardPage implements Page {
 
         pieChart.setTitle(null);
 
+        List<CategoryAllocation> validAllocs = new ArrayList<>();
         for (CategoryAllocation alloc : data.allocations()) {
             if (alloc.valueCents() > 0) {
                 String label = String.format("%s (%.1f%%)",
                         alloc.category().getDisplayName(),
                         alloc.percentage());
-
-                PieChart.Data slice = new PieChart.Data(label, alloc.valueCents() / 100.0);
-                pieChart.getData().add(slice);
-
-                slice.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                    if (newNode != null) {
-                        String color = alloc.category().getColor();
-                        newNode.setStyle("-fx-pie-color: " + color + ";");
-                    }
-                });
+                pieChart.getData().add(new PieChart.Data(label, alloc.valueCents() / 100.0));
+                validAllocs.add(alloc);
             }
+        }
+
+        // Instalar cor e tooltip após renderização
+        Platform.runLater(() -> {
+            List<PieChart.Data> slices = pieChart.getData();
+            for (int i = 0; i < slices.size() && i < validAllocs.size(); i++) {
+                PieChart.Data slice = slices.get(i);
+                CategoryAllocation alloc = validAllocs.get(i);
+                String color   = alloc.category().getColor();
+                String tipText = alloc.category().getDisplayName()
+                        + "\n" + daily.brl(alloc.valueCents())
+                        + String.format("\n%.1f%%", alloc.percentage());
+                applyPieStyle(slice, color, tipText);
+            }
+        });
+    }
+
+    private void applyPieStyle(PieChart.Data slice, String color, String tipText) {
+        javafx.scene.Node n = slice.getNode();
+        if (n != null) {
+            n.setStyle("-fx-pie-color: " + color + ";");
+            Tooltip tp = new Tooltip(tipText);
+            tp.setShowDelay(javafx.util.Duration.ZERO);
+            Tooltip.install(n, tp);
+        } else {
+            slice.nodeProperty().addListener((obs, o, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-pie-color: " + color + ";");
+                    Tooltip tp = new Tooltip(tipText);
+                    tp.setShowDelay(javafx.util.Duration.ZERO);
+                    Tooltip.install(newNode, tp);
+                }
+            });
         }
     }
 
@@ -341,25 +370,38 @@ public final class DashboardPage implements Page {
         XYChart.Series<String, Number> series = new XYChart.Series<>();
         series.setName("Valores");
 
-        List<InvestmentValue> invValues = new ArrayList<>();
+        // Agrupar por nome, somando os valores (evita duplicatas para o mesmo ativo)
+        Map<String, Long> grouped = new LinkedHashMap<>();
         for (InvestmentType inv : investments) {
             long value = currentValues.getOrDefault((long) inv.id(), 0L);
             if (value > 0) {
-                invValues.add(new InvestmentValue(inv.name(), value));
+                grouped.merge(inv.name(), value, Long::sum);
             }
         }
 
-        invValues.sort((a, b) -> Long.compare(b.valueCents, a.valueCents));
+        List<InvestmentValue> invValues = grouped.entrySet().stream()
+                .map(e -> new InvestmentValue(e.getKey(), e.getValue()))
+                .sorted((a, b) -> Long.compare(b.valueCents, a.valueCents))
+                .toList();
 
         for (InvestmentValue iv : invValues) {
-            XYChart.Data<String, Number> bar = new XYChart.Data<>(
-                    truncateName(iv.name, 15),
-                    iv.valueCents / 100.0
-            );
-            series.getData().add(bar);
+            series.getData().add(new XYChart.Data<>(truncateName(iv.name, 15), iv.valueCents / 100.0));
         }
 
         waterfallChart.getData().add(series);
+
+        // Atualiza densidade de labels do eixo X após renderização
+        Platform.runLater(() -> ChartAxisUtils.refreshLabels(waterfallXAxis, waterfallChart.getWidth()));
+
+        // Tooltips após adição ao chart (nós criados no próximo ciclo de layout)
+        Platform.runLater(() -> {
+            for (int i = 0; i < series.getData().size() && i < invValues.size(); i++) {
+                XYChart.Data<String, Number> bar = series.getData().get(i);
+                InvestmentValue iv = invValues.get(i);
+                String tip = iv.name + "\n" + daily.brl(iv.valueCents);
+                installXYTooltip(bar, tip);
+            }
+        });
     }
 
     private VBox buildComparisonSection() {
@@ -408,12 +450,17 @@ public final class DashboardPage implements Page {
         compXAxis.setLabel(null);
         compYAxis.setLabel("Rentabilidade %");
         comparisonChart.setAnimated(false);
-        comparisonChart.setCreateSymbols(false);
+        comparisonChart.setCreateSymbols(true);
         comparisonChart.setLegendVisible(true);
         comparisonChart.setMinHeight(300);
 
-        HBox chartRow = new HBox(0, comparisonChart);
-        HBox.setHgrow(comparisonChart, Priority.ALWAYS);
+        // Instala listener de largura para atualizar labels automaticamente no resize
+        ChartAxisUtils.installSmartAxis(compXAxis, comparisonChart);
+
+        javafx.scene.layout.StackPane compWrapper = ChartCrosshair.install(comparisonChart,
+                y -> String.format("%s%.2f%%", y >= 0 ? "+" : "", y).replace('.', ','));
+        HBox chartRow = new HBox(0, compWrapper);
+        HBox.setHgrow(compWrapper, Priority.ALWAYS);
         chartRow.setAlignment(Pos.TOP_LEFT);
 
         // metricsPanel fica fora do chartRow, em coluna separada à direita
@@ -601,7 +648,57 @@ public final class DashboardPage implements Page {
             benchSeries.getData().add(new XYChart.Data<>(label, rentBench));
         }
 
-        comparisonChart.getData().addAll(carteiraSeries, benchSeries);
+        // Série de referência — linha tênue no zero
+        XYChart.Series<String, Number> zeroSeries = new XYChart.Series<>();
+        zeroSeries.setName("—");
+        for (XYChart.Data<String, Number> d : carteiraSeries.getData()) {
+            zeroSeries.getData().add(new XYChart.Data<>(d.getXValue(), 0));
+        }
+
+        comparisonChart.getData().addAll(carteiraSeries, benchSeries, zeroSeries);
+
+        // Atualiza densidade de labels do eixo X com base na largura atual
+        Platform.runLater(() -> ChartAxisUtils.refreshLabels(compXAxis, comparisonChart.getWidth()));
+
+        // Estilizar linhas das séries após renderização
+        Platform.runLater(() -> {
+            javafx.scene.Node cartLine = comparisonChart.lookup(".series0.chart-series-line");
+            if (cartLine != null) cartLine.setStyle("-fx-stroke: #22c55e; -fx-stroke-width: 2;");
+
+            javafx.scene.Node benchLine = comparisonChart.lookup(".series1.chart-series-line");
+            if (benchLine != null) benchLine.setStyle(
+                    "-fx-stroke: rgba(255,255,255,0.85); -fx-stroke-width: 1.5;");
+
+            javafx.scene.Node zeroLine = comparisonChart.lookup(".series2.chart-series-line");
+            if (zeroLine != null) zeroLine.setStyle(
+                    "-fx-stroke: rgba(255,255,255,0.25); -fx-stroke-width: 1; -fx-stroke-dash-array: 6 4;");
+        });
+
+        // Tooltips + coloração após renderização
+        final String benchName = benchSeries.getName();
+        Platform.runLater(() -> {
+            for (XYChart.Data<String, Number> d : carteiraSeries.getData()) {
+                double val = d.getYValue().doubleValue();
+                String lbl = d.getXValue() + "\nCarteira: "
+                        + String.format("%.2f%%", val).replace('.', ',');
+                String baseColor  = val >= 0 ? "rgba(34,197,94,0.8)"  : "rgba(239,68,68,0.8)";
+                String hoverColor = val >= 0 ? "rgba(34,197,94,1.0)"  : "rgba(239,68,68,1.0)";
+                installXYTooltipStyled(d, lbl, baseColor, hoverColor);
+            }
+            for (XYChart.Data<String, Number> d : benchSeries.getData()) {
+                String lbl = d.getXValue() + "\n" + benchName + ": "
+                        + String.format("%.2f%%", d.getYValue().doubleValue()).replace('.', ',');
+                installXYTooltipStyled(d, lbl,
+                        "rgba(255,255,255,0.7)", "rgba(255,255,255,1.0)");
+            }
+            for (XYChart.Data<String, Number> d : zeroSeries.getData()) {
+                javafx.scene.Node n = d.getNode();
+                if (n != null) n.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
+                else d.nodeProperty().addListener((obs, o, n2) -> {
+                    if (n2 != null) n2.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
+                });
+            }
+        });
 
         // Atualizar métricas laterais — sincronizadas com o período do filtro selecionado
         double rentCartPeriodo  = (Math.pow(1 + taxaMensalCarteira, (double) totalMeses) - 1) * 100;
@@ -1360,4 +1457,37 @@ public final class DashboardPage implements Page {
     }
 
     private record InvestmentValue(String name, long valueCents) {}
+
+    /** Instala tooltip num nó XYChart, com fallback para nodeProperty se o nó ainda não existe. */
+    private static void installXYTooltip(XYChart.Data<String, Number> d, String text) {
+        installXYTooltipStyled(d, text, null, null);
+    }
+
+    private static void installXYTooltipStyled(XYChart.Data<String, Number> d,
+                                                String text,
+                                                String baseColor,
+                                                String hoverColor) {
+        javafx.scene.Node n = d.getNode();
+        if (n != null) {
+            applyNodeTooltip(n, text, baseColor, hoverColor);
+        } else {
+            d.nodeProperty().addListener((obs, o, node) -> {
+                if (node != null) applyNodeTooltip(node, text, baseColor, hoverColor);
+            });
+        }
+    }
+
+    private static void applyNodeTooltip(javafx.scene.Node node, String text,
+                                          String baseColor, String hoverColor) {
+        if (baseColor != null) {
+            node.setStyle("-fx-background-color: " + baseColor + "; -fx-padding: 4; -fx-background-radius: 50;");
+            node.setOnMouseEntered(e -> node.setStyle(
+                    "-fx-background-color: " + hoverColor + "; -fx-padding: 5; -fx-background-radius: 50;"));
+            node.setOnMouseExited(e -> node.setStyle(
+                    "-fx-background-color: " + baseColor + "; -fx-padding: 4; -fx-background-radius: 50;"));
+        }
+        Tooltip tp = new Tooltip(text);
+        tp.setShowDelay(javafx.util.Duration.ZERO);
+        Tooltip.install(node, tp);
+    }
 }

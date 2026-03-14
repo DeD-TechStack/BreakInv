@@ -6,6 +6,7 @@ import com.daniel.core.util.Money;
 import com.daniel.infrastructure.api.BcbClient;
 import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.presentation.view.PageHeader;
+import com.daniel.presentation.view.util.ChartCrosshair;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -98,8 +99,11 @@ public final class SimulationPage implements Page {
         chartCard.getStyleClass().add("chart-card");
         Label chartTitle = new Label("PROJEÇÃO DE RENTABILIDADE");
         chartTitle.getStyleClass().add("card-title");
-        VBox.setVgrow(projectionChart, Priority.ALWAYS);
-        chartCard.getChildren().addAll(chartTitle, projectionChart);
+        javafx.scene.layout.StackPane projWrapper = ChartCrosshair.installNumeric(projectionChart,
+                month -> "Mês " + month,
+                y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+        VBox.setVgrow(projWrapper, Priority.ALWAYS);
+        chartCard.getChildren().addAll(chartTitle, projWrapper);
 
         root.getChildren().addAll(header, typeSelector, baseParamsCard,
                 rentabilityCard, stockCard, resultCard, chartCard);

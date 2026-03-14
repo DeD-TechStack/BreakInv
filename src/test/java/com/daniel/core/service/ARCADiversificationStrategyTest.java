@@ -161,27 +161,38 @@ class ARCADiversificationStrategyTest {
     // ===== calculateSuggestionsByContribution =====
 
     @Test
-    void calculateSuggestionsByContribution_allZero_fullTarget() {
+    void calculateSuggestionsByContribution_unbalanced_suggestsDeficitCategory() {
+        // 100k patrimony: all in RF, nothing in ACOES. Profile 50/50.
+        // Should suggest aportar ~75k in ACOES and 0 in RF.
         Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
         profile.put(CategoryEnum.ACOES, 0.50);
         profile.put(CategoryEnum.RENDA_FIXA, 0.50);
 
+        Map<CategoryEnum, Long> alloc = new EnumMap<>(CategoryEnum.class);
+        alloc.put(CategoryEnum.RENDA_FIXA, 100000L);
+        alloc.put(CategoryEnum.ACOES, 0L);
+
         var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
-                200000L, Map.of(), profile
+                100000L, alloc, profile
         );
 
-        var ac = findCategory(suggestions, CategoryEnum.ACOES);
+        var rf  = findCategory(suggestions, CategoryEnum.RENDA_FIXA);
+        var ac  = findCategory(suggestions, CategoryEnum.ACOES);
+        assertNotNull(rf);
         assertNotNull(ac);
-        assertEquals(100000L, ac.aporteNecessarioCents());
+        assertEquals(0L, rf.aporteNecessarioCents()); // RF is above ideal, no aporte
+        assertTrue(ac.aporteNecessarioCents() > 0,    // ACOES is below ideal, needs aporte
+                "Expected positive aporte for ACOES");
     }
 
     @Test
     void calculateSuggestionsByContribution_noNegativeAportes() {
+        // RF is way above ideal; aportes should never be negative
         Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
         profile.put(CategoryEnum.RENDA_FIXA, 0.10);
 
         Map<CategoryEnum, Long> alloc = new EnumMap<>(CategoryEnum.class);
-        alloc.put(CategoryEnum.RENDA_FIXA, 90000L); // way above 10% of 100000
+        alloc.put(CategoryEnum.RENDA_FIXA, 90000L); // way above 10%
 
         var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
                 100000L, alloc, profile
@@ -191,6 +202,65 @@ class ARCADiversificationStrategyTest {
                 assertTrue(s.aporteNecessarioCents() >= 0,
                         "Negative aporte for " + s.category())
         );
+    }
+
+    @Test
+    void calculateSuggestionsByContribution_balanced_yieldsZeroAportes() {
+        // Portfolio perfectly balanced 50/50 with 100k → no aportes needed
+        Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
+        profile.put(CategoryEnum.ACOES, 0.50);
+        profile.put(CategoryEnum.RENDA_FIXA, 0.50);
+
+        Map<CategoryEnum, Long> alloc = new EnumMap<>(CategoryEnum.class);
+        alloc.put(CategoryEnum.ACOES, 50000L);
+        alloc.put(CategoryEnum.RENDA_FIXA, 50000L);
+
+        var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
+                100000L, alloc, profile
+        );
+
+        long totalAporte = suggestions.stream().mapToLong(s -> s.aporteNecessarioCents()).sum();
+        assertEquals(0L, totalAporte, "Balanced portfolio should need no aporte");
+    }
+
+    @Test
+    void calculateSuggestionsByContribution_impliedTargetFromHeaviestCategory() {
+        // R$3.000 em Ações (300.000 centavos), perfil 25% cada categoria.
+        // Patrimônio alvo implícito = 300.000 / 0,25 = 1.200.000 (R$12.000).
+        // As outras 3 categorias precisam de 300.000 centavos cada.
+        Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
+        profile.put(CategoryEnum.ACOES,       0.25);
+        profile.put(CategoryEnum.RENDA_FIXA,  0.25);
+        profile.put(CategoryEnum.OUTROS,      0.25);
+        profile.put(CategoryEnum.CRIPTOMOEDAS,0.25);
+
+        Map<CategoryEnum, Long> alloc = new EnumMap<>(CategoryEnum.class);
+        alloc.put(CategoryEnum.ACOES, 300_000L); // R$ 3.000,00
+
+        var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
+                300_000L, alloc, profile
+        );
+
+        var acoes = findCategory(suggestions, CategoryEnum.ACOES);
+        var rf    = findCategory(suggestions, CategoryEnum.RENDA_FIXA);
+        var out   = findCategory(suggestions, CategoryEnum.OUTROS);
+        var cri   = findCategory(suggestions, CategoryEnum.CRIPTOMOEDAS);
+
+        assertNotNull(acoes);
+        assertEquals(0L,       acoes.aporteNecessarioCents(), "ACOES já está no ideal");
+        assertEquals(300_000L, rf.aporteNecessarioCents(),    "RF precisa de R$3k");
+        assertEquals(300_000L, out.aporteNecessarioCents(),   "OUTROS precisam de R$3k");
+        assertEquals(300_000L, cri.aporteNecessarioCents(),   "CRIPTO precisa de R$3k");
+    }
+
+    @Test
+    void calculateImpliedTarget_returnsFallbackWhenNoAllocation() {
+        // Sem nenhum valor investido, o alvo implícito deve ser o patrimônio atual (fallback)
+        Map<CategoryEnum, Double> profile = ARCADiversificationStrategy.getARCAProfile();
+        long result = ARCADiversificationStrategy.calculateImpliedTarget(
+                500_000L, Map.of(), profile
+        );
+        assertEquals(500_000L, result);
     }
 
     // ===== Helper =====

@@ -140,28 +140,6 @@ class DiversificationCalculatorTest {
         assertEquals(0L, result.cdiProfitCents());
     }
 
-    // ===== calculateTotalPatrimony =====
-
-    @Test
-    void calculateTotalPatrimony_cashPlusInvestments() {
-        Map<Long, Long> invValues = Map.of(1L, 50000L, 2L, 30000L);
-        long total = DiversificationCalculator.calculateTotalPatrimony(20000L, invValues);
-        assertEquals(100000L, total);
-    }
-
-    @Test
-    void calculateTotalPatrimony_zeroCash() {
-        Map<Long, Long> invValues = Map.of(1L, 80000L);
-        long total = DiversificationCalculator.calculateTotalPatrimony(0L, invValues);
-        assertEquals(80000L, total);
-    }
-
-    @Test
-    void calculateTotalPatrimony_emptyInvestments() {
-        long total = DiversificationCalculator.calculateTotalPatrimony(15000L, Map.of());
-        assertEquals(15000L, total);
-    }
-
     // ===== calculateCurrent — additional edge cases =====
 
     @Test
@@ -236,31 +214,4 @@ class DiversificationCalculatorTest {
         assertTrue(result.cdiProfitCents() > 0);
     }
 
-    // ===== calculateTotalPatrimony — additional =====
-
-    @Test
-    void calculateTotalPatrimony_allZero_returnsZero() {
-        assertEquals(0L, DiversificationCalculator.calculateTotalPatrimony(0L, Map.of()));
-    }
-
-    // ===== formatPercentage =====
-
-    @Test
-    void formatPercentage_endsWithPercent() {
-        String result = DiversificationCalculator.formatPercentage(12.5);
-        assertTrue(result.endsWith("%"), "Expected '%' suffix in: " + result);
-    }
-
-    @Test
-    void formatPercentage_containsNumericPart() {
-        String result = DiversificationCalculator.formatPercentage(12.5);
-        assertTrue(result.contains("12"), "Expected '12' in: " + result);
-    }
-
-    @Test
-    void formatPercentage_zero() {
-        String result = DiversificationCalculator.formatPercentage(0.0);
-        assertTrue(result.contains("0"), "Expected '0' in: " + result);
-        assertTrue(result.endsWith("%"));
-    }
 }

@@ -47,6 +47,9 @@ public final class DiversificationPage implements Page {
     private final TableView<SuggestionRow> suggestionsTable = new TableView<>();
 
     private final Label totalPatrimonyLabel = new Label("—");
+    private final Label totalAporteLabel    = new Label();
+    private final Label impliedTargetLabel  = new Label("—");
+    private VBox impliedTargetBox;
 
     // Empty state — shown when no investments are registered
     private final VBox noInvestmentsPanel = buildNoInvestmentsPanel();
@@ -119,10 +122,11 @@ public final class DiversificationPage implements Page {
         HBox segCalc = new HBox(2, rebalanceByContributionRadio, rebalanceByTargetRadio);
         segCalc.getStyleClass().add("segmented");
 
-        Label hint = new Label("Recomenda aportes nas categorias abaixo do ideal (sem vender)");
+        Label hint = new Label("Calcula o patrimônio alvo a partir da categoria mais pesada da carteira e sugere aportes para equilibrar — sem vender nenhum ativo.");
         hint.getStyleClass().add("text-helper");
         hint.setWrapText(true);
 
+        // Target patrimony field (shown in target mode)
         Label targetLabel = new Label("Patrimônio Alvo:");
         targetLabel.getStyleClass().addAll("text-bold", "text-sm");
         targetPatrimonyField.setPromptText("R$ 100.000,00");
@@ -140,7 +144,7 @@ public final class DiversificationPage implements Page {
             targetBox.setManaged(isTarget);
             hint.setText(isTarget
                     ? "Calcula quanto aportar em cada categoria para atingir um patrimônio alvo"
-                    : "Recomenda aportes nas categorias abaixo do ideal (sem vender)");
+                    : "Calcula o patrimônio alvo a partir da categoria mais pesada da carteira e sugere aportes para equilibrar — sem vender nenhum ativo.");
             refreshData();
         });
 
@@ -233,13 +237,20 @@ public final class DiversificationPage implements Page {
 
         Label title = new Label("PATRIMÔNIO ATUAL");
         title.getStyleClass().add("kpi-label");
-
         totalPatrimonyLabel.getStyleClass().addAll("kpi-value", "num");
-
         Label sub = new Label("baseado em valores de hoje");
         sub.getStyleClass().add("kpi-sub");
+        VBox currentBox = new VBox(4, title, totalPatrimonyLabel, sub);
 
-        box.getChildren().addAll(title, totalPatrimonyLabel, sub);
+        Label impliedTitle = new Label("PATRIMÔNIO ALVO CALCULADO");
+        impliedTitle.getStyleClass().add("kpi-label");
+        impliedTargetLabel.getStyleClass().addAll("kpi-value", "num");
+        impliedTargetBox = new VBox(4, impliedTitle, impliedTargetLabel);
+        impliedTargetBox.setVisible(false);
+        impliedTargetBox.setManaged(false);
+
+        HBox row = new HBox(40, currentBox, impliedTargetBox);
+        box.getChildren().add(row);
         return box;
     }
 
@@ -427,8 +438,9 @@ public final class DiversificationPage implements Page {
         suggPh.getStyleClass().add("text-helper");
         suggestionsTable.setPlaceholder(suggPh);
 
+        totalAporteLabel.getStyleClass().addAll("text-helper", "text-bold");
         VBox.setVgrow(suggestionsTable, Priority.ALWAYS);
-        box.getChildren().addAll(title, suggestionsTable);
+        box.getChildren().addAll(title, suggestionsTable, totalAporteLabel);
         return box;
     }
 
@@ -504,18 +516,25 @@ public final class DiversificationPage implements Page {
         List<DiversificationSuggestion> suggestions;
         long referencePatrimony;
 
-        // Escolher metodo de cálculo
+        // Escolher método de cálculo
         if (rebalanceByTargetRadio.isSelected()) {
             long targetPatrimony = getTargetPatrimony(currentPatrimony);
             referencePatrimony = targetPatrimony;
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByTarget(
                     currentPatrimony, targetPatrimony, currentData.valuesCents(), profile
             );
+            impliedTargetBox.setVisible(false);
+            impliedTargetBox.setManaged(false);
         } else {
             referencePatrimony = currentPatrimony;
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
                     currentPatrimony, currentData.valuesCents(), profile
             );
+            long implied = ARCADiversificationStrategy.calculateImpliedTarget(
+                    currentPatrimony, currentData.valuesCents(), profile);
+            impliedTargetLabel.setText(daily.brl(implied));
+            impliedTargetBox.setVisible(true);
+            impliedTargetBox.setManaged(true);
         }
 
         var idealRows = FXCollections.<AllocationRow>observableArrayList();
@@ -542,6 +561,9 @@ public final class DiversificationPage implements Page {
         }
 
         suggestionsTable.setItems(suggestionRows);
+
+        long totalAporte = suggestions.stream().mapToLong(s -> s.aporteNecessarioCents()).sum();
+        totalAporteLabel.setText(totalAporte > 0 ? "Aporte total sugerido: " + daily.brl(totalAporte) : "");
     }
 
     private void updateCustomIdeal(long currentPatrimony, DiversificationData currentData) {
@@ -573,11 +595,18 @@ public final class DiversificationPage implements Page {
                 suggestions = ARCADiversificationStrategy.calculateSuggestionsByTarget(
                         currentPatrimony, targetPatrimony, currentData.valuesCents(), customProfile
                 );
+                impliedTargetBox.setVisible(false);
+                impliedTargetBox.setManaged(false);
             } else {
                 referencePatrimony = currentPatrimony;
                 suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
                         currentPatrimony, currentData.valuesCents(), customProfile
                 );
+                long implied = ARCADiversificationStrategy.calculateImpliedTarget(
+                        currentPatrimony, currentData.valuesCents(), customProfile);
+                impliedTargetLabel.setText(daily.brl(implied));
+                impliedTargetBox.setVisible(true);
+                impliedTargetBox.setManaged(true);
             }
 
             var idealRows = FXCollections.<AllocationRow>observableArrayList();
@@ -604,6 +633,9 @@ public final class DiversificationPage implements Page {
             }
 
             suggestionsTable.setItems(suggestionRows);
+
+            long totalAporte = suggestions.stream().mapToLong(s -> s.aporteNecessarioCents()).sum();
+            totalAporteLabel.setText(totalAporte > 0 ? "Aporte total sugerido: " + daily.brl(totalAporte) : "");
 
         } catch (NumberFormatException e) {
             Label errPh2 = new Label("⚠️ Valores inválidos nas porcentagens");
@@ -642,51 +674,36 @@ public final class DiversificationPage implements Page {
 
     private static class AllocationRow {
         private final CategoryEnum category;
-        private final String value;
-        private final String percentage;
+        private final SimpleStringProperty categoryProp;
+        private final SimpleStringProperty valueProp;
+        private final SimpleStringProperty percentageProp;
 
         AllocationRow(CategoryEnum category, String value, String percentage) {
             this.category = category;
-            this.value = value;
-            this.percentage = percentage;
+            this.categoryProp = new SimpleStringProperty(category.getDisplayName());
+            this.valueProp = new SimpleStringProperty(value);
+            this.percentageProp = new SimpleStringProperty(percentage);
         }
 
-        public SimpleStringProperty categoryProperty() {
-            return new SimpleStringProperty(category.getDisplayName());
-        }
-
-        public SimpleStringProperty valueProperty() {
-            return new SimpleStringProperty(value);
-        }
-
-        public SimpleStringProperty percentageProperty() {
-            return new SimpleStringProperty(percentage);
-        }
-
-        public CategoryEnum getCategory() {
-            return category;
-        }
+        public SimpleStringProperty categoryProperty() { return categoryProp; }
+        public SimpleStringProperty valueProperty()    { return valueProp; }
+        public SimpleStringProperty percentageProperty(){ return percentageProp; }
+        public CategoryEnum getCategory() { return category; }
     }
 
     private static class SuggestionRow {
         private final CategoryEnum category;
-        private final String action;
+        private final SimpleStringProperty categoryProp;
+        private final SimpleStringProperty actionProp;
 
         SuggestionRow(CategoryEnum category, String action) {
             this.category = category;
-            this.action = action;
+            this.categoryProp = new SimpleStringProperty(category.getDisplayName());
+            this.actionProp   = new SimpleStringProperty(action);
         }
 
-        public SimpleStringProperty categoryProperty() {
-            return new SimpleStringProperty(category.getDisplayName());
-        }
-
-        public SimpleStringProperty actionProperty() {
-            return new SimpleStringProperty(action);
-        }
-
-        public CategoryEnum getCategory() {
-            return category;
-        }
+        public SimpleStringProperty categoryProperty() { return categoryProp; }
+        public SimpleStringProperty actionProperty()   { return actionProp; }
+        public CategoryEnum getCategory() { return category; }
     }
 }

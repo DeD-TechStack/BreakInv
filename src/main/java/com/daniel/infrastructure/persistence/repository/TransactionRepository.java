@@ -19,8 +19,7 @@ public final class TransactionRepository implements ITransactionRepository {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, t.date().toString());
             ps.setInt(2, t.investmentTypeId());
             ps.setString(3, t.type());
@@ -62,8 +61,7 @@ public final class TransactionRepository implements ITransactionRepository {
             """;
 
         List<Transaction> list = new ArrayList<>();
-        try (Connection conn = Database.open();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, start.toString());
             ps.setString(2, end.toString());
 

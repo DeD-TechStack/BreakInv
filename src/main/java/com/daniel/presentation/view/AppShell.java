@@ -35,6 +35,8 @@ public final class AppShell {
         pages.put("Dashboard",                 new DashboardPage(dailyTrackingUseCase));
         pages.put("Cadastrar Investimento",    new InvestmentTypesPage(dailyTrackingUseCase));
         pages.put("Diversificação",            new DiversificationPage(dailyTrackingUseCase));
+        pages.put("Análise de Ativo",          new AssetAnalysisPage());
+        pages.put("Ranking",                   new RankingPage(dailyTrackingUseCase));
         pages.put("Simulação",                 new SimulationPage());
         pages.put("Extrato de Investimentos",  new ReportsPage(dailyTrackingUseCase));
         pages.put("Configurações",             new ConfiguracoesPage());
@@ -124,9 +126,9 @@ public final class AppShell {
         VBox navBox = new VBox(2);
         navBox.getStyleClass().add("sidebar-nav");
 
-        String[] navOrder  = {"Dashboard", "Cadastrar Investimento", "Diversificação", "Simulação", "Extrato de Investimentos"};
-        String[] navLabels = {"Dashboard", "Carteira", "Diversificação", "Simulação", "Extrato"};
-        FontIcon[] navIcons = {Icons.home(), Icons.briefcase(), Icons.pieChart(), Icons.trendingUp(), Icons.fileText()};
+        String[] navOrder  = {"Dashboard", "Cadastrar Investimento", "Diversificação", "Análise de Ativo", "Ranking", "Simulação", "Extrato de Investimentos"};
+        String[] navLabels = {"Dashboard", "Carteira", "Diversificação", "Análise", "Ranking", "Simulação", "Extrato"};
+        FontIcon[] navIcons = {Icons.home(), Icons.briefcase(), Icons.pieChart(), Icons.activity(), Icons.award(), Icons.trendingUp(), Icons.fileText()};
 
         for (int i = 0; i < navOrder.length; i++) {
             String key   = navOrder[i];

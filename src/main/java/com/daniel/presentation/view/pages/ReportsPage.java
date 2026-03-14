@@ -75,9 +75,9 @@ public final class ReportsPage implements Page {
 
         // ── KPI Cards ────────────────────────────────────────────────────────
         HBox kpiRow = new HBox(12,
-                kpiCard("Total Compras", totalComprasLabel),
-                kpiCard("Total Vendas", totalVendasLabel),
-                kpiCard("Lucro Realizado", lucroRealizadoLabel)
+                kpiCard("Total de aportes", totalComprasLabel),
+                kpiCard("Total rendido", totalVendasLabel),
+                kpiCard("Patrimônio alcançado no mês", lucroRealizadoLabel)
         );
 
         // ── Table ────────────────────────────────────────────────────────────
@@ -221,30 +221,51 @@ public final class ReportsPage implements Page {
 
         table.setItems(FXCollections.observableArrayList(rows));
 
-        long lucro = totalVendas - totalCompras;
+        // ── KPI 1: Total de aportes ─────────────────────────────────────────
+        // Soma das compras do período (dinheiro investido)
+        setKpi(totalComprasLabel, totalCompras, false);
 
-        if (rows.isEmpty()) {
-            totalComprasLabel.setText("—");
-            totalVendasLabel.setText("—");
-            lucroRealizadoLabel.setText("—");
-            totalComprasLabel.getStyleClass().removeAll("pos", "neg", "kpi-value");
-            totalComprasLabel.getStyleClass().addAll("kpi-value", "muted");
-            totalVendasLabel.getStyleClass().removeAll("pos", "neg", "kpi-value");
-            totalVendasLabel.getStyleClass().addAll("kpi-value", "muted");
-            lucroRealizadoLabel.getStyleClass().removeAll("pos", "neg", "kpi-value");
-            lucroRealizadoLabel.getStyleClass().addAll("kpi-value", "muted");
+        // ── KPI 2: Valorização da carteira no mês ───────────────────────────
+        // Lucro total acumulado = valor de mercado atual - total investido
+        // (método mais confiável sem necessidade de snapshots históricos)
+        long lucroTotal = daily.getTotalProfit(LocalDate.now());
+        setKpi(totalVendasLabel, lucroTotal, true);
+
+        // ── KPI 3: Patrimônio no fim do mês ─────────────────────────────────
+        // Para o mês atual: valor de mercado calculado com preços ao vivo.
+        // Para meses anteriores: último snapshot disponível do período.
+        boolean isCurrentMonth = currentMonth.equals(java.time.YearMonth.now());
+        LocalDate refDate = isCurrentMonth
+                ? LocalDate.now()
+                : currentMonth.atEndOfMonth();
+        long patrimonio = daily.getTotalPatrimony(refDate);
+        setKpiPositive(lucroRealizadoLabel, patrimonio);
+    }
+
+    /** Exibe valor com sinal (+/−) e cor verde/vermelho, ou "—" se zero. */
+    private void setKpi(Label label, long cents, boolean showSign) {
+        label.getStyleClass().removeAll("pos", "neg", "muted", "kpi-value");
+        if (cents == 0) {
+            label.setText("—");
+            label.getStyleClass().addAll("kpi-value", "muted");
+        } else if (cents > 0) {
+            label.setText(showSign ? "+ " + daily.brl(cents) : daily.brl(cents));
+            label.getStyleClass().addAll("kpi-value", "pos");
         } else {
-            totalComprasLabel.setText("- " + daily.brl(totalCompras));
-            totalVendasLabel.setText("+ " + daily.brl(totalVendas));
-            lucroRealizadoLabel.setText((lucro >= 0 ? "+ " : "- ") + daily.brl(Math.abs(lucro)));
+            label.setText("- " + daily.brl(Math.abs(cents)));
+            label.getStyleClass().addAll("kpi-value", "neg");
+        }
+    }
 
-            // Reset then apply state colors
-            totalComprasLabel.getStyleClass().removeAll("pos", "neg", "muted", "kpi-value");
-            totalComprasLabel.getStyleClass().addAll("kpi-value", "neg");
-            totalVendasLabel.getStyleClass().removeAll("pos", "neg", "muted", "kpi-value");
-            totalVendasLabel.getStyleClass().addAll("kpi-value", "pos");
-            lucroRealizadoLabel.getStyleClass().removeAll("pos", "neg", "muted", "kpi-value");
-            lucroRealizadoLabel.getStyleClass().addAll("kpi-value", lucro >= 0 ? "pos" : "neg");
+    /** Exibe valor sem sinal (sempre positivo, neutro), ou "—" se zero. */
+    private void setKpiPositive(Label label, long cents) {
+        label.getStyleClass().removeAll("pos", "neg", "muted", "kpi-value");
+        if (cents == 0) {
+            label.setText("—");
+            label.getStyleClass().addAll("kpi-value", "muted");
+        } else {
+            label.setText(daily.brl(cents));
+            label.getStyleClass().addAll("kpi-value");
         }
     }
 

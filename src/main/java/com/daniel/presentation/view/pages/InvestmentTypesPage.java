@@ -294,6 +294,26 @@ public final class InvestmentTypesPage implements Page {
                     prof == null ? "—" : String.format("%.2f%%", prof)
             );
         });
+        profCol.setCellFactory(col -> new TableCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                getStyleClass().removeAll("pos", "neg");
+                if (empty || item == null) {
+                    setText(null);
+                    return;
+                }
+                if ("—".equals(item)) {
+                    setText("—");
+                    return;
+                }
+                setText(item);
+                try {
+                    double val = Double.parseDouble(item.replace("%", "").replace(",", ".").trim());
+                    getStyleClass().add(val >= 0 ? "pos" : "neg");
+                } catch (Exception ignored) {}
+            }
+        });
         profCol.setPrefWidth(120);
 
         // Valor Investido
