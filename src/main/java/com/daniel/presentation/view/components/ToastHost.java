@@ -112,7 +112,7 @@ public final class ToastHost {
         fadeIn.setToValue(1);
         fadeIn.play();
 
-        PauseTransition hold = new PauseTransition(Duration.seconds(3));
+        PauseTransition hold = new PauseTransition(Duration.seconds(5));
         hold.setOnFinished(e -> {
             FadeTransition fadeOut = new FadeTransition(Duration.millis(300), toast);
             fadeOut.setFromValue(1);
