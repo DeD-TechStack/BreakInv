@@ -1,6 +1,5 @@
 package com.daniel.presentation.view.pages;
 
-import com.daniel.core.util.MoneyFormat;
 import com.daniel.infrastructure.api.AssetHistoryClient;
 import com.daniel.infrastructure.api.AssetHistoryClient.HistoryPoint;
 import com.daniel.infrastructure.api.AssetHistoryClient.Period;
@@ -24,16 +23,22 @@ import javafx.util.StringConverter;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
  * Página de análise de ativos: busca cotação atual e histórico de preços.
+ *
+ * <p>O eixo X usa {@link NumberAxis} com epoch seconds como valores, garantindo
+ * escala temporal proporcional ao intervalo real entre os dados.</p>
  */
 public final class AssetAnalysisPage implements Page {
 
-    // formato padrão; sobrescrito por período no renderChart
+    // Formatter do período atual — lido pelo eixo e pelo crosshair via lambda
     private DateTimeFormatter currentDateFmt = DateTimeFormatter.ofPattern("dd/MM");
 
     private final ScrollPane scrollPane = new ScrollPane();
@@ -59,17 +64,18 @@ public final class AssetAnalysisPage implements Page {
     private final Label lblVolume     = kpiValue("—");
     private final Label lblName       = new Label();
 
-    // ── Chart ──
-    private final CategoryAxis xAxis = new CategoryAxis();
-    private final NumberAxis   yAxis = new NumberAxis();
-    private final AreaChart<String, Number> areaChart = new AreaChart<>(xAxis, yAxis);
-
+    // ── Chart — NumberAxis para escala temporal proporcional ──
+    private final NumberAxis xAxis   = new NumberAxis();
+    private final NumberAxis yAxis   = new NumberAxis();
+    private final AreaChart<Number, Number> areaChart = new AreaChart<>(xAxis, yAxis);
 
     // ── Period selector ──
     private final ToggleGroup periodGroup = new ToggleGroup();
 
-    // ── Resize debounce for x-axis re-render ──
+    // ── Estado do último render ──
     private List<HistoryPoint> lastRenderedPoints = List.of();
+    /** Epoch seconds (ZoneOffset.UTC) dos pontos do último render, para refresh do eixo. */
+    private List<Long> lastEpochSecs = List.of();
     private Timeline resizeDebounce;
 
     // ── Sections shown/hidden ──
@@ -150,7 +156,6 @@ public final class AssetAnalysisPage implements Page {
                                 if (!results.isEmpty()) {
                                     return CompletableFuture.completedFuture(results);
                                 }
-                                // Fallback: se a query tem mais de 4 chars, tenta só os 4 primeiros
                                 if (query.length() > 4) {
                                     String shortQuery = query.substring(0, 4);
                                     return CompletableFuture.supplyAsync(
@@ -160,7 +165,6 @@ public final class AssetAnalysisPage implements Page {
                             })
                             .thenAcceptAsync(results -> Platform.runLater(() -> {
                                 if (results.isEmpty()) {
-                                    // Mostra hint para o usuário pressionar Enter e buscar diretamente
                                     TickerSuggestion hint = new TickerSuggestion(
                                             query, "Pressione Enter para buscar diretamente", null);
                                     tickerCombo.getItems().setAll(hint);
@@ -178,7 +182,6 @@ public final class AssetAnalysisPage implements Page {
             debounce.playFromStart();
         });
 
-        // Clicar em item do dropdown → buscar automaticamente
         tickerCombo.valueProperty().addListener((obs, old, selected) -> {
             if (selected != null) {
                 currentTicker = selected.ticker();
@@ -187,7 +190,6 @@ public final class AssetAnalysisPage implements Page {
             }
         });
 
-        // Enter no editor → buscar
         tickerCombo.getEditor().setOnAction(e -> doSearch());
 
         searchBtn.getStyleClass().addAll("btn-primary", "btn-sm");
@@ -220,19 +222,15 @@ public final class AssetAnalysisPage implements Page {
         grid.setHgap(12);
         grid.setVgap(12);
 
-        // Linha 0: Preço, Variação R$, Variação %
         grid.add(kpiCard("Preço Atual",   lblPrice),     0, 0);
         grid.add(kpiCard("Variação (R$)", lblChange),    1, 0);
         grid.add(kpiCard("Variação (%)",  lblChangePct), 2, 0);
-        // Linha 1: Abertura, Máx. Dia, Mín. Dia
         grid.add(kpiCard("Abertura",      lblOpen),      0, 1);
         grid.add(kpiCard("Máx. Dia",      lblHigh),      1, 1);
         grid.add(kpiCard("Mín. Dia",      lblLow),       2, 1);
-        // Linha 2: Máx. 52 Sem., Mín. 52 Sem., Méd. 200 dias
         grid.add(kpiCard("Máx. 52 Sem.", lblWeekHigh),   0, 2);
         grid.add(kpiCard("Mín. 52 Sem.", lblWeekLow),    1, 2);
         grid.add(kpiCard("Méd. 200 dias", lblAvg200),    2, 2);
-        // Linha 3: Div. Yield, Var. 52 Sem., Volume
         grid.add(kpiCard("Div. Yield",    lblDY),        0, 3);
         grid.add(kpiCard("Var. 52 Sem.",  lblYearChange),1, 3);
         grid.add(kpiCard("Volume",        lblVolume),    2, 3);
@@ -267,23 +265,29 @@ public final class AssetAnalysisPage implements Page {
             if (now != null) reloadChart();
         });
 
-        // ── Area chart ──
-        areaChart.setAnimated(true);
+        // ── Area chart com eixo temporal ──
+        areaChart.setAnimated(false);
         areaChart.setLegendVisible(false);
         areaChart.setCreateSymbols(true);
         areaChart.setMinHeight(320);
         areaChart.getStyleClass().add("area-chart");
-        yAxis.setAutoRanging(false); // range manual para não começar do zero
+        yAxis.setAutoRanging(false);
 
         VBox.setVgrow(areaChart, Priority.ALWAYS);
 
-        // Instala listener de largura para atualizar labels automaticamente no resize
-        ChartAxisUtils.installSmartAxis(xAxis, areaChart);
+        // Instala eixo temporal: distribuição proporcional ao intervalo real entre datas
+        ChartAxisUtils.installTemporalAxis(xAxis, areaChart,
+                () -> currentDateFmt,
+                () -> lastEpochSecs);
 
-        // Debounce de resize: re-renderiza dados quando largura muda > 50px
+        // Debounce de resize: recalcula tick density quando largura muda > 50px
         resizeDebounce = new Timeline(new KeyFrame(
                 javafx.util.Duration.millis(150),
-                ev -> renderChart(lastRenderedPoints)
+                ev -> {
+                    if (!lastEpochSecs.isEmpty()) {
+                        ChartAxisUtils.refreshTemporalAxis(xAxis, lastEpochSecs, areaChart.getWidth());
+                    }
+                }
         ));
         resizeDebounce.setCycleCount(1);
         areaChart.widthProperty().addListener((obs, oldW, newW) -> {
@@ -293,7 +297,10 @@ public final class AssetAnalysisPage implements Page {
             }
         });
 
-        javafx.scene.layout.StackPane chartWrapper = ChartCrosshair.install(areaChart,
+        // Crosshair temporal: nearest-neighbor por epoch second
+        StackPane chartWrapper = ChartCrosshair.installTemporal(areaChart,
+                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC)
+                        .format(currentDateFmt),
                 y -> "R$ " + String.format("%.2f", y).replace('.', ','));
         VBox.setVgrow(chartWrapper, Priority.ALWAYS);
 
@@ -378,7 +385,6 @@ public final class AssetAnalysisPage implements Page {
         lblHigh.setText(String.format("R$ %.2f", data.regularMarketDayHigh()).replace('.', ','));
         lblLow.setText(String.format("R$ %.2f", data.regularMarketDayLow()).replace('.', ','));
 
-        // BRAPI retorna dividendYield já em % (ex: 7.65 = 7,65%)
         lblDY.setText(data.dividendYield() > 0
                 ? String.format("%.2f%%", data.dividendYield()).replace('.', ',') : "—");
 
@@ -434,20 +440,23 @@ public final class AssetAnalysisPage implements Page {
         areaChart.getData().clear();
         if (points.isEmpty()) return;
 
-        // Filtrar apenas pontos com preço válido e armazenar para refresh
         List<HistoryPoint> valid = points.stream().filter(p -> p.close() > 0).toList();
         if (valid.isEmpty()) return;
         lastRenderedPoints = valid;
 
-        XYChart.Series<String, Number> series = new XYChart.Series<>();
+        XYChart.Series<Number, Number> series = new XYChart.Series<>();
         double minPrice = Double.MAX_VALUE;
         double maxPrice = -Double.MAX_VALUE;
 
+        List<Long> epochSecs = new ArrayList<>(valid.size());
         for (HistoryPoint p : valid) {
-            series.getData().add(new XYChart.Data<>(p.dateTime().format(currentDateFmt), p.close()));
+            long sec = p.dateTime().toEpochSecond(ZoneOffset.UTC);
+            series.getData().add(new XYChart.Data<>(sec, p.close()));
+            epochSecs.add(sec);
             if (p.close() < minPrice) minPrice = p.close();
             if (p.close() > maxPrice) maxPrice = p.close();
         }
+        lastEpochSecs = epochSecs;
 
         if (series.getData().isEmpty()) return;
 
@@ -460,12 +469,12 @@ public final class AssetAnalysisPage implements Page {
 
         areaChart.getData().add(series);
 
-        // Atualiza densidade de labels do eixo X com base na largura atual
-        Platform.runLater(() -> ChartAxisUtils.refreshLabels(xAxis, areaChart.getWidth()));
+        // Recalcula escala temporal do eixo X com base na largura atual
+        Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(xAxis, lastEpochSecs, areaChart.getWidth()));
 
-        // Instalar tooltip nos nós (podem não existir ainda quando a série é adicionada)
+        // Instalar tooltip nos nós dos pontos
         Platform.runLater(() -> {
-            for (XYChart.Data<String, Number> d : series.getData()) {
+            for (XYChart.Data<Number, Number> d : series.getData()) {
                 if (d.getNode() != null) {
                     installHoverTooltip(d);
                 } else {
@@ -477,13 +486,15 @@ public final class AssetAnalysisPage implements Page {
         });
     }
 
-    private void installHoverTooltip(XYChart.Data<String, Number> d) {
+    private void installHoverTooltip(XYChart.Data<Number, Number> d) {
         javafx.scene.Node node = d.getNode();
         if (node == null) return;
 
         node.setStyle("-fx-background-color: transparent; -fx-padding: 5;");
 
-        String label = d.getXValue() + "   R$ "
+        String dateLabel = LocalDateTime.ofEpochSecond(d.getXValue().longValue(), 0, ZoneOffset.UTC)
+                .format(currentDateFmt);
+        String label = dateLabel + "   R$ "
                 + String.format("%.2f", d.getYValue().doubleValue()).replace('.', ',');
 
         Tooltip tp = new Tooltip(label);

@@ -18,14 +18,21 @@ import java.util.function.Function;
 /**
  * Adiciona crosshair interativo (linhas guia verticais + horizontais) a gráficos JavaFX.
  *
- * <p>Uso básico:</p>
+ * <h3>Uso para gráficos com CategoryAxis (ex: BarChart de rentabilidade):</h3>
  * <pre>
  *   StackPane wrapper = ChartCrosshair.install(myLineChart,
  *       y -> String.format("%.2f%%", y));
  *   vbox.getChildren().add(wrapper);
  * </pre>
  *
- * Para gráficos com eixo X numérico (ex: Simulação):
+ * <h3>Uso para gráficos com eixo temporal (NumberAxis com epoch seconds):</h3>
+ * <pre>
+ *   StackPane wrapper = ChartCrosshair.installTemporal(myAreaChart,
+ *       epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(fmt),
+ *       y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+ * </pre>
+ *
+ * <h3>Uso para gráficos com NumberAxis em ambos os eixos (ex: Simulação):</h3>
  * <pre>
  *   StackPane wrapper = ChartCrosshair.installNumeric(projectionChart,
  *       x -> "Mês " + x,
@@ -39,7 +46,7 @@ public final class ChartCrosshair {
     // ── API pública ──────────────────────────────────────────────────────────
 
     /**
-     * Instala crosshair em chart com CategoryAxis (eixo X de Strings — datas, nomes, etc.).
+     * Instala crosshair em chart com CategoryAxis (eixo X de Strings — nomes de ativos, etc.).
      * Séries com nome {@code "—"} são ignoradas (usadas como linhas de referência).
      *
      * @param chart      gráfico alvo (LineChart, AreaChart)
@@ -109,7 +116,7 @@ public final class ChartCrosshair {
     /**
      * Instala crosshair em chart com NumberAxis em ambos os eixos (ex: gráfico de Simulação).
      *
-     * @param chart      gráfico alvo (LineChart<Number,Number>)
+     * @param chart      gráfico alvo (LineChart&lt;Number,Number&gt;)
      * @param xFormatter formata o valor do eixo X (ex: "Mês 12")
      * @param yFormatter formata o valor do eixo Y (ex: "R$ 1.200,00")
      * @return StackPane contendo o chart + overlay de crosshair
@@ -143,6 +150,84 @@ public final class ChartCrosshair {
             for (XYChart.Series<Number, Number> ser : chart.getData()) {
                 for (XYChart.Data<Number, Number> d : ser.getData()) {
                     if (d.getXValue().intValue() == xVal) {
+                        double yVal = d.getYValue().doubleValue();
+                        if (firstY == null) firstY = yVal;
+                        sb.append("\n").append(ser.getName()).append(": ")
+                          .append(yFormatter.apply(yVal));
+                        break;
+                    }
+                }
+            }
+            if (firstY == null) { o.hide(); return; }
+
+            double plotY = plotInContainer.getMinY() + yAxis.getDisplayPosition(firstY);
+            o.update(plotX, plotY, plotInContainer, sb.toString(), container.getWidth(), container.getHeight());
+        });
+
+        container.addEventFilter(MouseEvent.MOUSE_EXITED, e -> o.hide());
+        return container;
+    }
+
+    /**
+     * Instala crosshair em chart com {@link NumberAxis} temporal (epoch seconds).
+     *
+     * <p>Usa busca de vizinho mais próximo no eixo X — o ponto de dado com epoch second
+     * mais próximo ao cursor é selecionado, garantindo que o crosshair sempre se encaixe
+     * num ponto real mesmo que o cursor esteja entre dois pontos de datas diferentes.</p>
+     *
+     * <p>Séries com nome {@code "—"} são ignoradas (linhas de referência).</p>
+     *
+     * @param chart      gráfico alvo (AreaChart ou LineChart&lt;Number,Number&gt; com eixo temporal)
+     * @param xFormatter converte epoch second (Long) em label de data para o tooltip
+     * @param yFormatter formata o valor do eixo Y para o tooltip
+     * @return StackPane contendo o chart + overlay de crosshair
+     */
+    public static StackPane installTemporal(XYChart<Number, Number> chart,
+                                             Function<Long, String> xFormatter,
+                                             Function<Double, String> yFormatter) {
+        CrosshairOverlay o = new CrosshairOverlay();
+
+        StackPane container = new StackPane(chart, o.pane);
+
+        container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
+            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
+
+            Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
+            Bounds  pb = plotBg.getBoundsInLocal();
+            if (outOfPlot(mp, pb)) { o.hide(); return; }
+
+            NumberAxis xAxis = (NumberAxis) chart.getXAxis();
+            NumberAxis yAxis = (NumberAxis) chart.getYAxis();
+
+            double xValue = xAxis.getValueForDisplay(mp.getX()).doubleValue();
+
+            // Encontra o epoch second mais próximo ao cursor em todas as séries
+            long   nearestEpoch = Long.MIN_VALUE;
+            double minDist      = Double.MAX_VALUE;
+            for (XYChart.Series<Number, Number> ser : chart.getData()) {
+                if ("—".equals(ser.getName())) continue;
+                for (XYChart.Data<Number, Number> d : ser.getData()) {
+                    double dist = Math.abs(d.getXValue().doubleValue() - xValue);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearestEpoch = d.getXValue().longValue();
+                    }
+                }
+            }
+            if (nearestEpoch == Long.MIN_VALUE) { o.hide(); return; }
+
+            Bounds plotInScene     = plotBg.localToScene(pb);
+            Bounds plotInContainer = container.sceneToLocal(plotInScene);
+            double plotX = plotInContainer.getMinX() + xAxis.getDisplayPosition(nearestEpoch);
+
+            final long finalEpoch = nearestEpoch;
+            Double firstY = null;
+            StringBuilder sb = new StringBuilder(xFormatter.apply(finalEpoch));
+            for (XYChart.Series<Number, Number> ser : chart.getData()) {
+                if ("—".equals(ser.getName())) continue;
+                for (XYChart.Data<Number, Number> d : ser.getData()) {
+                    if (d.getXValue().longValue() == finalEpoch) {
                         double yVal = d.getYValue().doubleValue();
                         if (firstY == null) firstY = yVal;
                         sb.append("\n").append(ser.getName()).append(": ")

@@ -9,6 +9,8 @@ import com.daniel.infrastructure.api.BrapiClient.TickerSuggestion;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.util.StringConverter;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import com.daniel.presentation.view.PageHeader;
 import com.daniel.presentation.view.components.ToastHost;
@@ -34,11 +36,16 @@ import java.util.logging.Logger;
 
 /**
  * Página de Ranking de Ativos da carteira por variação diária.
- * Exibe top altas e top baixas, com BarChart de variação % dos ativos selecionados.
+ *
+ * <p>Gráficos de rentabilidade acumulada e média móvel usam {@link NumberAxis}
+ * com epoch seconds como eixo X, garantindo escala temporal proporcional ao
+ * intervalo real entre os dados. O BarChart de variação diária mantém
+ * {@link CategoryAxis} pois exibe nomes de ativos, não datas.</p>
  */
 public final class RankingPage implements Page {
 
     private static final Logger LOG = Logger.getLogger(RankingPage.class.getName());
+    private static final DateTimeFormatter MA_DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yy");
 
     private final DailyTrackingUseCase daily;
 
@@ -49,26 +56,32 @@ public final class RankingPage implements Page {
     private final TableView<RankingRow> gainersTable = new TableView<>();
     private final TableView<RankingRow> losersTable  = new TableView<>();
 
-    // ── Bar chart (variação do dia) ──
+    // ── Bar chart (variação do dia) — CategoryAxis, pois X = ticker names ──
     private final CategoryAxis barXAxis = new CategoryAxis();
     private final NumberAxis   barYAxis = new NumberAxis();
     private final BarChart<String, Number> barChart = new BarChart<>(barXAxis, barYAxis);
 
-    // ── Return / history chart (rentabilidade acumulada) ──
-    private final CategoryAxis retXAxis = new CategoryAxis();
-    private final NumberAxis   retYAxis = new NumberAxis();
-    private final LineChart<String, Number> returnChart = new LineChart<>(retXAxis, retYAxis);
+    // ── Return chart (rentabilidade acumulada) — NumberAxis temporal ──
+    private final NumberAxis retXAxis = new NumberAxis();
+    private final NumberAxis retYAxis = new NumberAxis();
+    private final LineChart<Number, Number> returnChart = new LineChart<>(retXAxis, retYAxis);
     private final ToggleGroup returnPeriodGroup = new ToggleGroup();
     private Label returnLoadingLabel;
+    /** Epoch seconds dos pontos do último render do returnChart. */
+    private List<Long> lastReturnEpochSecs = List.of();
+    /** Formatter atual do returnChart — atualizado ao mudar período. */
+    private DateTimeFormatter currentReturnFmt = DateTimeFormatter.ofPattern("dd/MM");
 
-    // ── Moving Average chart ──
-    private final CategoryAxis maXAxis = new CategoryAxis();
-    private final NumberAxis   maYAxis = new NumberAxis();
-    private final LineChart<String, Number> maChart = new LineChart<>(maXAxis, maYAxis);
+    // ── Moving Average chart — NumberAxis temporal ──
+    private final NumberAxis maXAxis = new NumberAxis();
+    private final NumberAxis maYAxis = new NumberAxis();
+    private final LineChart<Number, Number> maChart = new LineChart<>(maXAxis, maYAxis);
     private final ComboBox<TickerSuggestion> maTickerCombo = new ComboBox<>();
     private final javafx.scene.control.DatePicker maFromPicker = new javafx.scene.control.DatePicker();
     private final javafx.scene.control.DatePicker maToPicker   = new javafx.scene.control.DatePicker();
     private Label maLoadingLabel;
+    /** Epoch seconds dos pontos do último render do maChart. */
+    private List<Long> lastMAEpochSecs = List.of();
 
     // ── State ──
     private Map<String, StockData> lastStocks = new HashMap<>();
@@ -136,7 +149,7 @@ public final class RankingPage implements Page {
         HBox.setHgrow(gainersCard, Priority.ALWAYS);
         HBox.setHgrow(losersCard,  Priority.ALWAYS);
 
-        // ── Bar chart card ──
+        // ── Bar chart card — CategoryAxis (ticker names) ──
         barChart.setAnimated(false);
         barChart.setLegendVisible(false);
         barChart.setMinHeight(280);
@@ -200,23 +213,14 @@ public final class RankingPage implements Page {
         table.setPrefHeight(220);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
-        // Seleção por toggle sem CTRL:
-        //  - MOUSE_PRESSED: captura quais índices já estavam selecionados e se a
-        //    linha clicada já estava selecionada — sem consumir o evento, deixando
-        //    o JavaFX processar normalmente (MOUSE_CLICKED sempre dispara).
-        //  - MOUSE_CLICKED: corrige o estado depois do comportamento padrão do
-        //    JavaFX que, em modo MULTIPLE sem CTRL, substitui toda a seleção.
         table.setRowFactory(tv -> {
             TableRow<RankingRow> row = new TableRow<>();
             final boolean[] wasSelectedOnPress = {false};
             final List<Integer>[] prevIndices = new List[]{List.of()};
 
-            // Usa addEventFilter (fase de captura) para garantir que o estado da seleção
-            // seja capturado ANTES do CellBehaviorBase (handler interno do JavaFX) alterar a seleção.
             row.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                 if (!row.isEmpty()) {
                     wasSelectedOnPress[0] = row.isSelected();
-                    // Guarda os índices selecionados ANTES do JavaFX mudar a seleção
                     prevIndices[0] = new ArrayList<>(tv.getSelectionModel().getSelectedIndices());
                 }
             });
@@ -224,11 +228,8 @@ public final class RankingPage implements Page {
             row.setOnMouseClicked(event -> {
                 if (row.isEmpty()) return;
                 if (wasSelectedOnPress[0]) {
-                    // linha já estava selecionada → desmarcar apenas ela
                     tv.getSelectionModel().clearSelection(tv.getItems().indexOf(row.getItem()));
                 } else {
-                    // linha não estava selecionada → o JavaFX a selecionou e limpou
-                    // as demais; restaura as anteriores para manter acumulação
                     for (int idx : prevIndices[0]) {
                         tv.getSelectionModel().select(idx);
                     }
@@ -237,8 +238,6 @@ public final class RankingPage implements Page {
             return row;
         });
 
-        // ListChangeListener detecta qualquer mudança na seleção múltipla
-        // (selectedItemProperty só monitora o último item focado)
         table.getSelectionModel().getSelectedItems().addListener(
                 (ListChangeListener<RankingRow>) change -> onTableSelectionChanged());
 
@@ -285,8 +284,6 @@ public final class RankingPage implements Page {
             }
 
             Map<String, StockData> stocks = result.getData();
-            // Re-indexa por StockData.ticker() para garantir que lastStocks.get(row.ticker())
-            // sempre encontre o dado, independente do formato da chave retornada pela API
             lastStocks = new HashMap<>();
             for (StockData sd : stocks.values()) {
                 if (sd != null && sd.ticker() != null) lastStocks.put(sd.ticker(), sd);
@@ -304,8 +301,6 @@ public final class RankingPage implements Page {
     }
 
     private void onTableSelectionChanged() {
-        // Difere para o próximo pulso do FX, após todo o processamento do evento de mouse
-        // ter terminado — evita múltiplas limpezas/redesenhos do gráfico em sequência.
         Platform.runLater(() -> {
             Set<String> selected = new LinkedHashSet<>();
             for (RankingRow row : gainersTable.getSelectionModel().getSelectedItems()) {
@@ -316,7 +311,7 @@ public final class RankingPage implements Page {
             }
 
             if (selected.isEmpty()) {
-                reloadChart(); // sem seleção → mostrar todos
+                reloadChart();
             } else {
                 reloadChartForTickers(new ArrayList<>(selected));
             }
@@ -325,7 +320,6 @@ public final class RankingPage implements Page {
     }
 
     private void reloadChart() {
-        // Mostrar todos os ativos carregados (limite visual de 8)
         List<String> tickers = new ArrayList<>(lastStocks.keySet());
         if (tickers.size() > 8) tickers = tickers.subList(0, 8);
         reloadChartForTickers(tickers);
@@ -336,7 +330,6 @@ public final class RankingPage implements Page {
 
         if (tickers.isEmpty()) return;
 
-        // Espaçamento dinâmico entre barras (independente da densidade de labels)
         int n = tickers.size();
         barChart.setCategoryGap(n <= 3 ? 60 : n <= 6 ? 30 : 12);
 
@@ -355,9 +348,6 @@ public final class RankingPage implements Page {
             final double finalPct = pct;
             final StockData finalD  = d;
 
-            // O JavaFX pode criar o node imediatamente (síncrono) ou na próxima passagem
-            // de layout. Platform.runLater garante que verificamos APÓS o add, e o listener
-            // cobre o caso em que o node ainda não foi criado nesse instante.
             Platform.runLater(() -> {
                 if (bar.getNode() != null) {
                     applyBarTooltip(bar, finalPct, finalD);
@@ -369,7 +359,6 @@ public final class RankingPage implements Page {
             });
         }
 
-        // Atualiza densidade de labels do eixo X após renderização
         Platform.runLater(() -> ChartAxisUtils.refreshLabels(barXAxis, barChart.getWidth()));
     }
 
@@ -399,15 +388,19 @@ public final class RankingPage implements Page {
         retYAxis.setLabel("Rentabilidade (%)");
         retXAxis.setLabel("");
 
-        // Instala listener de largura para atualizar labels automaticamente no resize
-        ChartAxisUtils.installSmartAxis(retXAxis, returnChart);
+        // Eixo temporal: distribuição proporcional ao intervalo real entre datas
+        ChartAxisUtils.installTemporalAxis(retXAxis, returnChart,
+                () -> currentReturnFmt,
+                () -> lastReturnEpochSecs);
 
         returnLoadingLabel = new Label("Carregando histórico...");
         returnLoadingLabel.getStyleClass().add("section-subtitle");
         returnLoadingLabel.setVisible(false);
         returnLoadingLabel.setManaged(false);
 
-        javafx.scene.layout.StackPane returnWrapper = ChartCrosshair.install(returnChart,
+        StackPane returnWrapper = ChartCrosshair.installTemporal(returnChart,
+                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC)
+                        .format(currentReturnFmt),
                 y -> String.format("%s%.2f%%", y >= 0 ? "+" : "", y).replace('.', ','));
 
         Label chartTitle = new Label("RENTABILIDADE ACUMULADA (%)");
@@ -427,6 +420,7 @@ public final class RankingPage implements Page {
         if (tickers.isEmpty()) return;
 
         AssetHistoryClient.Period period = getSelectedReturnPeriod();
+        currentReturnFmt = DateTimeFormatter.ofPattern(period.datePattern);
         returnLoadingLabel.setVisible(true);
         returnLoadingLabel.setManaged(true);
 
@@ -447,12 +441,11 @@ public final class RankingPage implements Page {
                         var entry = f.join();
                         if (!entry.getValue().isEmpty()) all.put(entry.getKey(), entry.getValue());
                     }
-                    Platform.runLater(() -> renderReturnChart(all, period));
+                    Platform.runLater(() -> renderReturnChart(all));
                 });
     }
 
-    private void renderReturnChart(Map<String, List<HistoryPoint>> allHistories,
-                                    AssetHistoryClient.Period period) {
+    private void renderReturnChart(Map<String, List<HistoryPoint>> allHistories) {
         returnLoadingLabel.setVisible(false);
         returnLoadingLabel.setManaged(false);
         returnChart.getData().clear();
@@ -462,7 +455,7 @@ public final class RankingPage implements Page {
             return;
         }
 
-        DateTimeFormatter fmt = DateTimeFormatter.ofPattern(period.datePattern);
+        List<Long> refEpochSecs = new ArrayList<>();
 
         for (var entry : allHistories.entrySet()) {
             List<HistoryPoint> points = entry.getValue();
@@ -470,19 +463,28 @@ public final class RankingPage implements Page {
             double base = points.get(0).close();
             if (base <= 0) continue;
 
-            XYChart.Series<String, Number> series = new XYChart.Series<>();
+            XYChart.Series<Number, Number> series = new XYChart.Series<>();
             series.setName(entry.getKey());
 
             for (HistoryPoint p : points) {
+                long sec = p.dateTime().toEpochSecond(ZoneOffset.UTC);
                 double returnPct = ((p.close() / base) - 1) * 100.0;
-                series.getData().add(new XYChart.Data<>(p.dateTime().format(fmt), returnPct));
+                series.getData().add(new XYChart.Data<>(sec, returnPct));
             }
 
-            if (!series.getData().isEmpty()) returnChart.getData().add(series);
+            if (!series.getData().isEmpty()) {
+                returnChart.getData().add(series);
+                // Usa a primeira série como referência para o eixo
+                if (refEpochSecs.isEmpty()) {
+                    for (XYChart.Data<Number, Number> d : series.getData()) {
+                        refEpochSecs.add(d.getXValue().longValue());
+                    }
+                }
+            }
         }
 
-        // Atualiza densidade de labels do eixo X com base na largura atual
-        Platform.runLater(() -> ChartAxisUtils.refreshLabels(retXAxis, returnChart.getWidth()));
+        lastReturnEpochSecs = refEpochSecs;
+        Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(retXAxis, lastReturnEpochSecs, returnChart.getWidth()));
     }
 
     private List<String> getSelectedOrAllTickers() {
@@ -494,7 +496,6 @@ public final class RankingPage implements Page {
             if (row != null) selected.add(row.ticker());
         }
         if (!selected.isEmpty()) return new ArrayList<>(selected);
-        // Sem seleção → todos (limite 5 para não sobrecarregar)
         List<String> all = new ArrayList<>(lastStocks.keySet());
         return all.size() > 5 ? all.subList(0, 5) : all;
     }
@@ -542,7 +543,6 @@ public final class RankingPage implements Page {
 
         node.setStyle(baseStyle);
 
-        // Label do ticker dentro da barra (rotacionado -90°)
         if (node instanceof StackPane sp
                 && sp.getChildren().stream().noneMatch(c -> c instanceof Label)) {
             Label lbl = new Label(bar.getXValue());
@@ -553,7 +553,6 @@ public final class RankingPage implements Page {
             sp.getChildren().add(lbl);
         }
 
-        // Tooltip com informações ao passar o mouse
         String sign = pct >= 0 ? "+" : "";
         Tooltip tp = new Tooltip(
                 bar.getXValue()
@@ -603,10 +602,8 @@ public final class RankingPage implements Page {
             }
         });
 
-        // Flag para suprimir o debounce durante mudanças programáticas no editor
         final boolean[] programmaticChange = {false};
 
-        // Debounce 300ms antes de disparar sugestões
         Timeline maDebounce = new Timeline(new KeyFrame(
                 javafx.util.Duration.millis(300),
                 ev -> {
@@ -636,15 +633,12 @@ public final class RankingPage implements Page {
                 }
         ));
 
-        // Só dispara o debounce para digitação do usuário; ignora mudanças programáticas
         maTickerCombo.getEditor().textProperty().addListener((obs, old, val) -> {
             if (programmaticChange[0]) return;
             maDebounce.stop();
             maDebounce.playFromStart();
         });
 
-        // Ao clicar num item do dropdown: congela o debounce, grava o ticker no editor
-        // e fecha o popup — sem disparar nova busca
         maTickerCombo.valueProperty().addListener((obs, old, selected) -> {
             if (selected != null) {
                 maDebounce.stop();
@@ -655,7 +649,6 @@ public final class RankingPage implements Page {
             }
         });
 
-        // Enter no editor → calcular
         maTickerCombo.getEditor().setOnAction(e -> loadMAChart());
 
         maFromPicker.setPromptText("Data inicial");
@@ -678,13 +671,12 @@ public final class RankingPage implements Page {
         inputBar.setAlignment(Pos.CENTER_LEFT);
         inputBar.getStyleClass().add("toolbar");
 
-        // ── Loading label ──
         maLoadingLabel = new Label("Calculando média móvel...");
         maLoadingLabel.getStyleClass().add("section-subtitle");
         maLoadingLabel.setVisible(false);
         maLoadingLabel.setManaged(false);
 
-        // ── Chart setup ──
+        // ── Chart setup — NumberAxis temporal ──
         maChart.setAnimated(false);
         maChart.setLegendVisible(true);
         maChart.setCreateSymbols(false);
@@ -693,9 +685,13 @@ public final class RankingPage implements Page {
         maXAxis.setLabel("");
         maYAxis.setAutoRanging(false);
 
-        ChartAxisUtils.installSmartAxis(maXAxis, maChart);
+        ChartAxisUtils.installTemporalAxis(maXAxis, maChart,
+                () -> MA_DATE_FMT,
+                () -> lastMAEpochSecs);
 
-        javafx.scene.layout.StackPane chartWrapper = ChartCrosshair.install(maChart,
+        StackPane chartWrapper = ChartCrosshair.installTemporal(maChart,
+                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC)
+                        .format(MA_DATE_FMT),
                 y -> "R$ " + String.format("%.2f", y).replace('.', ','));
 
         VBox card = new VBox(8, title, hint, inputBar, maLoadingLabel, chartWrapper);
@@ -749,7 +745,6 @@ public final class RankingPage implements Page {
             return;
         }
 
-        // Janela da MA: adaptada ao total de pontos para sempre gerar uma curva útil
         int total = points.size();
         int maWindow;
         if      (total < 10)  { ToastHost.showWarn("Período muito curto para calcular média móvel (mínimo 10 pontos)."); return; }
@@ -758,33 +753,36 @@ public final class RankingPage implements Page {
         else if (total < 200) maWindow = 20;
         else                  maWindow = 50;
 
-        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM/yy");
-
-        XYChart.Series<String, Number> priceSeries = new XYChart.Series<>();
+        XYChart.Series<Number, Number> priceSeries = new XYChart.Series<>();
         priceSeries.setName("Preço " + ticker);
 
-        XYChart.Series<String, Number> maSeries = new XYChart.Series<>();
+        XYChart.Series<Number, Number> maSeries = new XYChart.Series<>();
         maSeries.setName("MM" + maWindow);
 
         double minPrice = Double.MAX_VALUE;
         double maxPrice = -Double.MAX_VALUE;
 
+        List<Long> epochSecs = new ArrayList<>(total);
+
         for (int i = 0; i < total; i++) {
             HistoryPoint p = points.get(i);
-            String dateLabel = p.dateTime().format(fmt);
+            long sec = p.dateTime().toEpochSecond(ZoneOffset.UTC);
             double price = p.close();
 
-            priceSeries.getData().add(new XYChart.Data<>(dateLabel, price));
+            priceSeries.getData().add(new XYChart.Data<>(sec, price));
+            epochSecs.add(sec);
             if (price < minPrice) minPrice = price;
             if (price > maxPrice) maxPrice = price;
 
-            // MA: começa quando há dados suficientes
             if (i >= maWindow - 1) {
                 double sum = 0;
                 for (int j = i - maWindow + 1; j <= i; j++) sum += points.get(j).close();
-                maSeries.getData().add(new XYChart.Data<>(dateLabel, sum / maWindow));
+                long maSec = points.get(i).dateTime().toEpochSecond(ZoneOffset.UTC);
+                maSeries.getData().add(new XYChart.Data<>(maSec, sum / maWindow));
             }
         }
+
+        lastMAEpochSecs = epochSecs;
 
         // Eixo Y com padding de 5%
         double range   = maxPrice - minPrice;
@@ -806,7 +804,7 @@ public final class RankingPage implements Page {
                 maLine.setStyle("-fx-stroke: #f59e0b; -fx-stroke-width: 2.5; -fx-stroke-dash-array: 8 4;");
         });
 
-        Platform.runLater(() -> ChartAxisUtils.refreshLabels(maXAxis, maChart.getWidth()));
+        Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(maXAxis, lastMAEpochSecs, maChart.getWidth()));
     }
 
     private List<String> getPortfolioTickers() {
