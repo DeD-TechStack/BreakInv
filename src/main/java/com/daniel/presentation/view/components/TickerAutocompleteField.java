@@ -51,16 +51,35 @@ public final class TickerAutocompleteField extends TextField {
         });
     }
 
-    private void loadSuggestions(String query) {
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                return BrapiClient.searchTickers(query);
-            } catch (Exception e) {
-                return List.<BrapiClient.TickerSuggestion>of();
-            }
-        }).thenAcceptAsync(suggestions -> {
-            Platform.runLater(() -> updateSuggestionsMenu(suggestions));
-        });
+    private void loadSuggestions(String rawQuery) {
+        String query = rawQuery.trim().toUpperCase();
+        CompletableFuture
+                .supplyAsync(() -> {
+                    try { return BrapiClient.searchTickers(query); }
+                    catch (Exception e) { return List.<BrapiClient.TickerSuggestion>of(); }
+                })
+                .thenComposeAsync(results -> {
+                    if (!results.isEmpty()) return CompletableFuture.completedFuture(results);
+                    // Fallback: tenta com os 4 primeiros chars se a query for longa
+                    if (query.length() > 4) {
+                        String shortQuery = query.substring(0, 4);
+                        return CompletableFuture.supplyAsync(() -> {
+                            try { return BrapiClient.searchTickers(shortQuery); }
+                            catch (Exception e) { return List.<BrapiClient.TickerSuggestion>of(); }
+                        });
+                    }
+                    return CompletableFuture.completedFuture(results);
+                })
+                .thenAcceptAsync(suggestions -> Platform.runLater(() -> {
+                    if (suggestions.isEmpty()) {
+                        // Hint para confirmar manualmente
+                        updateSuggestionsMenu(List.of(
+                                new BrapiClient.TickerSuggestion(query,
+                                        "Pressione Enter para confirmar diretamente", null)));
+                    } else {
+                        updateSuggestionsMenu(suggestions);
+                    }
+                }));
     }
 
     private void updateSuggestionsMenu(List<BrapiClient.TickerSuggestion> suggestions) {
