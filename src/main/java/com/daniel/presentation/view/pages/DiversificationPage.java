@@ -48,6 +48,8 @@ public final class DiversificationPage implements Page {
 
     private final Label totalPatrimonyLabel = new Label("—");
     private final Label totalAporteLabel    = new Label();
+    private final Label impliedTargetLabel  = new Label("—");
+    private VBox impliedTargetBox;
 
     // Empty state — shown when no investments are registered
     private final VBox noInvestmentsPanel = buildNoInvestmentsPanel();
@@ -120,7 +122,7 @@ public final class DiversificationPage implements Page {
         HBox segCalc = new HBox(2, rebalanceByContributionRadio, rebalanceByTargetRadio);
         segCalc.getStyleClass().add("segmented");
 
-        Label hint = new Label("O sistema calcula automaticamente o aporte necessário para balancear sua carteira");
+        Label hint = new Label("Calcula o patrimônio alvo a partir da categoria mais pesada da carteira e sugere aportes para equilibrar — sem vender nenhum ativo.");
         hint.getStyleClass().add("text-helper");
         hint.setWrapText(true);
 
@@ -142,7 +144,7 @@ public final class DiversificationPage implements Page {
             targetBox.setManaged(isTarget);
             hint.setText(isTarget
                     ? "Calcula quanto aportar em cada categoria para atingir um patrimônio alvo"
-                    : "O sistema calcula automaticamente o aporte necessário para balancear sua carteira");
+                    : "Calcula o patrimônio alvo a partir da categoria mais pesada da carteira e sugere aportes para equilibrar — sem vender nenhum ativo.");
             refreshData();
         });
 
@@ -235,13 +237,20 @@ public final class DiversificationPage implements Page {
 
         Label title = new Label("PATRIMÔNIO ATUAL");
         title.getStyleClass().add("kpi-label");
-
         totalPatrimonyLabel.getStyleClass().addAll("kpi-value", "num");
-
         Label sub = new Label("baseado em valores de hoje");
         sub.getStyleClass().add("kpi-sub");
+        VBox currentBox = new VBox(4, title, totalPatrimonyLabel, sub);
 
-        box.getChildren().addAll(title, totalPatrimonyLabel, sub);
+        Label impliedTitle = new Label("PATRIMÔNIO ALVO CALCULADO");
+        impliedTitle.getStyleClass().add("kpi-label");
+        impliedTargetLabel.getStyleClass().addAll("kpi-value", "num");
+        impliedTargetBox = new VBox(4, impliedTitle, impliedTargetLabel);
+        impliedTargetBox.setVisible(false);
+        impliedTargetBox.setManaged(false);
+
+        HBox row = new HBox(40, currentBox, impliedTargetBox);
+        box.getChildren().add(row);
         return box;
     }
 
@@ -507,18 +516,25 @@ public final class DiversificationPage implements Page {
         List<DiversificationSuggestion> suggestions;
         long referencePatrimony;
 
-        // Escolher metodo de cálculo
+        // Escolher método de cálculo
         if (rebalanceByTargetRadio.isSelected()) {
             long targetPatrimony = getTargetPatrimony(currentPatrimony);
             referencePatrimony = targetPatrimony;
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByTarget(
                     currentPatrimony, targetPatrimony, currentData.valuesCents(), profile
             );
+            impliedTargetBox.setVisible(false);
+            impliedTargetBox.setManaged(false);
         } else {
             referencePatrimony = currentPatrimony;
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
                     currentPatrimony, currentData.valuesCents(), profile
             );
+            long implied = ARCADiversificationStrategy.calculateImpliedTarget(
+                    currentPatrimony, currentData.valuesCents(), profile);
+            impliedTargetLabel.setText(daily.brl(implied));
+            impliedTargetBox.setVisible(true);
+            impliedTargetBox.setManaged(true);
         }
 
         var idealRows = FXCollections.<AllocationRow>observableArrayList();
@@ -579,11 +595,18 @@ public final class DiversificationPage implements Page {
                 suggestions = ARCADiversificationStrategy.calculateSuggestionsByTarget(
                         currentPatrimony, targetPatrimony, currentData.valuesCents(), customProfile
                 );
+                impliedTargetBox.setVisible(false);
+                impliedTargetBox.setManaged(false);
             } else {
                 referencePatrimony = currentPatrimony;
                 suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
                         currentPatrimony, currentData.valuesCents(), customProfile
                 );
+                long implied = ARCADiversificationStrategy.calculateImpliedTarget(
+                        currentPatrimony, currentData.valuesCents(), customProfile);
+                impliedTargetLabel.setText(daily.brl(implied));
+                impliedTargetBox.setVisible(true);
+                impliedTargetBox.setManaged(true);
             }
 
             var idealRows = FXCollections.<AllocationRow>observableArrayList();

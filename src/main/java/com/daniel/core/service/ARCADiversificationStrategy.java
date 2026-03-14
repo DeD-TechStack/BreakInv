@@ -48,32 +48,58 @@ public final class ARCADiversificationStrategy {
     }
 
     /**
-     * Calcula quanto aportar em cada categoria para aproximar a carteira do ideal.
+     * Calcula quanto aportar em cada categoria para equilibrar a carteira.
      * NÃO vende posições — apenas sugere novos aportes.
      *
      * Lógica:
-     * 1. Para cada categoria: calcula o déficit = (patrimônio × target%) - atual
-     * 2. Sugere aportar o déficit positivo (categorias abaixo do ideal)
-     * 3. Categorias acima do ideal: aporte = 0 (não vende)
+     * 1. Deriva o patrimônio alvo implícito a partir da categoria mais pesada:
+     *    para cada categoria com valor > 0, calcula quanto valeria o patrimônio total
+     *    se aquela categoria já estivesse no percentual correto. Usa o maior valor.
+     * 2. Calcula o ideal de cada categoria com base no alvo implícito.
+     * 3. Aporte = max(0, ideal - atual) — nunca vende.
      */
     public static List<DiversificationSuggestion> calculateSuggestionsByContribution(
             long currentPatrimonyCents,
             Map<CategoryEnum, Long> currentAllocation,
             Map<CategoryEnum, Double> targetProfile
     ) {
+        long impliedTarget = calculateImpliedTarget(currentPatrimonyCents, currentAllocation, targetProfile);
+
         List<DiversificationSuggestion> suggestions = new ArrayList<>();
         for (CategoryEnum category : CategoryEnum.values()) {
             long currentCents = currentAllocation.getOrDefault(category, 0L);
             double targetPct  = targetProfile.getOrDefault(category, 0.0);
-            long idealCents   = Math.round(currentPatrimonyCents * targetPct);
-            long difference   = idealCents - currentCents;
-            long aporte       = Math.max(0, difference); // nunca negativo
+            long idealCents   = Math.round(impliedTarget * targetPct);
+            long diff         = idealCents - currentCents;
+            long aporte       = Math.max(0, diff); // nunca vende
             suggestions.add(new DiversificationSuggestion(
-                    category, currentCents, idealCents, difference, aporte
+                    category, currentCents, idealCents, diff, aporte
             ));
         }
         suggestions.sort((a, b) -> Long.compare(b.aporteNecessarioCents(), a.aporteNecessarioCents()));
         return suggestions;
+    }
+
+    /**
+     * Deriva o patrimônio alvo implícito a partir da categoria mais pesada da carteira.
+     * Para cada categoria com valor > 0 e target% > 0, calcula: valor / target%.
+     * Retorna o maior candidato (ou currentPatrimonyCents como fallback).
+     */
+    public static long calculateImpliedTarget(
+            long currentPatrimonyCents,
+            Map<CategoryEnum, Long> currentAllocation,
+            Map<CategoryEnum, Double> targetProfile
+    ) {
+        long impliedTarget = currentPatrimonyCents;
+        for (CategoryEnum cat : CategoryEnum.values()) {
+            long current   = currentAllocation.getOrDefault(cat, 0L);
+            double targetPct = targetProfile.getOrDefault(cat, 0.0);
+            if (current > 0 && targetPct > 0) {
+                long candidate = Math.round(current / targetPct);
+                if (candidate > impliedTarget) impliedTarget = candidate;
+            }
+        }
+        return impliedTarget;
     }
 
     /**

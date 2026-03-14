@@ -223,6 +223,46 @@ class ARCADiversificationStrategyTest {
         assertEquals(0L, totalAporte, "Balanced portfolio should need no aporte");
     }
 
+    @Test
+    void calculateSuggestionsByContribution_impliedTargetFromHeaviestCategory() {
+        // R$3.000 em Ações (300.000 centavos), perfil 25% cada categoria.
+        // Patrimônio alvo implícito = 300.000 / 0,25 = 1.200.000 (R$12.000).
+        // As outras 3 categorias precisam de 300.000 centavos cada.
+        Map<CategoryEnum, Double> profile = new EnumMap<>(CategoryEnum.class);
+        profile.put(CategoryEnum.ACOES,       0.25);
+        profile.put(CategoryEnum.RENDA_FIXA,  0.25);
+        profile.put(CategoryEnum.OUTROS,      0.25);
+        profile.put(CategoryEnum.CRIPTOMOEDAS,0.25);
+
+        Map<CategoryEnum, Long> alloc = new EnumMap<>(CategoryEnum.class);
+        alloc.put(CategoryEnum.ACOES, 300_000L); // R$ 3.000,00
+
+        var suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
+                300_000L, alloc, profile
+        );
+
+        var acoes = findCategory(suggestions, CategoryEnum.ACOES);
+        var rf    = findCategory(suggestions, CategoryEnum.RENDA_FIXA);
+        var out   = findCategory(suggestions, CategoryEnum.OUTROS);
+        var cri   = findCategory(suggestions, CategoryEnum.CRIPTOMOEDAS);
+
+        assertNotNull(acoes);
+        assertEquals(0L,       acoes.aporteNecessarioCents(), "ACOES já está no ideal");
+        assertEquals(300_000L, rf.aporteNecessarioCents(),    "RF precisa de R$3k");
+        assertEquals(300_000L, out.aporteNecessarioCents(),   "OUTROS precisam de R$3k");
+        assertEquals(300_000L, cri.aporteNecessarioCents(),   "CRIPTO precisa de R$3k");
+    }
+
+    @Test
+    void calculateImpliedTarget_returnsFallbackWhenNoAllocation() {
+        // Sem nenhum valor investido, o alvo implícito deve ser o patrimônio atual (fallback)
+        Map<CategoryEnum, Double> profile = ARCADiversificationStrategy.getARCAProfile();
+        long result = ARCADiversificationStrategy.calculateImpliedTarget(
+                500_000L, Map.of(), profile
+        );
+        assertEquals(500_000L, result);
+    }
+
     // ===== Helper =====
 
     private ARCADiversificationStrategy.DiversificationSuggestion findCategory(
