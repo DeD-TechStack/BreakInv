@@ -9,6 +9,8 @@ import com.daniel.infrastructure.api.BrapiClient.StockData;
 import com.daniel.infrastructure.api.BrapiClient.TickerSuggestion;
 import com.daniel.presentation.view.PageHeader;
 import com.daniel.presentation.view.components.ToastHost;
+import com.daniel.presentation.view.util.ChartAxisUtils;
+import com.daniel.presentation.view.util.ChartCrosshair;
 import com.daniel.presentation.view.util.Icons;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -31,7 +33,8 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class AssetAnalysisPage implements Page {
 
-    private static final DateTimeFormatter DMY = DateTimeFormatter.ofPattern("dd/MM");
+    // formato padrão; sobrescrito por período no renderChart
+    private DateTimeFormatter currentDateFmt = DateTimeFormatter.ofPattern("dd/MM");
 
     private final ScrollPane scrollPane = new ScrollPane();
     private final VBox root = new VBox(20);
@@ -64,6 +67,10 @@ public final class AssetAnalysisPage implements Page {
 
     // ── Period selector ──
     private final ToggleGroup periodGroup = new ToggleGroup();
+
+    // ── Resize debounce for x-axis re-render ──
+    private List<HistoryPoint> lastRenderedPoints = List.of();
+    private Timeline resizeDebounce;
 
     // ── Sections shown/hidden ──
     private VBox kpiSection;
@@ -134,14 +141,35 @@ public final class AssetAnalysisPage implements Page {
         Timeline debounce = new Timeline(new KeyFrame(
                 javafx.util.Duration.millis(300),
                 ev -> {
-                    String query = tickerCombo.getEditor().getText();
-                    if (query != null && query.length() >= 2) {
-                        CompletableFuture.supplyAsync(() -> BrapiClient.searchTickers(query))
-                                .thenAcceptAsync(results -> Platform.runLater(() -> {
+                    String raw = tickerCombo.getEditor().getText();
+                    if (raw == null || raw.length() < 2) return;
+                    String query = raw.trim().toUpperCase();
+                    CompletableFuture
+                            .supplyAsync(() -> BrapiClient.searchTickers(query))
+                            .thenComposeAsync(results -> {
+                                if (!results.isEmpty()) {
+                                    return CompletableFuture.completedFuture(results);
+                                }
+                                // Fallback: se a query tem mais de 4 chars, tenta só os 4 primeiros
+                                if (query.length() > 4) {
+                                    String shortQuery = query.substring(0, 4);
+                                    return CompletableFuture.supplyAsync(
+                                            () -> BrapiClient.searchTickers(shortQuery));
+                                }
+                                return CompletableFuture.completedFuture(results);
+                            })
+                            .thenAcceptAsync(results -> Platform.runLater(() -> {
+                                if (results.isEmpty()) {
+                                    // Mostra hint para o usuário pressionar Enter e buscar diretamente
+                                    TickerSuggestion hint = new TickerSuggestion(
+                                            query, "Pressione Enter para buscar diretamente", null);
+                                    tickerCombo.getItems().setAll(hint);
+                                    tickerCombo.show();
+                                } else {
                                     tickerCombo.getItems().setAll(results);
-                                    if (!results.isEmpty()) tickerCombo.show();
-                                }));
-                    }
+                                    tickerCombo.show();
+                                }
+                            }));
                 }
         ));
 
@@ -245,12 +273,31 @@ public final class AssetAnalysisPage implements Page {
         areaChart.setCreateSymbols(true);
         areaChart.setMinHeight(320);
         areaChart.getStyleClass().add("area-chart");
-        xAxis.setTickLabelRotation(-30);
         yAxis.setAutoRanging(false); // range manual para não começar do zero
 
         VBox.setVgrow(areaChart, Priority.ALWAYS);
 
-        VBox section = new VBox(10, periodBar, areaChart);
+        // Instala listener de largura para atualizar labels automaticamente no resize
+        ChartAxisUtils.installSmartAxis(xAxis, areaChart);
+
+        // Debounce de resize: re-renderiza dados quando largura muda > 50px
+        resizeDebounce = new Timeline(new KeyFrame(
+                javafx.util.Duration.millis(150),
+                ev -> renderChart(lastRenderedPoints)
+        ));
+        resizeDebounce.setCycleCount(1);
+        areaChart.widthProperty().addListener((obs, oldW, newW) -> {
+            if (Math.abs(newW.doubleValue() - oldW.doubleValue()) > 50) {
+                resizeDebounce.stop();
+                resizeDebounce.playFromStart();
+            }
+        });
+
+        javafx.scene.layout.StackPane chartWrapper = ChartCrosshair.install(areaChart,
+                y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+        VBox.setVgrow(chartWrapper, Priority.ALWAYS);
+
+        VBox section = new VBox(10, periodBar, chartWrapper);
         section.getStyleClass().add("chart-card");
         return section;
     }
@@ -283,18 +330,24 @@ public final class AssetAnalysisPage implements Page {
         searchBtn.setDisable(true);
         searchBtn.setText("Buscando...");
 
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                return BrapiClient.fetchStockData(ticker);
-            } catch (Exception e) {
-                return new StockData(ticker, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0,
-                        e.getMessage());
-            }
-        }).thenAccept(data -> Platform.runLater(() -> {
-            searchBtn.setDisable(false);
-            searchBtn.setText("Buscar");
-            onStockDataLoaded(data);
-        }));
+        CompletableFuture.supplyAsync(() -> BrapiClient.fetchStockDataSafe(ticker))
+                .thenAccept(result -> Platform.runLater(() -> {
+                    searchBtn.setDisable(false);
+                    searchBtn.setText("Buscar");
+                    if (!result.isSuccess()) {
+                        String msg = switch (result.getReason()) {
+                            case NO_TOKEN      -> "Configure um token BRAPI em Configurações para buscar cotações.";
+                            case HTTP_ERROR    -> "Serviço BRAPI indisponível (HTTP " + result.getDetail() + ").";
+                            case NETWORK_ERROR -> "Sem conexão. Verifique sua internet.";
+                            case NOT_FOUND     -> "Ticker " + ticker + " não encontrado na BRAPI.";
+                            case PARSE_ERROR   -> "Erro ao processar dados. Tente novamente.";
+                        };
+                        ToastHost.showError(msg);
+                        setResultVisible(false);
+                        return;
+                    }
+                    onStockDataLoaded(result.getData());
+                }));
     }
 
     private void onStockDataLoaded(StockData data) {
@@ -364,6 +417,7 @@ public final class AssetAnalysisPage implements Page {
 
         Toggle selected = periodGroup.getSelectedToggle();
         Period period = selected != null ? (Period) selected.getUserData() : Period.ONE_MONTH;
+        currentDateFmt = DateTimeFormatter.ofPattern(period.datePattern);
 
         areaChart.getData().clear();
 
@@ -380,17 +434,19 @@ public final class AssetAnalysisPage implements Page {
         areaChart.getData().clear();
         if (points.isEmpty()) return;
 
+        // Filtrar apenas pontos com preço válido e armazenar para refresh
+        List<HistoryPoint> valid = points.stream().filter(p -> p.close() > 0).toList();
+        if (valid.isEmpty()) return;
+        lastRenderedPoints = valid;
+
         XYChart.Series<String, Number> series = new XYChart.Series<>();
         double minPrice = Double.MAX_VALUE;
         double maxPrice = -Double.MAX_VALUE;
 
-        for (HistoryPoint p : points) {
-            double price = p.close();
-            if (price > 0) {
-                series.getData().add(new XYChart.Data<>(p.date().format(DMY), price));
-                if (price < minPrice) minPrice = price;
-                if (price > maxPrice) maxPrice = price;
-            }
+        for (HistoryPoint p : valid) {
+            series.getData().add(new XYChart.Data<>(p.dateTime().format(currentDateFmt), p.close()));
+            if (p.close() < minPrice) minPrice = p.close();
+            if (p.close() > maxPrice) maxPrice = p.close();
         }
 
         if (series.getData().isEmpty()) return;
@@ -403,6 +459,9 @@ public final class AssetAnalysisPage implements Page {
         yAxis.setTickUnit((range + 2 * padding) / 6.0);
 
         areaChart.getData().add(series);
+
+        // Atualiza densidade de labels do eixo X com base na largura atual
+        Platform.runLater(() -> ChartAxisUtils.refreshLabels(xAxis, areaChart.getWidth()));
 
         // Instalar tooltip nos nós (podem não existir ainda quando a série é adicionada)
         Platform.runLater(() -> {
