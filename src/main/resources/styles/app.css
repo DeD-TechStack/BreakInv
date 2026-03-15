@@ -1182,6 +1182,26 @@
 .badge-info    { -fx-background-color: -color-info-a12; }
 .badge-info > .label    { -fx-text-fill: -color-info;    -fx-font-size: 11px; -fx-font-weight: 800; }
 
+/* ── BRAPI status chips — Dashboard header top-right ── */
+.brapi-chip {
+    -fx-font-size: 10px;
+    -fx-font-weight: 700;
+    -fx-padding: 3 10;
+    -fx-background-radius: 20;
+}
+.brapi-chip-success {
+    -fx-background-color: -color-accent-soft;
+    -fx-text-fill: -color-success;
+}
+.brapi-chip-warn {
+    -fx-background-color: -color-warning-a12;
+    -fx-text-fill: -color-warning;
+}
+.brapi-chip-neutral {
+    -fx-background-color: -color-white-a12;
+    -fx-text-fill: -color-text-3;
+}
+
 /* ── Delta badge — signed change pill (pos/neg) ── */
 .delta-badge {
     -fx-background-radius: 20;
@@ -1743,6 +1763,7 @@
 .icon-compact .sidebar-title { -fx-visible: false; -fx-managed: false; }
 .icon-compact .sidebar-sub   { -fx-visible: false; -fx-managed: false; }
 .icon-compact .sidebar-footer-version { -fx-visible: false; -fx-managed: false; }
+.icon-compact .sidebar-nav-label      { -fx-visible: false; -fx-managed: false; }
 .icon-compact .sidebar .nav-btn {
     -fx-content-display: GRAPHIC_ONLY;
     -fx-padding: 10 0;

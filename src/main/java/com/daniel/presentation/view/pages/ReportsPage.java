@@ -76,8 +76,8 @@ public final class ReportsPage implements Page {
         // ── KPI Cards ────────────────────────────────────────────────────────
         HBox kpiRow = new HBox(12,
                 kpiCard("Total de aportes", totalComprasLabel),
-                kpiCard("Total rendido", totalVendasLabel),
-                kpiCard("Patrimônio alcançado no mês", lucroRealizadoLabel)
+                kpiCard("Lucro acumulado", totalVendasLabel),
+                kpiCard("Patrimônio", lucroRealizadoLabel)
         );
 
         // ── Table ────────────────────────────────────────────────────────────
