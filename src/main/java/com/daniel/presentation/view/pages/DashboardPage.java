@@ -73,6 +73,8 @@ public final class DashboardPage implements Page {
 
     private final Label noComparisonHint = new Label(
             "Sem dados suficientes — adicione investimentos com valor registrado para ver o gráfico de performance.");
+    private final Label projectionHint = new Label(
+            "Projeção estimada — sem histórico de snapshots no período selecionado. Os dados reais serão usados quando houver snapshots registrados.");
 
     private int selectedFilterMonths = 12;
     private LocalDate customFrom = null;
@@ -87,6 +89,10 @@ public final class DashboardPage implements Page {
             "⚠️  Token Brapi não configurado — cotações de ações usam preço de compra como referência. " +
             "Configure seu token na página Configurações para ver rentabilidade real.");
     private final AppSettingsRepository settingsRepo = new AppSettingsRepository();
+
+    // BRAPI freshness chips
+    private final Label freshnessChip = new Label();
+    private final Label connectionChip = new Label();
 
     public DashboardPage(DailyTrackingUseCase dailyTrackingUseCase) {
         this.daily = dailyTrackingUseCase;
@@ -108,11 +114,24 @@ public final class DashboardPage implements Page {
 
         PageHeader header = new PageHeader("Dashboard", "Resumo do seu portfólio de investimentos");
 
+        freshnessChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
+        connectionChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
+
+        VBox chipBox = new VBox(4, freshnessChip, connectionChip);
+        chipBox.setAlignment(javafx.geometry.Pos.TOP_RIGHT);
+
+        Region headerSpacer = new Region();
+        HBox.setHgrow(headerSpacer, Priority.ALWAYS);
+        HBox.setHgrow(header, Priority.ALWAYS);
+
+        HBox headerRow = new HBox(8, header, headerSpacer, chipBox);
+        headerRow.setAlignment(javafx.geometry.Pos.TOP_LEFT);
+
         HBox cards = new HBox(12,
                 kpiCard("📅", "Data", dateLabel, null),
                 kpiCard("💰", "Patrimônio Total", totalLabel, null),
-                kpiCard("📈", "Lucro / Prejuízo", profitLabel, null),
-                kpiCard("📊", "vs CDI", cdiComparisonLabel, null)
+                kpiCard("📈", "Lucro acumulado", profitLabel, null),
+                kpiCard("📊", "vs CDI (acum.)", cdiComparisonLabel, null)
         );
         cards.getStyleClass().add("dashboard-kpi-row");
 
@@ -170,7 +189,7 @@ public final class DashboardPage implements Page {
         HBox.setHgrow(extraRow.getChildren().get(0), Priority.ALWAYS);
         HBox.setHgrow(extraRow.getChildren().get(1), Priority.ALWAYS);
 
-        root.getChildren().addAll(header, tokenWarningBanner, cards, extraRow, h2, chartsRow, comparisonBox, investmentsByCategoryContainer);
+        root.getChildren().addAll(headerRow, tokenWarningBanner, cards, extraRow, h2, chartsRow, comparisonBox, investmentsByCategoryContainer);
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
@@ -187,9 +206,53 @@ public final class DashboardPage implements Page {
         boolean hasToken = BrapiClient.hasToken();
         tokenWarningBanner.setVisible(!hasToken);
         tokenWarningBanner.setManaged(!hasToken);
+        updateBrapiChips();
         refreshData();
         if (!ratesFetched) {
             fetchRealRates();
+        }
+    }
+
+    private void updateBrapiChips() {
+        boolean hasToken = BrapiClient.hasToken();
+        long lastFetch = BrapiClient.getLastSuccessfulFetchMs();
+        int delayMinutes = Integer.parseInt(
+                settingsRepo.get(ConfiguracoesPage.SETTINGS_KEY_BRAPI_DELAY).orElse("30"));
+
+        // ── Freshness chip ───────────────────────────────────────────────
+        freshnessChip.getStyleClass().removeAll("brapi-chip-success", "brapi-chip-warn", "brapi-chip-neutral");
+        if (lastFetch == 0) {
+            freshnessChip.setText("Sem sincronização");
+            freshnessChip.getStyleClass().add("brapi-chip-neutral");
+        } else {
+            long elapsedMs = System.currentTimeMillis() - lastFetch;
+            long elapsedMin = elapsedMs / 60_000;
+            if (elapsedMin < 1) {
+                freshnessChip.setText("Atualizado agora");
+                freshnessChip.getStyleClass().add("brapi-chip-success");
+            } else if (elapsedMin <= delayMinutes) {
+                freshnessChip.setText("Atualizado há " + elapsedMin + " min");
+                freshnessChip.getStyleClass().add("brapi-chip-success");
+            } else {
+                freshnessChip.setText("Atualização atrasada (" + elapsedMin + " min)");
+                freshnessChip.getStyleClass().add("brapi-chip-warn");
+            }
+        }
+
+        // ── Connection chip ──────────────────────────────────────────────
+        connectionChip.getStyleClass().removeAll("brapi-chip-success", "brapi-chip-warn", "brapi-chip-neutral");
+        if (!hasToken) {
+            connectionChip.setText("BRAPI sem token");
+            connectionChip.getStyleClass().add("brapi-chip-neutral");
+        } else {
+            String planLabel = switch (delayMinutes) {
+                case  5 -> "~5 min";
+                case 15 -> "~15 min";
+                case 30 -> "~30 min";
+                default -> "~" + delayMinutes + " min";
+            };
+            connectionChip.setText("BRAPI conectado · " + planLabel);
+            connectionChip.getStyleClass().add("brapi-chip-success");
         }
     }
 
@@ -476,7 +539,12 @@ public final class DashboardPage implements Page {
         noComparisonHint.setVisible(false);
         noComparisonHint.setManaged(false);
 
-        box.getChildren().addAll(title, filterBar, datePickerBox, noComparisonHint, contentRow);
+        projectionHint.getStyleClass().add("text-helper");
+        projectionHint.setWrapText(true);
+        projectionHint.setVisible(false);
+        projectionHint.setManaged(false);
+
+        box.getChildren().addAll(title, filterBar, datePickerBox, noComparisonHint, projectionHint, contentRow);
         return box;
     }
 
@@ -568,32 +636,19 @@ public final class DashboardPage implements Page {
                                        LocalDate today) {
         comparisonChart.getData().clear();
 
-        if (investments.isEmpty()) {
+        // ── Empty state ──────────────────────────────────────────────────────
+        long totalInvestido = calcTotalInvestido(investments);
+        if (investments.isEmpty() || totalInvestido == 0) {
             noComparisonHint.setVisible(true);
             noComparisonHint.setManaged(true);
-            return;
-        }
-
-        // Calcular total investido e patrimônio atual
-        long totalInvestido = 0L;
-        for (InvestmentType inv : investments) {
-            if (inv.investedValue() != null) {
-                totalInvestido += inv.investedValue()
-                        .multiply(java.math.BigDecimal.valueOf(100)).longValue();
-            }
-        }
-        if (totalInvestido == 0) {
-            noComparisonHint.setVisible(true);
-            noComparisonHint.setManaged(true);
+            projectionHint.setVisible(false);
+            projectionHint.setManaged(false);
             return;
         }
         noComparisonHint.setVisible(false);
         noComparisonHint.setManaged(false);
 
-        long patrimonioAtual = currentValues.values().stream()
-                .mapToLong(Long::longValue).sum();
-
-        // Data de início: filtro selecionado ou a data do investimento mais antigo
+        // ── Determine date range ─────────────────────────────────────────────
         LocalDate dataInicio;
         LocalDate dataFim = today;
         if (useCustomRange && customFrom != null && customTo != null) {
@@ -609,19 +664,7 @@ public final class DashboardPage implements Page {
             if (maisAntiga.isAfter(dataInicio)) dataInicio = maisAntiga;
         }
 
-        long totalMeses = java.time.temporal.ChronoUnit.MONTHS.between(dataInicio, dataFim);
-        if (totalMeses < 1) totalMeses = 1;
-
-        // Rentabilidade total da carteira
-        double rentTotalCarteira = (patrimonioAtual - totalInvestido) * 100.0 / totalInvestido;
-
-        // Taxa mensal implícita da carteira
-        long mesesTotaisCarteira = calcularMesesDesdeInvestimentoMaisAntigo(investments, today);
-        if (mesesTotaisCarteira < 1) mesesTotaisCarteira = 1;
-        double taxaMensalCarteira =
-                Math.pow(1 + rentTotalCarteira / 100.0, 1.0 / mesesTotaisCarteira) - 1;
-
-        // Taxa mensal do benchmark selecionado
+        // ── Benchmark rate ───────────────────────────────────────────────────
         double taxaAnualBench = switch (selectedBenchmark) {
             case "SELIC"    -> rateSelic;
             case "IPCA"     -> rateIpca;
@@ -630,29 +673,79 @@ public final class DashboardPage implements Page {
         };
         double taxaMensalBench = Math.pow(1 + taxaAnualBench, 1.0 / 12) - 1;
 
-        // Séries
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MM/yy");
+
         XYChart.Series<String, Number> carteiraSeries = new XYChart.Series<>();
         carteiraSeries.setName("Carteira");
-
         XYChart.Series<String, Number> benchSeries = new XYChart.Series<>();
         benchSeries.setName(selectedBenchmark);
-
-        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MM/yy");
-        long pontosGrafico = Math.min(totalMeses, mesesTotaisCarteira);
-
-        for (long m = 0; m <= pontosGrafico; m++) {
-            String label = dataInicio.plusMonths(m).format(fmt);
-            double rentCart  = (Math.pow(1 + taxaMensalCarteira, m) - 1) * 100;
-            double rentBench = (Math.pow(1 + taxaMensalBench,   m) - 1) * 100;
-            carteiraSeries.getData().add(new XYChart.Data<>(label, rentCart));
-            benchSeries.getData().add(new XYChart.Data<>(label, rentBench));
-        }
-
-        // Série de referência — linha tênue no zero
         XYChart.Series<String, Number> zeroSeries = new XYChart.Series<>();
         zeroSeries.setName("—");
-        for (XYChart.Data<String, Number> d : carteiraSeries.getData()) {
-            zeroSeries.getData().add(new XYChart.Data<>(d.getXValue(), 0));
+
+        double rentCartFinal = 0;
+        double rentBenchFinal = 0;
+
+        // ── Try real snapshot data ───────────────────────────────────────────
+        java.util.TreeMap<LocalDate, Long> snapshots =
+                daily.getPortfolioSnapshotSeries(dataInicio, dataFim);
+
+        if (snapshots.size() >= 2) {
+            // Real data path — % change relative to first snapshot
+            projectionHint.setVisible(false);
+            projectionHint.setManaged(false);
+
+            List<Map.Entry<LocalDate, Long>> entries = new ArrayList<>(snapshots.entrySet());
+            long firstValue = entries.get(0).getValue();
+            LocalDate startDate = entries.get(0).getKey();
+
+            for (Map.Entry<LocalDate, Long> entry : entries) {
+                String lbl = entry.getKey().format(fmt);
+                double rentCart = firstValue > 0
+                        ? (entry.getValue() - firstValue) * 100.0 / firstValue : 0;
+                double monthsFromStart = java.time.temporal.ChronoUnit.DAYS.between(
+                        startDate, entry.getKey()) / 30.44;
+                double rentBench = (Math.pow(1 + taxaMensalBench, monthsFromStart) - 1) * 100;
+                carteiraSeries.getData().add(new XYChart.Data<>(lbl, rentCart));
+                benchSeries.getData().add(new XYChart.Data<>(lbl, rentBench));
+                zeroSeries.getData().add(new XYChart.Data<>(lbl, 0));
+            }
+
+            Map.Entry<LocalDate, Long> last = entries.get(entries.size() - 1);
+            rentCartFinal = firstValue > 0
+                    ? (last.getValue() - firstValue) * 100.0 / firstValue : 0;
+            double monthsFinal = java.time.temporal.ChronoUnit.DAYS.between(
+                    startDate, last.getKey()) / 30.44;
+            rentBenchFinal = (Math.pow(1 + taxaMensalBench, monthsFinal) - 1) * 100;
+
+        } else {
+            // Projection path — honest note shown
+            projectionHint.setVisible(true);
+            projectionHint.setManaged(true);
+
+            long patrimonioAtual = currentValues.values().stream()
+                    .mapToLong(Long::longValue).sum();
+            double rentTotalCarteira = totalInvestido > 0
+                    ? (patrimonioAtual - totalInvestido) * 100.0 / totalInvestido : 0;
+            long mesesTotaisCarteira = calcularMesesDesdeInvestimentoMaisAntigo(investments, today);
+            if (mesesTotaisCarteira < 1) mesesTotaisCarteira = 1;
+            double taxaMensalCarteira =
+                    Math.pow(1 + rentTotalCarteira / 100.0, 1.0 / mesesTotaisCarteira) - 1;
+
+            long totalMeses = java.time.temporal.ChronoUnit.MONTHS.between(dataInicio, dataFim);
+            if (totalMeses < 1) totalMeses = 1;
+            long pontos = Math.min(totalMeses, mesesTotaisCarteira);
+
+            for (long m = 0; m <= pontos; m++) {
+                String lbl = dataInicio.plusMonths(m).format(fmt);
+                double rentCart  = (Math.pow(1 + taxaMensalCarteira, m) - 1) * 100;
+                double rentBench = (Math.pow(1 + taxaMensalBench,    m) - 1) * 100;
+                carteiraSeries.getData().add(new XYChart.Data<>(lbl, rentCart));
+                benchSeries.getData().add(new XYChart.Data<>(lbl, rentBench));
+                zeroSeries.getData().add(new XYChart.Data<>(lbl, 0));
+            }
+
+            rentCartFinal  = (Math.pow(1 + taxaMensalCarteira, (double) pontos) - 1) * 100;
+            rentBenchFinal = (Math.pow(1 + taxaMensalBench,    (double) pontos) - 1) * 100;
         }
 
         comparisonChart.getData().addAll(carteiraSeries, benchSeries, zeroSeries);
@@ -700,23 +793,31 @@ public final class DashboardPage implements Page {
             }
         });
 
-        // Atualizar métricas laterais — sincronizadas com o período do filtro selecionado
-        double rentCartPeriodo  = (Math.pow(1 + taxaMensalCarteira, (double) totalMeses) - 1) * 100;
-        double rentBenchPeriodo = (Math.pow(1 + taxaMensalBench,    (double) totalMeses) - 1) * 100;
-        long rendimentoPeriodo  = Math.round(totalInvestido * rentCartPeriodo / 100.0);
-
+        // ── Métricas laterais ────────────────────────────────────────────────
+        long rendimentoPeriodo = Math.round(totalInvestido * rentCartFinal / 100.0);
         String corClass = rendimentoPeriodo >= 0 ? "pos" : "neg";
 
         metricRendimentoLabel.setText(daily.brl(rendimentoPeriodo));
         metricRendimentoLabel.getStyleClass().removeAll("pos", "neg");
         metricRendimentoLabel.getStyleClass().add(corClass);
 
-        metricRentabilidadeLabel.setText(String.format("%.2f%%", rentCartPeriodo));
+        metricRentabilidadeLabel.setText(String.format("%.2f%%", rentCartFinal));
         metricRentabilidadeLabel.getStyleClass().removeAll("pos", "neg");
         metricRentabilidadeLabel.getStyleClass().add(corClass);
 
         boolean ibovUnavailable = "IBOVESPA".equals(selectedBenchmark) && Double.isNaN(rateIbov);
-        metricBenchmarkLabel.setText(ibovUnavailable ? "—" : String.format("%.2f%%", rentBenchPeriodo));
+        metricBenchmarkLabel.setText(ibovUnavailable ? "—" : String.format("%.2f%%", rentBenchFinal));
+    }
+
+    private long calcTotalInvestido(List<InvestmentType> investments) {
+        long total = 0L;
+        for (InvestmentType inv : investments) {
+            if (inv.investedValue() != null) {
+                total += inv.investedValue()
+                        .multiply(java.math.BigDecimal.valueOf(100)).longValue();
+            }
+        }
+        return total;
     }
 
     private record RankEntry(String name, String ticker, double changePercent, long valueCents) {}

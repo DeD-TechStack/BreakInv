@@ -15,6 +15,9 @@ import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import java.awt.Desktop;
 import java.net.URI;
 import java.time.LocalDateTime;
@@ -30,10 +33,17 @@ public final class ConfiguracoesPage implements Page {
     private final ScrollPane scrollPane = new ScrollPane();
     private final VBox root = new VBox(20);
 
+    public static final String SETTINGS_KEY_BRAPI_DELAY = "brapi_refresh_delay_minutes";
+
     // Brapi section
     private final TextField tokenField = new TextField();
     private final CheckBox autoUpdateCheckbox = new CheckBox("Atualizar cotações automaticamente ao abrir o app");
     private final Label tokenStatusLabel = new Label();
+
+    // Plan selector
+    private final ToggleGroup planToggleGroup = new ToggleGroup();
+    private final TextField customIntervalField = new TextField();
+    private final HBox customIntervalBox = new HBox(8);
 
     // BCB section
     private final Label cdiValueLabel = new Label("—");
@@ -73,6 +83,33 @@ public final class ConfiguracoesPage implements Page {
 
         updateTokenStatus(savedToken);
         loadBcbCachedValues();
+        loadPlanSelection();
+    }
+
+    private void loadPlanSelection() {
+        int savedMinutes = Integer.parseInt(
+                settings.get(SETTINGS_KEY_BRAPI_DELAY).orElse("30"));
+
+        boolean matchedPlan = false;
+        for (Toggle t : planToggleGroup.getToggles()) {
+            int planMinutes = (int) ((ToggleButton) t).getUserData();
+            if (planMinutes == savedMinutes) {
+                planToggleGroup.selectToggle(t);
+                customIntervalBox.setVisible(false);
+                customIntervalBox.setManaged(false);
+                matchedPlan = true;
+                break;
+            }
+        }
+
+        if (!matchedPlan) {
+            // Select "Personalizado" (last toggle, userData == -1)
+            Toggle customToggle = planToggleGroup.getToggles().get(planToggleGroup.getToggles().size() - 1);
+            planToggleGroup.selectToggle(customToggle);
+            customIntervalField.setText(String.valueOf(savedMinutes));
+            customIntervalBox.setVisible(true);
+            customIntervalBox.setManaged(true);
+        }
     }
 
     private void updateTokenStatus(String token) {
@@ -147,12 +184,53 @@ public final class ConfiguracoesPage implements Page {
 
         Separator sep = new Separator();
 
+        // ── Plan selector ─────────────────────────────────────────────────
+        Label planLabel = new Label("Intervalo de atualização esperado");
+        planLabel.getStyleClass().add("form-label");
+
+        Label planHint = new Label("Defina o intervalo conforme seu plano BRAPI para indicadores de atualização precisos.");
+        planHint.getStyleClass().add("text-helper");
+        planHint.setWrapText(true);
+
+        Map<String, Integer> plans = new LinkedHashMap<>();
+        plans.put("Gratuito (~30 min)",  30);
+        plans.put("Startup (~15 min)",   15);
+        plans.put("Pro (~5 min)",         5);
+        plans.put("Personalizado",       -1);
+
+        HBox planRow = new HBox(8);
+        planRow.setAlignment(Pos.CENTER_LEFT);
+
+        for (Map.Entry<String, Integer> entry : plans.entrySet()) {
+            ToggleButton btn = new ToggleButton(entry.getKey());
+            btn.setToggleGroup(planToggleGroup);
+            btn.getStyleClass().add("filter-toggle");
+            btn.setUserData(entry.getValue());
+            btn.setOnAction(e -> {
+                boolean custom = (int) btn.getUserData() == -1;
+                customIntervalBox.setVisible(custom);
+                customIntervalBox.setManaged(custom);
+            });
+            planRow.getChildren().add(btn);
+        }
+
+        customIntervalField.setPromptText("Minutos (1–1440)");
+        customIntervalField.setPrefWidth(160);
+        customIntervalField.getStyleClass().add("code-field");
+        Label customLbl = new Label("min");
+        customLbl.getStyleClass().add("text-helper");
+        customIntervalBox.setAlignment(Pos.CENTER_LEFT);
+        customIntervalBox.getChildren().addAll(customIntervalField, customLbl);
+        customIntervalBox.setVisible(false);
+        customIntervalBox.setManaged(false);
+
         card.getChildren().addAll(
                 title,
                 new VBox(6, tokenLabel, tokenField, tokenHint),
                 tokenStatusLabel,
                 sep,
                 autoUpdateCheckbox,
+                new VBox(8, planLabel, planHint, planRow, customIntervalBox),
                 btnRow,
                 showWelcomeBtn
         );
@@ -265,17 +343,41 @@ public final class ConfiguracoesPage implements Page {
         String token = tokenField.getText().trim();
         if (token.isBlank()) {
             settings.delete(BrapiClient.SETTINGS_KEY_TOKEN);
-            settings.set("brapi_auto_update", String.valueOf(autoUpdateCheckbox.isSelected()));
-            updateTokenStatus(token);
-            ToastHost.showWarn("Token removido — cotações usarão preço de compra como referência.");
-            return;
+        } else {
+            settings.set(BrapiClient.SETTINGS_KEY_TOKEN, token);
         }
 
-        settings.set(BrapiClient.SETTINGS_KEY_TOKEN, token);
         settings.set("brapi_auto_update", String.valueOf(autoUpdateCheckbox.isSelected()));
 
+        // Persist plan delay
+        Toggle selectedToggle = planToggleGroup.getSelectedToggle();
+        if (selectedToggle != null) {
+            int planMinutes = (int) ((ToggleButton) selectedToggle).getUserData();
+            if (planMinutes == -1) {
+                // Personalizado: validate custom input
+                String raw = customIntervalField.getText().trim();
+                try {
+                    int custom = Integer.parseInt(raw);
+                    if (custom < 1 || custom > 1440) {
+                        ToastHost.showError("Intervalo personalizado deve ser entre 1 e 1440 minutos.");
+                        return;
+                    }
+                    settings.set(SETTINGS_KEY_BRAPI_DELAY, String.valueOf(custom));
+                } catch (NumberFormatException ex) {
+                    ToastHost.showError("Digite um número válido de minutos.");
+                    return;
+                }
+            } else {
+                settings.set(SETTINGS_KEY_BRAPI_DELAY, String.valueOf(planMinutes));
+            }
+        }
+
         updateTokenStatus(token);
-        ToastHost.showSuccess("Configurações salvas com sucesso!");
+        if (token.isBlank()) {
+            ToastHost.showWarn("Token removido — cotações usarão preço de compra como referência.");
+        } else {
+            ToastHost.showSuccess("Configurações salvas com sucesso!");
+        }
     }
 
     private void fetchBcbRates(Button btn) {

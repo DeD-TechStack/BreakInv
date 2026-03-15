@@ -101,6 +101,14 @@ public final class BrapiClient {
             double value
     ) {}
 
+    // ── Timestamp do último fetch bem-sucedido ──
+    private static volatile long lastSuccessfulFetchMs = 0L;
+
+    /** Retorna o timestamp (ms) do último fetch BRAPI bem-sucedido, ou 0 se nunca ocorreu. */
+    public static long getLastSuccessfulFetchMs() {
+        return lastSuccessfulFetchMs;
+    }
+
     // ── Cache de cotações (TTL: 5 minutos) ──
     private static final long STOCK_CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(5);
 
@@ -125,7 +133,9 @@ public final class BrapiClient {
         }
         StockData data = fetchStockDataWithToken(ticker, getToken());
         if (ticker != null && !ticker.isBlank() && data.isValid()) {
-            stockCache.put(ticker.toUpperCase().trim(), new CachedStock(data, System.currentTimeMillis()));
+            long now = System.currentTimeMillis();
+            stockCache.put(ticker.toUpperCase().trim(), new CachedStock(data, now));
+            lastSuccessfulFetchMs = now;
         }
         return data;
     }
@@ -178,7 +188,9 @@ public final class BrapiClient {
             }
             StockData data = parseStockJson(results.get(0).getAsJsonObject());
             if (data.isValid()) {
-                stockCache.put(key, new CachedStock(data, System.currentTimeMillis()));
+                long now = System.currentTimeMillis();
+                stockCache.put(key, new CachedStock(data, now));
+                lastSuccessfulFetchMs = now;
             }
             return new FetchResult.Success<>(data);
         } catch (IOException e) {
@@ -405,6 +417,7 @@ public final class BrapiClient {
         if (results.isEmpty()) {
             return new FetchResult.Failure<>(failReason, failDetail);
         }
+        lastSuccessfulFetchMs = System.currentTimeMillis();
         return new FetchResult.Success<>(results);
     }
 

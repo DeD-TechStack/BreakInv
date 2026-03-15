@@ -289,6 +289,30 @@ public final class DailyTrackingUseCase {
     }
 
     /**
+     * Agrega snapshots históricos de todos os investimentos por data dentro do intervalo.
+     * Útil para construir gráficos de performance com dados reais em vez de projeções.
+     *
+     * @return TreeMap data→total em centavos, ordenado por data.
+     *         Retorna mapa vazio se não houver snapshots no período.
+     */
+    public TreeMap<LocalDate, Long> getPortfolioSnapshotSeries(LocalDate from, LocalDate to) {
+        TreeMap<LocalDate, Long> totals = new TreeMap<>();
+        List<InvestmentType> investments = typeRepo.listAll();
+        for (InvestmentType inv : investments) {
+            Map<String, Long> series = snapshotRepo.seriesForInvestiments(inv.id());
+            for (Map.Entry<String, Long> entry : series.entrySet()) {
+                try {
+                    LocalDate date = LocalDate.parse(entry.getKey());
+                    if (!date.isBefore(from) && !date.isAfter(to)) {
+                        totals.merge(date, entry.getValue(), Long::sum);
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        return totals;
+    }
+
+    /**
      * Agrupa investimentos por ticker
      */
     public Map<String, List<InvestmentType>> groupByTicker() {

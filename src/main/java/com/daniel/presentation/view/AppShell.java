@@ -126,21 +126,16 @@ public final class AppShell {
         VBox navBox = new VBox(2);
         navBox.getStyleClass().add("sidebar-nav");
 
-        String[] navOrder  = {"Dashboard", "Cadastrar Investimento", "Diversificação", "Análise de Ativo", "Ranking", "Simulação", "Extrato de Investimentos"};
-        String[] navLabels = {"Dashboard", "Carteira", "Diversificação", "Análise", "Ranking", "Simulação", "Extrato"};
-        FontIcon[] navIcons = {Icons.home(), Icons.briefcase(), Icons.pieChart(), Icons.activity(), Icons.award(), Icons.trendingUp(), Icons.fileText()};
+        navBox.getChildren().add(navSectionLabel("PRINCIPAL"));
+        addNavItem(navBox, "Dashboard",              "Dashboard",    Icons.home());
+        addNavItem(navBox, "Cadastrar Investimento", "Carteira",     Icons.briefcase());
 
-        for (int i = 0; i < navOrder.length; i++) {
-            String key   = navOrder[i];
-            String label = navLabels[i];
-            Button b = new Button(label, navIcons[i]);
-            b.getStyleClass().add("nav-btn");
-            b.setMaxWidth(Double.MAX_VALUE);
-            b.setOnAction(e -> go(key));
-            Tooltip.install(b, new Tooltip(label));
-            nav.put(key, b);
-            navBox.getChildren().add(b);
-        }
+        navBox.getChildren().add(navSectionLabel("ANÁLISE"));
+        addNavItem(navBox, "Diversificação",           "Diversificação", Icons.pieChart());
+        addNavItem(navBox, "Análise de Ativo",         "Análise",        Icons.activity());
+        addNavItem(navBox, "Ranking",                  "Ranking",        Icons.award());
+        addNavItem(navBox, "Simulação",                "Simulação",      Icons.trendingUp());
+        addNavItem(navBox, "Extrato de Investimentos", "Extrato",        Icons.fileText());
 
         // ── Spacer ───────────────────────────────────
         Region spacer = new Region();
@@ -149,6 +144,8 @@ public final class AppShell {
         // ── Footer ───────────────────────────────────
         VBox footer = new VBox(4);
         footer.getStyleClass().add("sidebar-footer");
+
+        footer.getChildren().add(navSectionLabel("SISTEMA"));
 
         Button configBtn = new Button("Configurações", Icons.settings());
         configBtn.getStyleClass().add("nav-btn");
@@ -164,6 +161,23 @@ public final class AppShell {
 
         box.getChildren().addAll(brand, navBox, spacer, footer);
         return box;
+    }
+
+    private Label navSectionLabel(String text) {
+        Label lbl = new Label(text);
+        lbl.getStyleClass().add("sidebar-nav-label");
+        lbl.setMaxWidth(Double.MAX_VALUE);
+        return lbl;
+    }
+
+    private void addNavItem(VBox box, String key, String label, FontIcon icon) {
+        Button b = new Button(label, icon);
+        b.getStyleClass().add("nav-btn");
+        b.setMaxWidth(Double.MAX_VALUE);
+        b.setOnAction(e -> go(key));
+        Tooltip.install(b, new Tooltip(label));
+        nav.put(key, b);
+        box.getChildren().add(b);
     }
 
     public void setPageChangeListener(Consumer<String> listener) {
