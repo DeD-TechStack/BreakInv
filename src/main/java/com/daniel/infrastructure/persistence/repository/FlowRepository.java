@@ -49,10 +49,6 @@ public final class FlowRepository implements IFlowRepository {
         }
     }
 
-    @Override
-    public void save(Flow flow) {
-    }
-
     public long create(Flow f) {
         String sql = """
             INSERT INTO flows(date, from_kind, from_investment_type_id, to_kind, to_investment_type_id, amount_cents, note)

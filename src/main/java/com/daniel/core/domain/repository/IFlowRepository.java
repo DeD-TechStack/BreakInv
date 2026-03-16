@@ -6,8 +6,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 public interface IFlowRepository {
-    List<Flow> listForDate (LocalDate date);
-    void save(Flow flow);
+    List<Flow> listForDate(LocalDate date);
     void delete(long id);
     long create(Flow flow);
 }
