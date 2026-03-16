@@ -39,14 +39,6 @@ public final class DailyTrackingUseCase {
         return typeRepo.listAll();
     }
 
-    public void createType(String name) {
-        typeRepo.save(name);
-    }
-
-    public void renameType(int id, String newName) {
-        typeRepo.rename(id, newName);
-    }
-
     public void deleteType(int id) {
         typeRepo.delete(id);
     }
@@ -375,7 +367,6 @@ public final class DailyTrackingUseCase {
             InvestmentType type = e.getKey();
             Long cents = e.getValue();
             if (cents != null && cents >= 0) {
-                snapshotRepo.setInvestimentValue(entry.date(), type.id(), cents);
                 snapshotRepo.upsertInvestment(entry.date(), type.id(), cents, null);
             }
         }
@@ -388,7 +379,7 @@ public final class DailyTrackingUseCase {
     }
 
     public void createFlow(Flow flow) {
-        flowRepo.save(flow);
+        flowRepo.create(flow);
     }
 
     public void deleteFlow(long flowId) {
@@ -428,6 +419,9 @@ public final class DailyTrackingUseCase {
                     prevMap.getValue() != null ? prevMap.getValue() : 0L);
         }
 
+        // Busca os fluxos do dia uma única vez fora do loop (evita N queries idênticas)
+        List<Flow> flows = flowsFor(date);
+
         for (var entryMap : entry.investmentValuesCents().entrySet()) {
             InvestmentType t = entryMap.getKey();
             long todayCents = entryMap.getValue() != null ? entryMap.getValue() : 0L;
@@ -436,8 +430,6 @@ public final class DailyTrackingUseCase {
 
             investmentTodayCents.put((long) t.id(), todayCents);
 
-            // Calcular lucro considerando fluxos
-            List<Flow> flows = flowsFor(date);
             long flowsInCents = 0;
             long flowsOutCents = 0;
 
@@ -486,29 +478,6 @@ public final class DailyTrackingUseCase {
         }
 
         return points;
-    }
-
-    // ========== RANGE SUMMARY ==========
-
-    public record RangeSummary(
-            long totalProfitCents,
-            Map<Long, Long> profitByInvestmentCents
-    ) {}
-
-    public RangeSummary rangeSummary(LocalDate from, LocalDate to) {
-        DailySummary first = summaryFor(from);
-        DailySummary last = summaryFor(to);
-
-        long totalProfit = last.totalProfitTodayCents() - first.totalProfitTodayCents();
-
-        Map<Long, Long> profitByInv = new HashMap<>();
-        for (Long invId : last.investmentProfitTodayCents().keySet()) {
-            long lastProfit = last.investmentProfitTodayCents().getOrDefault(invId, 0L);
-            long firstProfit = first.investmentProfitTodayCents().getOrDefault(invId, 0L);
-            profitByInv.put(invId, lastProfit - firstProfit);
-        }
-
-        return new RangeSummary(totalProfit, profitByInv);
     }
 
     // ========== FORMATTING HELPERS ==========

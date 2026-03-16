@@ -2,6 +2,7 @@ package com.daniel.presentation.view.pages;
 
 import com.daniel.infrastructure.api.AssetHistoryClient;
 import com.daniel.infrastructure.api.AssetHistoryClient.HistoryPoint;
+import com.daniel.infrastructure.api.AssetHistoryClient.HistoryResult;
 import com.daniel.infrastructure.api.AssetHistoryClient.Period;
 import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.infrastructure.api.BrapiClient.StockData;
@@ -23,12 +24,15 @@ import javafx.util.StringConverter;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.logging.Logger;
 
 /**
  * Página de análise de ativos: busca cotação atual e histórico de preços.
@@ -37,6 +41,8 @@ import java.util.concurrent.CompletableFuture;
  * escala temporal proporcional ao intervalo real entre os dados.</p>
  */
 public final class AssetAnalysisPage implements Page {
+
+    private static final Logger LOG = Logger.getLogger(AssetAnalysisPage.class.getName());
 
     // Formatter do período atual — lido pelo eixo e pelo crosshair via lambda
     private DateTimeFormatter currentDateFmt = DateTimeFormatter.ofPattern("dd/MM");
@@ -77,6 +83,12 @@ public final class AssetAnalysisPage implements Page {
     /** Epoch seconds (ZoneOffset.UTC) dos pontos do último render, para refresh do eixo. */
     private List<Long> lastEpochSecs = List.of();
     private Timeline resizeDebounce;
+
+    // ── Chart empty/error state ──
+    private Label chartEmptyLabel;
+
+    /** Impede que o listener do ToggleGroup dispare reloadChart durante ajustes programáticos. */
+    private boolean suppressPeriodReload = false;
 
     // ── Sections shown/hidden ──
     private VBox kpiSection;
@@ -253,6 +265,7 @@ public final class AssetAnalysisPage implements Page {
         periodBar.setAlignment(Pos.CENTER_LEFT);
 
         for (Period p : Period.values()) {
+            if (p == Period.ONE_DAY) continue; // intraday não suportado no plano free Brapi
             ToggleButton tb = new ToggleButton(p.label);
             tb.setToggleGroup(periodGroup);
             tb.setUserData(p);
@@ -262,7 +275,7 @@ public final class AssetAnalysisPage implements Page {
         }
 
         periodGroup.selectedToggleProperty().addListener((obs, old, now) -> {
-            if (now != null) reloadChart();
+            if (now != null && !suppressPeriodReload) reloadChart();
         });
 
         // ── Area chart com eixo temporal ──
@@ -307,7 +320,13 @@ public final class AssetAnalysisPage implements Page {
                 y -> "R$ " + String.format("%.2f", y).replace('.', ','));
         VBox.setVgrow(chartWrapper, Priority.ALWAYS);
 
-        VBox section = new VBox(10, periodBar, chartWrapper);
+        // Empty/error state sobreposto ao gráfico
+        chartEmptyLabel = new Label("Sem dados para este período");
+        chartEmptyLabel.getStyleClass().addAll("empty-hint", "chart-empty-label");
+        chartEmptyLabel.setVisible(false);
+        chartEmptyLabel.setManaged(false);
+
+        VBox section = new VBox(10, periodBar, chartWrapper, chartEmptyLabel);
         section.getStyleClass().add("chart-card");
         return section;
     }
@@ -418,7 +437,9 @@ public final class AssetAnalysisPage implements Page {
         }
 
         setResultVisible(true);
+        resetPeriodVisibility(); // novo ticker → redescobre limites a partir do zero
         reloadChart();
+        probeCapabilities();    // descobre limites reais em paralelo com o fetch inicial
     }
 
     private void reloadChart() {
@@ -429,22 +450,52 @@ public final class AssetAnalysisPage implements Page {
         currentDateFmt = DateTimeFormatter.ofPattern(period.datePattern);
 
         areaChart.getData().clear();
+        setChartEmpty(null); // limpa estado anterior
 
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                return AssetHistoryClient.fetchHistory(currentTicker, period);
-            } catch (Exception e) {
-                return List.<HistoryPoint>of();
-            }
-        }).thenAccept(points -> Platform.runLater(() -> renderChart(points)));
+        CompletableFuture
+                .supplyAsync(() -> {
+                    try {
+                        return AssetHistoryClient.fetchHistory(currentTicker, period);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .thenAccept(result -> Platform.runLater(() -> {
+                    applyPermittedRanges(result.permittedRanges(), result.effectiveRange(), period);
+                    renderChart(result.points());
+                }))
+                .exceptionally(ex -> {
+                    Throwable root = ex;
+                    while (root.getCause() != null) root = root.getCause();
+                    String msg = root.getMessage();
+                    LOG.warning("[Chart] " + currentTicker + " " + period.range
+                            + "/" + period.interval + " → " + root.getClass().getSimpleName() + ": " + msg);
+                    Platform.runLater(() -> setChartEmpty(msg != null ? msg : "Erro ao carregar dados"));
+                    return null;
+                });
+    }
+
+    private void setChartEmpty(String message) {
+        boolean hasMsg = message != null && !message.isBlank();
+        chartEmptyLabel.setText(hasMsg ? message : "Sem dados para este período");
+        chartEmptyLabel.setVisible(hasMsg);
+        chartEmptyLabel.setManaged(hasMsg);
+        if (hasMsg) areaChart.getData().clear();
     }
 
     private void renderChart(List<HistoryPoint> points) {
         areaChart.getData().clear();
-        if (points.isEmpty()) return;
+        if (points.isEmpty()) {
+            setChartEmpty("Sem dados disponíveis para este período");
+            return;
+        }
 
         List<HistoryPoint> valid = points.stream().filter(p -> p.close() > 0).toList();
-        if (valid.isEmpty()) return;
+        if (valid.isEmpty()) {
+            setChartEmpty("Sem dados válidos para este período");
+            return;
+        }
+        setChartEmpty(null); // dados OK — esconde label de erro
         lastRenderedPoints = valid;
 
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
@@ -474,6 +525,112 @@ public final class AssetAnalysisPage implements Page {
 
         // Recalcula escala temporal do eixo X com base na largura atual
         Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(xAxis, lastEpochSecs, areaChart.getWidth()));
+    }
+
+    /**
+     * Restaura todos os botões de período para visível.
+     * Chamado quando o ticker muda — redescobre os limites a partir do zero.
+     */
+    private void resetPeriodVisibility() {
+        for (Toggle t : periodGroup.getToggles()) {
+            ToggleButton btn = (ToggleButton) t;
+            btn.setVisible(true);
+            btn.setManaged(true);
+        }
+    }
+
+    /**
+     * Oculta botões de período não suportados pelo plano/ticker atual.
+     * Se o botão selecionado for ocultado, seleciona o botão do effectiveRange.
+     *
+     * @param permitted      ranges confirmados pela Brapi (vazio = sem info, não altera nada)
+     * @param effectiveRange range que foi efetivamente buscado (usado para corrigir a seleção)
+     * @param requested      período que o usuário solicitou
+     */
+    private void applyPermittedRanges(Set<String> permitted, String effectiveRange,
+                                       Period requested) {
+        if (permitted.isEmpty()) return; // sem informação de limite — mantém visibilidade atual
+
+        suppressPeriodReload = true;
+        try {
+            boolean selectedHidden = false;
+            for (Toggle t : periodGroup.getToggles()) {
+                ToggleButton btn = (ToggleButton) t;
+                Period p = (Period) btn.getUserData();
+                boolean visible = permitted.contains(p.range);
+                btn.setVisible(visible);
+                btn.setManaged(visible);
+                if (!visible && btn.isSelected()) {
+                    btn.setSelected(false);
+                    selectedHidden = true;
+                }
+            }
+            if (selectedHidden) {
+                // Seleciona o botão do range efetivo; atualiza o formatter de data
+                Period effective = selectPeriodByRange(effectiveRange);
+                if (effective != null) {
+                    currentDateFmt = DateTimeFormatter.ofPattern(effective.datePattern);
+                }
+            }
+        } finally {
+            suppressPeriodReload = false;
+        }
+    }
+
+    /**
+     * Seleciona o primeiro botão visível cujo range corresponde ao dado.
+     * Se não encontrar correspondência exata, seleciona o primeiro botão visível.
+     *
+     * @return o Period do botão selecionado, ou null se nenhum botão estiver visível
+     */
+    private Period selectPeriodByRange(String range) {
+        // Busca correspondência exata primeiro
+        for (Toggle t : periodGroup.getToggles()) {
+            ToggleButton btn = (ToggleButton) t;
+            if (!btn.isVisible()) continue;
+            Period p = (Period) btn.getUserData();
+            if (p.range.equals(range)) {
+                btn.setSelected(true);
+                return p;
+            }
+        }
+        // Fallback: primeiro botão visível
+        for (Toggle t : periodGroup.getToggles()) {
+            ToggleButton btn = (ToggleButton) t;
+            if (btn.isVisible()) {
+                btn.setSelected(true);
+                return (Period) btn.getUserData();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Dispara uma busca de sondagem para o range MAX em paralelo com o fetch inicial.
+     * Objetivo: descobrir os ranges reais permitidos pelo plano/token sem esperar que o
+     * usuário clique em um período não suportado.
+     *
+     * <p>Se o probe retornar com permittedRanges não vazio (o range MAX falhou e a Brapi
+     * informou os ranges disponíveis), aplica visibilidade imediatamente.
+     * Se MAX tiver sucesso (plano sem restrição), mantém todos os botões visíveis.</p>
+     */
+    private void probeCapabilities() {
+        String ticker = currentTicker;
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return AssetHistoryClient.fetchHistory(ticker, Period.MAX);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }).thenAccept(result -> Platform.runLater(() -> {
+            if (!ticker.equals(currentTicker)) return; // ticker mudou enquanto probe rodava
+            if (!result.permittedRanges().isEmpty()) {
+                Toggle sel = periodGroup.getSelectedToggle();
+                Period current = sel != null ? (Period) sel.getUserData() : Period.ONE_MONTH;
+                applyPermittedRanges(result.permittedRanges(), result.effectiveRange(), current);
+            }
+            // permittedRanges vazio = MAX teve sucesso → plano sem restrição, mantém tudo visível
+        })).exceptionally(ex -> null); // falha do probe é não-crítica
     }
 
     private void setResultVisible(boolean visible) {

@@ -70,7 +70,6 @@ class DailyTrackingUseCaseTest {
         @Override public List<Flow> listForDate(LocalDate date) {
             return byDate.getOrDefault(date, List.of());
         }
-        @Override public void save(Flow flow) {}
         @Override public void delete(long id) {}
         @Override public long create(Flow flow) { return 0; }
     }
@@ -92,11 +91,9 @@ class DailyTrackingUseCaseTest {
         void putSeries(long typeId, Map<String, Long> series) { seriesData.put(typeId, series); }
 
         @Override public long getCash(LocalDate date) { return cash.getOrDefault(date, 0L); }
-        @Override public void setCash(LocalDate date) {}
         @Override public Map<Long, Long> getAllInvestimentsForDate(LocalDate date) {
             return investments.getOrDefault(date, Map.of());
         }
-        @Override public void setInvestimentValue(LocalDate date, long typeId, long cents) {}
         @Override public Map<String, Long> seriesForInvestiments(long investimentsTypeId) {
             return seriesData.getOrDefault(investimentsTypeId, Map.of());
         }
@@ -539,53 +536,6 @@ class DailyTrackingUseCaseTest {
 
         // profit = 40000 - 0 = 40000
         assertEquals(40000L, summary.investmentProfitTodayCents().get(1L));
-    }
-
-    // ===== rangeSummary =====
-
-    @Test
-    void rangeSummary_sameDayFromTo_profitIsZero() {
-        InvestmentType inv = new InvestmentType(
-                1, "Tesouro", "RENDA_FIXA", "ALTA",
-                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
-        );
-        typeRepo.add(inv);
-
-        LocalDate date     = LocalDate.of(2024, 3, 7);
-        LocalDate dayBefore = date.minusDays(1);
-
-        snapRepo.putInvestment(date, 1L, 51000L);
-        snapRepo.putInvestment(dayBefore, 1L, 50000L);
-
-        // rangeSummary(date, date) → last.profit - first.profit = 1000 - 1000 = 0
-        DailyTrackingUseCase.RangeSummary range = uc.rangeSummary(date, date);
-
-        assertEquals(0L, range.totalProfitCents());
-    }
-
-    @Test
-    void rangeSummary_returnsPerInvestmentProfit() {
-        InvestmentType inv = new InvestmentType(
-                1, "Tesouro", "RENDA_FIXA", "ALTA",
-                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
-        );
-        typeRepo.add(inv);
-
-        LocalDate from = LocalDate.of(2024, 3, 1);
-        LocalDate to   = LocalDate.of(2024, 3, 7);
-
-        // from: yesterday=0, today=50000 → profit=50000
-        snapRepo.putInvestment(from, 1L, 50000L);
-        // to: yesterday=50000, today=51000 → profit=1000
-        snapRepo.putInvestment(to, 1L, 51000L);
-        snapRepo.putInvestment(to.minusDays(1), 1L, 50000L);
-
-        DailyTrackingUseCase.RangeSummary range = uc.rangeSummary(from, to);
-
-        // totalProfit = last.totalProfit - first.totalProfit = 1000 - 50000 = -49000
-        assertEquals(-49000L, range.totalProfitCents());
-        // profitByInv for id=1: lastProfit(1000) - firstProfit(50000) = -49000
-        assertEquals(-49000L, range.profitByInvestmentCents().get(1L));
     }
 
     // ===== groupByTicker — blank ticker excluded =====

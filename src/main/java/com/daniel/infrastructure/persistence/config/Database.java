@@ -4,9 +4,11 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.logging.Logger;
 
 public final class Database {
 
+    private static final Logger LOG = Logger.getLogger(Database.class.getName());
     private static final String DEFAULT_URL = "jdbc:sqlite:breakinv.db";
     private static String jdbcUrl = DEFAULT_URL;
     private static Connection connection = null;
@@ -29,17 +31,14 @@ public final class Database {
     public static synchronized Connection open() {
         try {
             if (connection == null) {
-                System.out.println("🔧 Criando conexão com o banco de dados...");
+                LOG.fine("Criando conexão com o banco de dados...");
                 connection = DriverManager.getConnection(jdbcUrl);
-
-                // Criar tabelas
-                System.out.println("🔧 Criando tabelas...");
                 createTables();
-                System.out.println("✅ Banco de dados pronto!");
+                LOG.fine("Banco de dados pronto.");
             }
 
             if (connection.isClosed()) {
-                System.out.println("⚠️ Connection estava fechada, reabrindo...");
+                LOG.warning("Connection estava fechada, reabrindo...");
                 connection = DriverManager.getConnection(jdbcUrl);
                 createTables();
             }
@@ -62,7 +61,7 @@ public final class Database {
             }
 
         } catch (SQLException e) {
-            System.err.println("⚠️ Erro ao criar tabelas: " + e.getMessage());
+            LOG.severe("Erro ao criar tabelas: " + e.getMessage());
             throw new RuntimeException("Erro ao criar tabelas: " + e.getMessage(), e);
         }
     }

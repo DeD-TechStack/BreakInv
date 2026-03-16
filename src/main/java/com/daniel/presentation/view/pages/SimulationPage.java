@@ -1,7 +1,6 @@
 package com.daniel.presentation.view.pages;
 
 import com.daniel.core.domain.entity.Enums.InvestmentTypeEnum;
-import com.daniel.core.service.InvestmentCalculator;
 import com.daniel.core.util.Money;
 import com.daniel.infrastructure.api.BcbClient;
 import com.daniel.infrastructure.api.BrapiClient;

@@ -446,7 +446,7 @@ public final class RankingPage implements Page {
         List<CompletableFuture<Map.Entry<String, List<HistoryPoint>>>> futures = tickers.stream()
                 .map(t -> CompletableFuture.<Map.Entry<String, List<HistoryPoint>>>supplyAsync(() -> {
                     try {
-                        return Map.entry(t, AssetHistoryClient.fetchHistory(t, period));
+                        return Map.entry(t, AssetHistoryClient.fetchHistory(t, period).points());
                     } catch (Exception e) {
                         return Map.entry(t, List.<HistoryPoint>of());
                     }
