@@ -53,6 +53,7 @@ public final class DashboardPage implements Page {
     private final CategoryAxis compXAxis = new CategoryAxis();
     private final NumberAxis compYAxis = new NumberAxis();
     private final LineChart<String, Number> comparisonChart = new LineChart<>(compXAxis, compYAxis);
+    private javafx.scene.layout.StackPane compWrapper;
 
     private final VBox investmentsByCategoryContainer = new VBox(16);
     private final VBox rankPanelAltas = new VBox(8);
@@ -73,8 +74,8 @@ public final class DashboardPage implements Page {
 
     private final Label noComparisonHint = new Label(
             "Sem dados suficientes — adicione investimentos com valor registrado para ver o gráfico de performance.");
-    private final Label projectionHint = new Label(
-            "Projeção estimada — sem histórico de snapshots no período selecionado. Os dados reais serão usados quando houver snapshots registrados.");
+    private final Label sparseChartHint = new Label(
+            "Histórico insuficiente no período selecionado.");
 
     private int selectedFilterMonths = 12;
     private LocalDate customFrom = null;
@@ -521,7 +522,7 @@ public final class DashboardPage implements Page {
         // Instala listener de largura para atualizar labels automaticamente no resize
         ChartAxisUtils.installSmartAxis(compXAxis, comparisonChart);
 
-        javafx.scene.layout.StackPane compWrapper = ChartCrosshair.install(comparisonChart,
+        compWrapper = ChartCrosshair.install(comparisonChart,
                 y -> String.format("%s%.2f%%", y >= 0 ? "+" : "", y).replace('.', ','));
         HBox chartRow = new HBox(0, compWrapper);
         HBox.setHgrow(compWrapper, Priority.ALWAYS);
@@ -540,12 +541,12 @@ public final class DashboardPage implements Page {
         noComparisonHint.setVisible(false);
         noComparisonHint.setManaged(false);
 
-        projectionHint.getStyleClass().add("text-helper");
-        projectionHint.setWrapText(true);
-        projectionHint.setVisible(false);
-        projectionHint.setManaged(false);
+        sparseChartHint.getStyleClass().add("empty-hint");
+        sparseChartHint.setWrapText(true);
+        sparseChartHint.setVisible(false);
+        sparseChartHint.setManaged(false);
 
-        box.getChildren().addAll(title, filterBar, datePickerBox, noComparisonHint, projectionHint, contentRow);
+        box.getChildren().addAll(title, filterBar, datePickerBox, noComparisonHint, sparseChartHint, contentRow);
         return box;
     }
 
@@ -642,8 +643,6 @@ public final class DashboardPage implements Page {
         if (investments.isEmpty() || totalInvestido == 0) {
             noComparisonHint.setVisible(true);
             noComparisonHint.setManaged(true);
-            projectionHint.setVisible(false);
-            projectionHint.setManaged(false);
             return;
         }
         noComparisonHint.setVisible(false);
@@ -734,10 +733,10 @@ public final class DashboardPage implements Page {
 
         if (dedupedEntries.size() >= 2) {
             // Real data path — % change relative to first snapshot
-            // Chart is already honest; no need for a sparse-history banner
-            projectionHint.setVisible(false);
-            projectionHint.setManaged(false);
-
+            sparseChartHint.setVisible(false);
+            sparseChartHint.setManaged(false);
+            compWrapper.setVisible(true);
+            compWrapper.setManaged(true);
             long firstValue = dedupedEntries.get(0).getValue();
             LocalDate startDate = dedupedEntries.get(0).getKey();
             DateTimeFormatter exactFmt = DateTimeFormatter.ofPattern("dd/MM/yy");
@@ -764,12 +763,11 @@ public final class DashboardPage implements Page {
             rentBenchFinal = (Math.pow(1 + taxaMensalBench, monthsFinal) - 1) * 100;
 
         } else {
-            // Projection path — no usable real history in range
-            projectionHint.setVisible(true);
-            projectionHint.setManaged(true);
-            projectionHint.setText(snapshots.isEmpty()
-                    ? "Projeção estimada — sem snapshots registrados no período selecionado."
-                    : "Projeção estimada — " + snapshots.size() + " snapshot(s) no período, todos concentrados em um único intervalo. Continue registrando ao longo do tempo.");
+            // Sparse state — insufficient real history; hide chart, show hint, still populate metrics
+            sparseChartHint.setVisible(true);
+            sparseChartHint.setManaged(true);
+            compWrapper.setVisible(false);
+            compWrapper.setManaged(false);
 
             long patrimonioAtual = currentValues.values().stream()
                     .mapToLong(Long::longValue).sum();
@@ -780,48 +778,9 @@ public final class DashboardPage implements Page {
             double taxaMensalCarteira =
                     Math.pow(1 + rentTotalCarteira / 100.0, 1.0 / mesesTotaisCarteira) - 1;
 
-            if (projStepDays > 0) {
-                // Day-based projection: 1M=daily, 3M=weekly, 6M=biweekly — covers full selected range
-                double taxaDiaria      = Math.pow(1 + taxaMensalCarteira, 1.0 / 30.44) - 1;
-                double taxaDiariaBench = Math.pow(1 + taxaMensalBench,    1.0 / 30.44) - 1;
-                long totalDays = java.time.temporal.ChronoUnit.DAYS.between(dataInicio, dataFim);
-                LinkedHashMap<String, double[]> projBuckets = new LinkedHashMap<>();
-                for (long d = 0; d <= totalDays; d += projStepDays) {
-                    String lbl = bucketFn.apply(dataInicio.plusDays(d));
-                    projBuckets.put(lbl, new double[]{
-                        (Math.pow(1 + taxaDiaria,      d) - 1) * 100,
-                        (Math.pow(1 + taxaDiariaBench, d) - 1) * 100
-                    });
-                }
-                // Ensure end-of-range point is always included
-                String endLbl = bucketFn.apply(dataFim);
-                if (!projBuckets.containsKey(endLbl)) {
-                    long d = totalDays;
-                    projBuckets.put(endLbl, new double[]{
-                        (Math.pow(1 + taxaDiaria,      d) - 1) * 100,
-                        (Math.pow(1 + taxaDiariaBench, d) - 1) * 100
-                    });
-                }
-                for (Map.Entry<String, double[]> pe : projBuckets.entrySet()) {
-                    carteiraSeries.getData().add(new XYChart.Data<>(pe.getKey(), pe.getValue()[0]));
-                    benchSeries.getData().add(new XYChart.Data<>(pe.getKey(), pe.getValue()[1]));
-                }
-                double[] lastVals = projBuckets.values().stream().reduce((a, b) -> b)
-                        .orElse(new double[]{0, 0});
-                rentCartFinal  = lastVals[0];
-                rentBenchFinal = lastVals[1];
-            } else {
-                // Monthly projection: 1A+ — project full selected range without age cap
-                for (long m = 0; m <= totalRangeMonths; m++) {
-                    String lbl = dataInicio.plusMonths(m).format(fmt);
-                    double rentCart  = (Math.pow(1 + taxaMensalCarteira, m) - 1) * 100;
-                    double rentBench = (Math.pow(1 + taxaMensalBench,    m) - 1) * 100;
-                    carteiraSeries.getData().add(new XYChart.Data<>(lbl, rentCart));
-                    benchSeries.getData().add(new XYChart.Data<>(lbl, rentBench));
-                }
-                rentCartFinal  = (Math.pow(1 + taxaMensalCarteira, (double) totalRangeMonths) - 1) * 100;
-                rentBenchFinal = (Math.pow(1 + taxaMensalBench,    (double) totalRangeMonths) - 1) * 100;
-            }
+            // Compute side-panel metrics without adding any chart data
+            rentCartFinal  = (Math.pow(1 + taxaMensalCarteira, (double) totalRangeMonths) - 1) * 100;
+            rentBenchFinal = (Math.pow(1 + taxaMensalBench,    (double) totalRangeMonths) - 1) * 100;
         }
 
         // Only render if both series have at least 2 distinct points

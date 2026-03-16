@@ -225,22 +225,33 @@ public final class ReportsPage implements Page {
         // Soma das compras do período (dinheiro investido)
         setKpi(totalComprasLabel, totalCompras, false);
 
-        // ── KPI 2 & 3: only meaningful when the selected month has movements ─
-        // Showing global/current portfolio values in a month with no records
-        // leaks current state into an unrelated period — show "—" instead.
+        // ── KPI 2 & 3: month-scoped semantics ──────────────────────────────
+        boolean isCurrentMonth = currentMonth.equals(YearMonth.now());
+        LocalDate refDate = isCurrentMonth ? LocalDate.now() : currentMonth.atEndOfMonth();
+
         if (transactions.isEmpty()) {
+            // No activity in selected month: never leak global portfolio state into empty period
             setKpi(totalVendasLabel, 0, true);
             setKpiPositive(lucroRealizadoLabel, 0);
         } else {
-            // KPI 2: Lucro acumulado (global, calculated at today)
-            long lucroTotal = daily.getTotalProfit(LocalDate.now());
+            // KPI 2: Lucro acumulado — scoped to end of selected month (not global today)
+            long lucroTotal = daily.getTotalProfit(refDate);
             setKpi(totalVendasLabel, lucroTotal, true);
 
-            // KPI 3: Patrimônio — current month uses live prices; past months use end-of-month ref
-            boolean isCurrentMonth = currentMonth.equals(java.time.YearMonth.now());
-            LocalDate refDate = isCurrentMonth ? LocalDate.now() : currentMonth.atEndOfMonth();
-            long patrimonio = daily.getTotalPatrimony(refDate);
-            setKpiPositive(lucroRealizadoLabel, patrimonio);
+            // KPI 3: Patrimônio — for past months prefer snapshot-backed total;
+            // live prices should not bleed into historical month views.
+            if (isCurrentMonth) {
+                setKpiPositive(lucroRealizadoLabel, daily.getTotalPatrimony(LocalDate.now()));
+            } else {
+                TreeMap<LocalDate, Long> snaps = daily.getPortfolioSnapshotSeries(
+                        currentMonth.atDay(1), currentMonth.atEndOfMonth());
+                if (!snaps.isEmpty()) {
+                    setKpiPositive(lucroRealizadoLabel, snaps.lastEntry().getValue());
+                } else {
+                    // No historical snapshots for this period: show dash, not live prices
+                    setKpiPositive(lucroRealizadoLabel, 0);
+                }
+            }
         }
     }
 
