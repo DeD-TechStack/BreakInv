@@ -26,17 +26,8 @@ public final class SnapshotRepository implements ISnapshotRepository {
     }
 
     @Override
-    public void setCash(LocalDate date) {
-    }
-
-    @Override
     public Map<Long, Long> getAllInvestimentsForDate(LocalDate date) {
         return getAllInvestmentsForDate(date);
-    }
-
-    @Override
-    public void setInvestimentValue(LocalDate date, long typeId, long cents) {
-        // Implementar
     }
 
     @Override
