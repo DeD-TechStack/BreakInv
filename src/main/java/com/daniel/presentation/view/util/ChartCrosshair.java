@@ -93,8 +93,20 @@ public final class ChartCrosshair {
 
             // Coleta valores de todas as séries (ignora série de referência "—")
             final String cat = nearest;
+            // Use real point date from extraValue when available (precision for weekly/biweekly buckets)
+            String header = cat;
+            outer:
+            for (XYChart.Series<String, Number> ser : chart.getData()) {
+                if ("—".equals(ser.getName())) continue;
+                for (XYChart.Data<String, Number> d : ser.getData()) {
+                    if (cat.equals(d.getXValue()) && d.getExtraValue() instanceof String xv) {
+                        header = xv;
+                        break outer;
+                    }
+                }
+            }
             Double firstY = null;
-            StringBuilder sb = new StringBuilder(cat);
+            StringBuilder sb = new StringBuilder(header);
             for (XYChart.Series<String, Number> ser : chart.getData()) {
                 if ("—".equals(ser.getName())) continue;
                 for (XYChart.Data<String, Number> d : ser.getData()) {

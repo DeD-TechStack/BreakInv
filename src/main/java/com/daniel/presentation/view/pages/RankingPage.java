@@ -92,6 +92,9 @@ public final class RankingPage implements Page {
     private VBox emptyState;
     private VBox contentArea;
 
+    /** Chip de frescor do card "VARIAÇÃO DO DIA (%)". Atualizado após cada fetch. */
+    private Label barFreshnessChip;
+
     public RankingPage(DailyTrackingUseCase dailyTrackingUseCase) {
         this.daily = dailyTrackingUseCase;
         root.getStyleClass().add("page-root");
@@ -158,7 +161,9 @@ public final class RankingPage implements Page {
         barYAxis.setAutoRanging(true);
         barYAxis.setLabel("Variação (%)");
         barXAxis.setLabel("");
-        ChartAxisUtils.installSmartAxis(barXAxis, barChart);
+        // Não instala installSmartAxis no barChart — o CategoryAxis nativo já gerencia
+        // os labels dos tickers. installSmartAxis oculta labels intermediários, o que
+        // quebra a legibilidade do BarChart.
 
         Label chartTitle = new Label("VARIAÇÃO DO DIA (%)");
         chartTitle.getStyleClass().add("card-title");
@@ -166,7 +171,17 @@ public final class RankingPage implements Page {
         Label chartHint = new Label("Clique em ativos para filtrar (clique novamente para desmarcar)");
         chartHint.getStyleClass().add("section-subtitle");
 
-        VBox chartCard = new VBox(8, chartTitle, chartHint, barChart);
+        // Chip de atualização — informa quando os dados foram obtidos pela última vez
+        barFreshnessChip = new Label();
+        barFreshnessChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
+        updateBarFreshnessChip(barFreshnessChip);
+        Label freshnessLbl = barFreshnessChip;
+
+        HBox titleRow = new HBox(8, chartTitle, new javafx.scene.layout.Region(), freshnessLbl);
+        HBox.setHgrow(titleRow.getChildren().get(1), javafx.scene.layout.Priority.ALWAYS);
+        titleRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
+        VBox chartCard = new VBox(8, titleRow, chartHint, barChart);
         chartCard.getStyleClass().add("chart-card");
 
         VBox content = new VBox(16, tables, chartCard, buildReturnChartCard(), buildMAChartCard());
@@ -292,6 +307,7 @@ public final class RankingPage implements Page {
             setContentVisible(true);
             reloadChart();
             reloadReturnChart();
+            if (barFreshnessChip != null) updateBarFreshnessChip(barFreshnessChip);
         }));
     }
 
@@ -359,7 +375,8 @@ public final class RankingPage implements Page {
             });
         }
 
-        Platform.runLater(() -> ChartAxisUtils.refreshLabels(barXAxis, barChart.getWidth()));
+        // Não chama refreshLabels no barChart — CategoryAxis nativo é responsável
+        // pela exibição dos labels de ticker; ocultar labels intermediários quebra legibilidade.
     }
 
     // ── Return chart build & load ───────────────────────────────────────────
@@ -824,5 +841,33 @@ public final class RankingPage implements Page {
         emptyState.setManaged(!visible);
         contentArea.setVisible(visible);
         contentArea.setManaged(visible);
+    }
+
+    /**
+     * Atualiza o chip de frescor da cotação no card "VARIAÇÃO DO DIA (%)".
+     * Usa {@link BrapiClient#getLastSuccessfulFetchMs()} para informar quando
+     * os dados foram obtidos pela última vez. Dados da B3 têm atraso típico de
+     * 15–30 min no plano gratuito da BRAPI — o chip não implica dados em tempo real.
+     */
+    private void updateBarFreshnessChip(Label chip) {
+        long lastFetch = BrapiClient.getLastSuccessfulFetchMs();
+        chip.getStyleClass().removeAll("brapi-chip-success", "brapi-chip-warn", "brapi-chip-neutral");
+        if (lastFetch == 0) {
+            chip.setText("Sem dados");
+            chip.getStyleClass().add("brapi-chip-neutral");
+        } else {
+            long elapsedMin = (System.currentTimeMillis() - lastFetch) / 60_000L;
+            if (elapsedMin < 2) {
+                chip.setText("Cotações atualizadas agora");
+                chip.getStyleClass().add("brapi-chip-success");
+            } else if (elapsedMin < 60) {
+                chip.setText("Cotações há " + elapsedMin + " min · atraso ~15-30 min");
+                chip.getStyleClass().add(elapsedMin <= 30 ? "brapi-chip-success" : "brapi-chip-warn");
+            } else {
+                long elapsedHours = elapsedMin / 60;
+                chip.setText("Cotações há " + elapsedHours + "h");
+                chip.getStyleClass().add("brapi-chip-warn");
+            }
+        }
     }
 }

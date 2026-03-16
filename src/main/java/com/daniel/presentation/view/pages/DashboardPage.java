@@ -107,7 +107,7 @@ public final class DashboardPage implements Page {
 
         comparisonChart.setTitle(null);
         comparisonChart.setMinHeight(300);
-        comparisonChart.setCreateSymbols(true);
+        comparisonChart.setCreateSymbols(false);
         comparisonChart.setAnimated(false);
 
         root.getStyleClass().add("page-root");
@@ -145,8 +145,9 @@ public final class DashboardPage implements Page {
         HBox.setHgrow(pieBox, Priority.ALWAYS);
         Label pieTitle = new Label("DIVERSIFICAÇÃO");
         pieTitle.getStyleClass().add("card-title");
-        pieChart.setMinHeight(280);
-        pieChart.setLegendSide(Side.RIGHT);
+        pieChart.setMinHeight(300);
+        pieChart.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        pieChart.setLegendSide(Side.BOTTOM);
         VBox.setVgrow(pieChart, Priority.ALWAYS);
         pieBox.getChildren().addAll(pieTitle, pieChart);
 
@@ -513,7 +514,7 @@ public final class DashboardPage implements Page {
         compXAxis.setLabel(null);
         compYAxis.setLabel("Rentabilidade %");
         comparisonChart.setAnimated(false);
-        comparisonChart.setCreateSymbols(true);
+        comparisonChart.setCreateSymbols(false);
         comparisonChart.setLegendVisible(true);
         comparisonChart.setMinHeight(300);
 
@@ -673,14 +674,49 @@ public final class DashboardPage implements Page {
         };
         double taxaMensalBench = Math.pow(1 + taxaAnualBench, 1.0 / 12) - 1;
 
-        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MM/yy");
+        // ── Range-aware bucket strategy ───────────────────────────────────────
+        long totalRangeMonths = java.time.temporal.ChronoUnit.MONTHS.between(dataInicio, dataFim);
+        if (totalRangeMonths < 1) totalRangeMonths = 1;
+
+        // Blank-final variables — assigned exactly once in the if-else below, captured by lambdas
+        final DateTimeFormatter fmt;
+        final java.util.function.Function<LocalDate, String> bucketFn;
+        final long projStepDays; // >0 = day-based projection steps; 0 = monthly steps
+
+        if (totalRangeMonths <= 1) {
+            // 1M: daily granularity (~30 points)
+            fmt = DateTimeFormatter.ofPattern("dd/MM");
+            bucketFn = d -> d.format(fmt);
+            projStepDays = 1;
+        } else if (totalRangeMonths <= 3) {
+            // 3M: weekly granularity (~13 points) — bucket anchored to range start
+            fmt = DateTimeFormatter.ofPattern("dd/MM");
+            final LocalDate weekAnchor = dataInicio;
+            bucketFn = d -> {
+                long weekNum = java.time.temporal.ChronoUnit.DAYS.between(weekAnchor, d) / 7;
+                return weekAnchor.plusDays(weekNum * 7).format(fmt);
+            };
+            projStepDays = 7;
+        } else if (totalRangeMonths <= 6) {
+            // 6M: biweekly granularity (~13 points) — bucket anchored to range start
+            fmt = DateTimeFormatter.ofPattern("dd/MM");
+            final LocalDate biweekAnchor = dataInicio;
+            bucketFn = d -> {
+                long biweekNum = java.time.temporal.ChronoUnit.DAYS.between(biweekAnchor, d) / 14;
+                return biweekAnchor.plusDays(biweekNum * 14).format(fmt);
+            };
+            projStepDays = 14;
+        } else {
+            // 1A+: monthly granularity
+            fmt = DateTimeFormatter.ofPattern("MM/yy");
+            bucketFn = d -> d.format(fmt);
+            projStepDays = 0;
+        }
 
         XYChart.Series<String, Number> carteiraSeries = new XYChart.Series<>();
         carteiraSeries.setName("Carteira");
         XYChart.Series<String, Number> benchSeries = new XYChart.Series<>();
         benchSeries.setName(selectedBenchmark);
-        XYChart.Series<String, Number> zeroSeries = new XYChart.Series<>();
-        zeroSeries.setName("—");
 
         double rentCartFinal = 0;
         double rentBenchFinal = 0;
@@ -689,28 +725,38 @@ public final class DashboardPage implements Page {
         java.util.TreeMap<LocalDate, Long> snapshots =
                 daily.getPortfolioSnapshotSeries(dataInicio, dataFim);
 
-        if (snapshots.size() >= 2) {
+        // Deduplicate by bucket key — keep last snapshot per bucket to avoid vertical-line artifact
+        LinkedHashMap<String, Map.Entry<LocalDate, Long>> dedupMap = new LinkedHashMap<>();
+        for (Map.Entry<LocalDate, Long> e : snapshots.entrySet()) {
+            dedupMap.put(bucketFn.apply(e.getKey()), e);
+        }
+        List<Map.Entry<LocalDate, Long>> dedupedEntries = new ArrayList<>(dedupMap.values());
+
+        if (dedupedEntries.size() >= 2) {
             // Real data path — % change relative to first snapshot
+            // Chart is already honest; no need for a sparse-history banner
             projectionHint.setVisible(false);
             projectionHint.setManaged(false);
 
-            List<Map.Entry<LocalDate, Long>> entries = new ArrayList<>(snapshots.entrySet());
-            long firstValue = entries.get(0).getValue();
-            LocalDate startDate = entries.get(0).getKey();
+            long firstValue = dedupedEntries.get(0).getValue();
+            LocalDate startDate = dedupedEntries.get(0).getKey();
+            DateTimeFormatter exactFmt = DateTimeFormatter.ofPattern("dd/MM/yy");
 
-            for (Map.Entry<LocalDate, Long> entry : entries) {
-                String lbl = entry.getKey().format(fmt);
+            for (Map.Entry<LocalDate, Long> entry : dedupedEntries) {
+                String lbl = bucketFn.apply(entry.getKey());
                 double rentCart = firstValue > 0
                         ? (entry.getValue() - firstValue) * 100.0 / firstValue : 0;
                 double monthsFromStart = java.time.temporal.ChronoUnit.DAYS.between(
                         startDate, entry.getKey()) / 30.44;
                 double rentBench = (Math.pow(1 + taxaMensalBench, monthsFromStart) - 1) * 100;
-                carteiraSeries.getData().add(new XYChart.Data<>(lbl, rentCart));
+                // Store real snapshot date as extraValue for precise crosshair tooltip
+                XYChart.Data<String, Number> cartPoint = new XYChart.Data<>(lbl, rentCart);
+                cartPoint.setExtraValue(entry.getKey().format(exactFmt));
+                carteiraSeries.getData().add(cartPoint);
                 benchSeries.getData().add(new XYChart.Data<>(lbl, rentBench));
-                zeroSeries.getData().add(new XYChart.Data<>(lbl, 0));
             }
 
-            Map.Entry<LocalDate, Long> last = entries.get(entries.size() - 1);
+            Map.Entry<LocalDate, Long> last = dedupedEntries.get(dedupedEntries.size() - 1);
             rentCartFinal = firstValue > 0
                     ? (last.getValue() - firstValue) * 100.0 / firstValue : 0;
             double monthsFinal = java.time.temporal.ChronoUnit.DAYS.between(
@@ -718,9 +764,12 @@ public final class DashboardPage implements Page {
             rentBenchFinal = (Math.pow(1 + taxaMensalBench, monthsFinal) - 1) * 100;
 
         } else {
-            // Projection path — honest note shown
+            // Projection path — no usable real history in range
             projectionHint.setVisible(true);
             projectionHint.setManaged(true);
+            projectionHint.setText(snapshots.isEmpty()
+                    ? "Projeção estimada — sem snapshots registrados no período selecionado."
+                    : "Projeção estimada — " + snapshots.size() + " snapshot(s) no período, todos concentrados em um único intervalo. Continue registrando ao longo do tempo.");
 
             long patrimonioAtual = currentValues.values().stream()
                     .mapToLong(Long::longValue).sum();
@@ -731,67 +780,67 @@ public final class DashboardPage implements Page {
             double taxaMensalCarteira =
                     Math.pow(1 + rentTotalCarteira / 100.0, 1.0 / mesesTotaisCarteira) - 1;
 
-            long totalMeses = java.time.temporal.ChronoUnit.MONTHS.between(dataInicio, dataFim);
-            if (totalMeses < 1) totalMeses = 1;
-            long pontos = Math.min(totalMeses, mesesTotaisCarteira);
-
-            for (long m = 0; m <= pontos; m++) {
-                String lbl = dataInicio.plusMonths(m).format(fmt);
-                double rentCart  = (Math.pow(1 + taxaMensalCarteira, m) - 1) * 100;
-                double rentBench = (Math.pow(1 + taxaMensalBench,    m) - 1) * 100;
-                carteiraSeries.getData().add(new XYChart.Data<>(lbl, rentCart));
-                benchSeries.getData().add(new XYChart.Data<>(lbl, rentBench));
-                zeroSeries.getData().add(new XYChart.Data<>(lbl, 0));
+            if (projStepDays > 0) {
+                // Day-based projection: 1M=daily, 3M=weekly, 6M=biweekly — covers full selected range
+                double taxaDiaria      = Math.pow(1 + taxaMensalCarteira, 1.0 / 30.44) - 1;
+                double taxaDiariaBench = Math.pow(1 + taxaMensalBench,    1.0 / 30.44) - 1;
+                long totalDays = java.time.temporal.ChronoUnit.DAYS.between(dataInicio, dataFim);
+                LinkedHashMap<String, double[]> projBuckets = new LinkedHashMap<>();
+                for (long d = 0; d <= totalDays; d += projStepDays) {
+                    String lbl = bucketFn.apply(dataInicio.plusDays(d));
+                    projBuckets.put(lbl, new double[]{
+                        (Math.pow(1 + taxaDiaria,      d) - 1) * 100,
+                        (Math.pow(1 + taxaDiariaBench, d) - 1) * 100
+                    });
+                }
+                // Ensure end-of-range point is always included
+                String endLbl = bucketFn.apply(dataFim);
+                if (!projBuckets.containsKey(endLbl)) {
+                    long d = totalDays;
+                    projBuckets.put(endLbl, new double[]{
+                        (Math.pow(1 + taxaDiaria,      d) - 1) * 100,
+                        (Math.pow(1 + taxaDiariaBench, d) - 1) * 100
+                    });
+                }
+                for (Map.Entry<String, double[]> pe : projBuckets.entrySet()) {
+                    carteiraSeries.getData().add(new XYChart.Data<>(pe.getKey(), pe.getValue()[0]));
+                    benchSeries.getData().add(new XYChart.Data<>(pe.getKey(), pe.getValue()[1]));
+                }
+                double[] lastVals = projBuckets.values().stream().reduce((a, b) -> b)
+                        .orElse(new double[]{0, 0});
+                rentCartFinal  = lastVals[0];
+                rentBenchFinal = lastVals[1];
+            } else {
+                // Monthly projection: 1A+ — project full selected range without age cap
+                for (long m = 0; m <= totalRangeMonths; m++) {
+                    String lbl = dataInicio.plusMonths(m).format(fmt);
+                    double rentCart  = (Math.pow(1 + taxaMensalCarteira, m) - 1) * 100;
+                    double rentBench = (Math.pow(1 + taxaMensalBench,    m) - 1) * 100;
+                    carteiraSeries.getData().add(new XYChart.Data<>(lbl, rentCart));
+                    benchSeries.getData().add(new XYChart.Data<>(lbl, rentBench));
+                }
+                rentCartFinal  = (Math.pow(1 + taxaMensalCarteira, (double) totalRangeMonths) - 1) * 100;
+                rentBenchFinal = (Math.pow(1 + taxaMensalBench,    (double) totalRangeMonths) - 1) * 100;
             }
-
-            rentCartFinal  = (Math.pow(1 + taxaMensalCarteira, (double) pontos) - 1) * 100;
-            rentBenchFinal = (Math.pow(1 + taxaMensalBench,    (double) pontos) - 1) * 100;
         }
 
-        comparisonChart.getData().addAll(carteiraSeries, benchSeries, zeroSeries);
+        // Only render if both series have at least 2 distinct points
+        if (carteiraSeries.getData().size() >= 2) {
+            comparisonChart.getData().addAll(carteiraSeries, benchSeries);
 
-        // Atualiza densidade de labels do eixo X com base na largura atual
-        Platform.runLater(() -> ChartAxisUtils.refreshLabels(compXAxis, comparisonChart.getWidth()));
+            // Atualiza densidade de labels do eixo X com base na largura atual
+            Platform.runLater(() -> ChartAxisUtils.refreshLabels(compXAxis, comparisonChart.getWidth()));
 
-        // Estilizar linhas das séries após renderização
-        Platform.runLater(() -> {
-            javafx.scene.Node cartLine = comparisonChart.lookup(".series0.chart-series-line");
-            if (cartLine != null) cartLine.setStyle("-fx-stroke: #22c55e; -fx-stroke-width: 2;");
+            // Estilizar linhas das séries — aplica cores após o layout (lookup exige nós renderizados)
+            Platform.runLater(() -> {
+                javafx.scene.Node cartLine = comparisonChart.lookup(".series0.chart-series-line");
+                if (cartLine != null) cartLine.setStyle("-fx-stroke: #22c55e; -fx-stroke-width: 2;");
 
-            javafx.scene.Node benchLine = comparisonChart.lookup(".series1.chart-series-line");
-            if (benchLine != null) benchLine.setStyle(
-                    "-fx-stroke: rgba(255,255,255,0.85); -fx-stroke-width: 1.5;");
-
-            javafx.scene.Node zeroLine = comparisonChart.lookup(".series2.chart-series-line");
-            if (zeroLine != null) zeroLine.setStyle(
-                    "-fx-stroke: rgba(255,255,255,0.25); -fx-stroke-width: 1; -fx-stroke-dash-array: 6 4;");
-        });
-
-        // Tooltips + coloração após renderização
-        final String benchName = benchSeries.getName();
-        Platform.runLater(() -> {
-            for (XYChart.Data<String, Number> d : carteiraSeries.getData()) {
-                double val = d.getYValue().doubleValue();
-                String lbl = d.getXValue() + "\nCarteira: "
-                        + String.format("%.2f%%", val).replace('.', ',');
-                String baseColor  = val >= 0 ? "rgba(34,197,94,0.8)"  : "rgba(239,68,68,0.8)";
-                String hoverColor = val >= 0 ? "rgba(34,197,94,1.0)"  : "rgba(239,68,68,1.0)";
-                installXYTooltipStyled(d, lbl, baseColor, hoverColor);
-            }
-            for (XYChart.Data<String, Number> d : benchSeries.getData()) {
-                String lbl = d.getXValue() + "\n" + benchName + ": "
-                        + String.format("%.2f%%", d.getYValue().doubleValue()).replace('.', ',');
-                installXYTooltipStyled(d, lbl,
-                        "rgba(255,255,255,0.7)", "rgba(255,255,255,1.0)");
-            }
-            for (XYChart.Data<String, Number> d : zeroSeries.getData()) {
-                javafx.scene.Node n = d.getNode();
-                if (n != null) n.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
-                else d.nodeProperty().addListener((obs, o, n2) -> {
-                    if (n2 != null) n2.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
-                });
-            }
-        });
+                javafx.scene.Node benchLine = comparisonChart.lookup(".series1.chart-series-line");
+                if (benchLine != null) benchLine.setStyle(
+                        "-fx-stroke: rgba(255,255,255,0.85); -fx-stroke-width: 1.5;");
+            });
+        }
 
         // ── Métricas laterais ────────────────────────────────────────────────
         long rendimentoPeriodo = Math.round(totalInvestido * rentCartFinal / 100.0);

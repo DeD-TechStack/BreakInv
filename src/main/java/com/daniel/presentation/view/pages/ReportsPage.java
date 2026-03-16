@@ -225,21 +225,23 @@ public final class ReportsPage implements Page {
         // Soma das compras do período (dinheiro investido)
         setKpi(totalComprasLabel, totalCompras, false);
 
-        // ── KPI 2: Valorização da carteira no mês ───────────────────────────
-        // Lucro total acumulado = valor de mercado atual - total investido
-        // (método mais confiável sem necessidade de snapshots históricos)
-        long lucroTotal = daily.getTotalProfit(LocalDate.now());
-        setKpi(totalVendasLabel, lucroTotal, true);
+        // ── KPI 2 & 3: only meaningful when the selected month has movements ─
+        // Showing global/current portfolio values in a month with no records
+        // leaks current state into an unrelated period — show "—" instead.
+        if (transactions.isEmpty()) {
+            setKpi(totalVendasLabel, 0, true);
+            setKpiPositive(lucroRealizadoLabel, 0);
+        } else {
+            // KPI 2: Lucro acumulado (global, calculated at today)
+            long lucroTotal = daily.getTotalProfit(LocalDate.now());
+            setKpi(totalVendasLabel, lucroTotal, true);
 
-        // ── KPI 3: Patrimônio no fim do mês ─────────────────────────────────
-        // Para o mês atual: valor de mercado calculado com preços ao vivo.
-        // Para meses anteriores: último snapshot disponível do período.
-        boolean isCurrentMonth = currentMonth.equals(java.time.YearMonth.now());
-        LocalDate refDate = isCurrentMonth
-                ? LocalDate.now()
-                : currentMonth.atEndOfMonth();
-        long patrimonio = daily.getTotalPatrimony(refDate);
-        setKpiPositive(lucroRealizadoLabel, patrimonio);
+            // KPI 3: Patrimônio — current month uses live prices; past months use end-of-month ref
+            boolean isCurrentMonth = currentMonth.equals(java.time.YearMonth.now());
+            LocalDate refDate = isCurrentMonth ? LocalDate.now() : currentMonth.atEndOfMonth();
+            long patrimonio = daily.getTotalPatrimony(refDate);
+            setKpiPositive(lucroRealizadoLabel, patrimonio);
+        }
     }
 
     /** Exibe valor com sinal (+/−) e cor verde/vermelho, ou "—" se zero. */
