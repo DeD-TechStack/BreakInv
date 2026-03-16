@@ -59,8 +59,12 @@ public final class ChartCrosshair {
 
         StackPane container = new StackPane(chart, o.pane);
 
+        // Cache para evitar lookup do scene graph a cada MOUSE_MOVED
+        Node[] plotBgCache = {null};
+
         container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
-            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBgCache[0] == null) plotBgCache[0] = chart.lookup(".chart-plot-background");
+            Node plotBg = plotBgCache[0];
             if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
 
             Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
@@ -89,8 +93,20 @@ public final class ChartCrosshair {
 
             // Coleta valores de todas as séries (ignora série de referência "—")
             final String cat = nearest;
+            // Use real point date from extraValue when available (precision for weekly/biweekly buckets)
+            String header = cat;
+            outer:
+            for (XYChart.Series<String, Number> ser : chart.getData()) {
+                if ("—".equals(ser.getName())) continue;
+                for (XYChart.Data<String, Number> d : ser.getData()) {
+                    if (cat.equals(d.getXValue()) && d.getExtraValue() instanceof String xv) {
+                        header = xv;
+                        break outer;
+                    }
+                }
+            }
             Double firstY = null;
-            StringBuilder sb = new StringBuilder(cat);
+            StringBuilder sb = new StringBuilder(header);
             for (XYChart.Series<String, Number> ser : chart.getData()) {
                 if ("—".equals(ser.getName())) continue;
                 for (XYChart.Data<String, Number> d : ser.getData()) {
@@ -128,8 +144,11 @@ public final class ChartCrosshair {
 
         StackPane container = new StackPane(chart, o.pane);
 
+        Node[] plotBgCache = {null};
+
         container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
-            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBgCache[0] == null) plotBgCache[0] = chart.lookup(".chart-plot-background");
+            Node plotBg = plotBgCache[0];
             if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
 
             Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
@@ -189,8 +208,11 @@ public final class ChartCrosshair {
 
         StackPane container = new StackPane(chart, o.pane);
 
+        Node[] plotBgCache = {null};
+
         container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
-            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBgCache[0] == null) plotBgCache[0] = chart.lookup(".chart-plot-background");
+            Node plotBg = plotBgCache[0];
             if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
 
             Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
@@ -230,8 +252,13 @@ public final class ChartCrosshair {
                     if (d.getXValue().longValue() == finalEpoch) {
                         double yVal = d.getYValue().doubleValue();
                         if (firstY == null) firstY = yVal;
-                        sb.append("\n").append(ser.getName()).append(": ")
-                          .append(yFormatter.apply(yVal));
+                        String serName = ser.getName();
+                        if (serName != null && !serName.isBlank()) {
+                            sb.append("\n").append(serName).append(": ")
+                              .append(yFormatter.apply(yVal));
+                        } else {
+                            sb.append("\n").append(yFormatter.apply(yVal));
+                        }
                         break;
                     }
                 }
@@ -278,11 +305,15 @@ public final class ChartCrosshair {
 
             tip.setText(text);
 
-            // Posiciona o tooltip evitando overflow
+            // Posiciona o tooltip evitando overflow em todas as bordas
+            double tipW = 168;
+            double tipH = 54;
             double tipX = plotX + 14;
-            double tipY = plotY - 50;
-            if (tipX + 140 > containerW) tipX = plotX - 150;
-            if (tipY < plot.getMinY())   tipY = plotY + 8;
+            double tipY = plotY - tipH - 4;
+            if (tipX + tipW > containerW)    tipX = plotX - tipW - 4;
+            if (tipX < plot.getMinX() + 4)   tipX = plot.getMinX() + 4;
+            if (tipY < plot.getMinY())        tipY = plotY + 8;
+            if (tipY + tipH > plot.getMaxY()) tipY = Math.max(plot.getMinY(), plot.getMaxY() - tipH - 4);
             tip.setLayoutX(tipX);
             tip.setLayoutY(tipY);
 
@@ -300,17 +331,17 @@ public final class ChartCrosshair {
 
     private static Line makeLine() {
         Line l = new Line();
-        l.setStroke(Color.rgb(180, 190, 210, 0.40));
+        l.setStroke(Color.rgb(148, 163, 184, 0.65));
         l.setStrokeWidth(1.0);
-        l.getStrokeDashArray().addAll(4.0, 3.0);
+        l.getStrokeDashArray().addAll(5.0, 3.0);
         l.setMouseTransparent(true);
         l.setVisible(false);
         return l;
     }
 
     private static Circle makeDot() {
-        Circle c = new Circle(4.5);
-        c.setFill(Color.rgb(226, 232, 240, 0.95));
+        Circle c = new Circle(5.0);
+        c.setFill(Color.rgb(34, 197, 94, 0.95));
         c.setStroke(Color.WHITE);
         c.setStrokeWidth(1.5);
         c.setMouseTransparent(true);

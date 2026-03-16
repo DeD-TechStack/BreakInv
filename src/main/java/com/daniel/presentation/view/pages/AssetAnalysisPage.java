@@ -268,7 +268,7 @@ public final class AssetAnalysisPage implements Page {
         // ── Area chart com eixo temporal ──
         areaChart.setAnimated(false);
         areaChart.setLegendVisible(false);
-        areaChart.setCreateSymbols(true);
+        areaChart.setCreateSymbols(false);
         areaChart.setMinHeight(320);
         areaChart.getStyleClass().add("area-chart");
         yAxis.setAutoRanging(false);
@@ -279,6 +279,9 @@ public final class AssetAnalysisPage implements Page {
         ChartAxisUtils.installTemporalAxis(xAxis, areaChart,
                 () -> currentDateFmt,
                 () -> lastEpochSecs);
+
+        // Oculta labels e marcas do eixo X — o crosshair é o mecanismo principal de leitura
+        ChartAxisUtils.hideTemporalAxisLabels(xAxis);
 
         // Debounce de resize: recalcula tick density quando largura muda > 50px
         resizeDebounce = new Timeline(new KeyFrame(
@@ -471,41 +474,6 @@ public final class AssetAnalysisPage implements Page {
 
         // Recalcula escala temporal do eixo X com base na largura atual
         Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(xAxis, lastEpochSecs, areaChart.getWidth()));
-
-        // Instalar tooltip nos nós dos pontos
-        Platform.runLater(() -> {
-            for (XYChart.Data<Number, Number> d : series.getData()) {
-                if (d.getNode() != null) {
-                    installHoverTooltip(d);
-                } else {
-                    d.nodeProperty().addListener((obs, old, n) -> {
-                        if (n != null) installHoverTooltip(d);
-                    });
-                }
-            }
-        });
-    }
-
-    private void installHoverTooltip(XYChart.Data<Number, Number> d) {
-        javafx.scene.Node node = d.getNode();
-        if (node == null) return;
-
-        node.setStyle("-fx-background-color: transparent; -fx-padding: 5;");
-
-        String dateLabel = LocalDateTime.ofEpochSecond(d.getXValue().longValue(), 0, ZoneOffset.UTC)
-                .format(currentDateFmt);
-        String label = dateLabel + "   R$ "
-                + String.format("%.2f", d.getYValue().doubleValue()).replace('.', ',');
-
-        Tooltip tp = new Tooltip(label);
-        tp.setShowDelay(javafx.util.Duration.ZERO);
-        tp.setHideDelay(javafx.util.Duration.millis(50));
-        Tooltip.install(node, tp);
-
-        node.setOnMouseEntered(e -> node.setStyle(
-                "-fx-background-color: rgba(59,130,246,0.8); -fx-padding: 5; -fx-background-radius: 50;"));
-        node.setOnMouseExited(e -> node.setStyle(
-                "-fx-background-color: transparent; -fx-padding: 5;"));
     }
 
     private void setResultVisible(boolean visible) {

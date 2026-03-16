@@ -79,7 +79,8 @@ public final class ChartAxisUtils {
         }
 
         for (javafx.scene.Node n : axis.getChildrenUnmodifiable()) {
-            if (n instanceof Text t) {
+            // Pula o Text do título do eixo (CSS class "axis-label") — só manipula tick labels
+            if (n instanceof Text t && !t.getStyleClass().contains("axis-label")) {
                 String text = t.getText();
                 if (text != null && !text.isEmpty()) {
                     t.setVisible(show.contains(text));
@@ -91,6 +92,23 @@ public final class ChartAxisUtils {
     }
 
     // ── NumberAxis temporal (AreaChart / LineChart com datas) ─────────────────
+
+    /**
+     * Oculta labels, marcas e ticks menores do eixo X de um gráfico temporal.
+     *
+     * <p>Deve ser chamado após {@link #installTemporalAxis} somente em gráficos
+     * linha/área temporais onde o hover/crosshair é o mecanismo principal de leitura.
+     * <strong>Não chamar em BarChart nem em gráficos com CategoryAxis.</strong></p>
+     *
+     * @param xAxis eixo temporal a silenciar
+     */
+    public static void hideTemporalAxisLabels(NumberAxis xAxis) {
+        xAxis.setTickLabelsVisible(false);
+        xAxis.setTickMarkVisible(false);
+        xAxis.setMinorTickVisible(false);
+    }
+
+
 
     /**
      * Configura um {@link NumberAxis} para uso temporal e instala um listener de
