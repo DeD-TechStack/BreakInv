@@ -487,15 +487,16 @@
 }
 
 .crosshair-tooltip {
-    -fx-background-color: rgba(15, 23, 42, 0.92);
-    -fx-text-fill: #e2e8f0;
-    -fx-font-size: 11px;
-    -fx-padding: 6 10 6 10;
-    -fx-background-radius: 5;
-    -fx-border-color: rgba(100, 116, 139, 0.5);
+    -fx-background-color: rgba(10, 18, 35, 0.96);
+    -fx-text-fill: #f1f5f9;
+    -fx-font-size: 12px;
+    -fx-font-weight: 500;
+    -fx-padding: 7 12 7 12;
+    -fx-background-radius: 6;
+    -fx-border-color: rgba(34, 197, 94, 0.45);
     -fx-border-width: 1;
-    -fx-border-radius: 5;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.55), 6, 0, 0, 2);
+    -fx-border-radius: 6;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.70), 8, 0, 0, 2);
 }
 
 /* ── Level 3: Panel — embedded sub-section inside a card ── */
@@ -1040,10 +1041,6 @@
 .area-chart .chart-series-area {
     -fx-fill: linear-gradient(to bottom, rgba(34,197,94,0.20) 0%, rgba(34,197,94,0.01) 100%);
     -fx-stroke: transparent;
-}
-/* Remove eixo X inferior do gráfico temporal — hover é o mecanismo principal */
-.area-chart > .chart-content > .axis.bottom {
-    -fx-padding: 2 0 0 0;
 }
 
 /* ═══════════════════════════════════════════════

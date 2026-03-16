@@ -392,6 +392,8 @@ public final class RankingPage implements Page {
         ChartAxisUtils.installTemporalAxis(retXAxis, returnChart,
                 () -> currentReturnFmt,
                 () -> lastReturnEpochSecs);
+        // Oculta labels do eixo X — hover/crosshair é o mecanismo principal de leitura
+        ChartAxisUtils.hideTemporalAxisLabels(retXAxis);
 
         returnLoadingLabel = new Label("Carregando histórico...");
         returnLoadingLabel.getStyleClass().add("section-subtitle");
@@ -688,6 +690,8 @@ public final class RankingPage implements Page {
         ChartAxisUtils.installTemporalAxis(maXAxis, maChart,
                 () -> MA_DATE_FMT,
                 () -> lastMAEpochSecs);
+        // Oculta labels do eixo X — hover/crosshair é o mecanismo principal de leitura
+        ChartAxisUtils.hideTemporalAxisLabels(maXAxis);
 
         StackPane chartWrapper = ChartCrosshair.installTemporal(maChart,
                 epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC)

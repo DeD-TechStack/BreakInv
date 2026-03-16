@@ -281,9 +281,7 @@ public final class AssetAnalysisPage implements Page {
                 () -> lastEpochSecs);
 
         // Oculta labels e marcas do eixo X — o crosshair é o mecanismo principal de leitura
-        xAxis.setTickLabelsVisible(false);
-        xAxis.setTickMarkVisible(false);
-        xAxis.setMinorTickVisible(false);
+        ChartAxisUtils.hideTemporalAxisLabels(xAxis);
 
         // Debounce de resize: recalcula tick density quando largura muda > 50px
         resizeDebounce = new Timeline(new KeyFrame(

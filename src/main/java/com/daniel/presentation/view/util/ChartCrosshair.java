@@ -59,8 +59,12 @@ public final class ChartCrosshair {
 
         StackPane container = new StackPane(chart, o.pane);
 
+        // Cache para evitar lookup do scene graph a cada MOUSE_MOVED
+        Node[] plotBgCache = {null};
+
         container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
-            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBgCache[0] == null) plotBgCache[0] = chart.lookup(".chart-plot-background");
+            Node plotBg = plotBgCache[0];
             if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
 
             Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
@@ -128,8 +132,11 @@ public final class ChartCrosshair {
 
         StackPane container = new StackPane(chart, o.pane);
 
+        Node[] plotBgCache = {null};
+
         container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
-            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBgCache[0] == null) plotBgCache[0] = chart.lookup(".chart-plot-background");
+            Node plotBg = plotBgCache[0];
             if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
 
             Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
@@ -189,8 +196,11 @@ public final class ChartCrosshair {
 
         StackPane container = new StackPane(chart, o.pane);
 
+        Node[] plotBgCache = {null};
+
         container.addEventFilter(MouseEvent.MOUSE_MOVED, event -> {
-            Node plotBg = chart.lookup(".chart-plot-background");
+            if (plotBgCache[0] == null) plotBgCache[0] = chart.lookup(".chart-plot-background");
+            Node plotBg = plotBgCache[0];
             if (plotBg == null || chart.getData().isEmpty()) { o.hide(); return; }
 
             Point2D mp = plotBg.sceneToLocal(event.getSceneX(), event.getSceneY());
@@ -309,17 +319,17 @@ public final class ChartCrosshair {
 
     private static Line makeLine() {
         Line l = new Line();
-        l.setStroke(Color.rgb(180, 190, 210, 0.40));
+        l.setStroke(Color.rgb(148, 163, 184, 0.65));
         l.setStrokeWidth(1.0);
-        l.getStrokeDashArray().addAll(4.0, 3.0);
+        l.getStrokeDashArray().addAll(5.0, 3.0);
         l.setMouseTransparent(true);
         l.setVisible(false);
         return l;
     }
 
     private static Circle makeDot() {
-        Circle c = new Circle(4.5);
-        c.setFill(Color.rgb(226, 232, 240, 0.95));
+        Circle c = new Circle(5.0);
+        c.setFill(Color.rgb(34, 197, 94, 0.95));
         c.setStroke(Color.WHITE);
         c.setStrokeWidth(1.5);
         c.setMouseTransparent(true);
