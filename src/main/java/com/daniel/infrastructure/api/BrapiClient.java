@@ -8,9 +8,11 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
 
 public final class BrapiClient {
 
+    private static final Logger LOG = Logger.getLogger(BrapiClient.class.getName());
     private static final String BASE_URL = "https://brapi.dev/api";
     private static final String QUOTE_ENDPOINT = "/quote";
 
@@ -86,19 +88,6 @@ public final class BrapiClient {
             String ticker,
             String name,
             String type  // "stock", "fund", "fii"
-    ) {}
-
-    // Histórico de dividendos
-    public record DividendHistory(
-            String ticker,
-            double averageYield,  // Média de dividend yield
-            double lastYearTotal,  // Total pago no último ano
-            List<DividendPayment> payments
-    ) {}
-
-    public record DividendPayment(
-            String date,
-            double value
     ) {}
 
     // ── Timestamp do último fetch bem-sucedido ──
@@ -307,27 +296,6 @@ public final class BrapiClient {
             return new ArrayList<>();
         }
 
-    }
-
-    /**
-     * Calcula média de dividendos com base no dividend yield
-     */
-    public static DividendHistory estimateDividends(String ticker) throws IOException {
-        StockData data = fetchStockData(ticker);
-
-        if (!data.isValid() || data.dividendYield() <= 0) {
-            return new DividendHistory(ticker, 0, 0, new ArrayList<>());
-        }
-
-        // Estimar dividendos anuais baseado no yield e preço atual
-        double estimatedAnnualDividend = data.regularMarketPrice() * (data.dividendYield() / 100.0);
-
-        return new DividendHistory(
-                ticker,
-                data.dividendYield(),
-                estimatedAnnualDividend,
-                new ArrayList<>()  // API pública não retorna histórico detalhado
-        );
     }
 
     /**
@@ -545,7 +513,7 @@ public final class BrapiClient {
 
         String token = getToken();
         if (token == null || token.isBlank()) {
-            System.err.println("[IBOV] Token não encontrado");
+            LOG.warning("[IBOV] Token não encontrado");
             return Optional.empty();
         }
 
@@ -559,7 +527,7 @@ public final class BrapiClient {
 
         // Fallback: quote básico — usa regularMarketChangePercent (variação diária)
         // anualizado como estimativa grosseira
-        System.err.println("[IBOV] Histórico falhou, tentando quote básico...");
+        LOG.info("[IBOV] Histórico falhou, tentando quote básico...");
         try {
             StockData data = fetchStockData("^BVSP");
             if (data != null && data.isValid()) {
@@ -567,13 +535,12 @@ public final class BrapiClient {
                 double annualized = Math.pow(1 + dailyPct, 252) - 1;
                 cachedIbovReturn = annualized;
                 cachedIbovTimestamp = System.currentTimeMillis();
-                System.err.println("[IBOV] Fallback quote: diário="
-                        + String.format("%.4f%%", dailyPct * 100)
-                        + " anualizado=" + String.format("%.2f%%", annualized * 100));
+                LOG.fine(String.format("[IBOV] Fallback quote: diário=%.4f%% anualizado=%.2f%%",
+                        dailyPct * 100, annualized * 100));
                 return Optional.of(annualized);
             }
         } catch (Exception e) {
-            System.err.println("[IBOV] Fallback quote falhou: " + e.getMessage());
+            LOG.warning("[IBOV] Fallback quote falhou: " + e.getMessage());
         }
 
         return Optional.empty();
@@ -588,7 +555,7 @@ public final class BrapiClient {
                     .addQueryParameter("token", token.trim())
                     .build();
 
-            System.err.println("[IBOV] URL: " + httpUrl.toString().replaceAll("token=.*", "token=***"));
+            LOG.fine("[IBOV] URL: " + httpUrl.toString().replaceAll("token=.*", "token=***"));
 
             Request request = new Request.Builder()
                     .url(httpUrl)
@@ -598,19 +565,16 @@ public final class BrapiClient {
 
             try (Response response = client.newCall(request).execute()) {
                 if (response.body() == null) {
-                    System.err.println("[IBOV] body nulo, HTTP " + response.code());
+                    LOG.warning("[IBOV] body nulo, HTTP " + response.code());
                     return Optional.empty();
                 }
 
                 String jsonResponse = response.body().string();
 
                 if (!response.isSuccessful()) {
-                    System.err.println("[IBOV] HTTP " + response.code() + " body: " + jsonResponse);
+                    LOG.warning("[IBOV] HTTP " + response.code() + " body: " + jsonResponse);
                     return Optional.empty();
                 }
-
-                System.err.println("[IBOV] Resposta (500 chars): "
-                        + jsonResponse.substring(0, Math.min(jsonResponse.length(), 500)));
 
                 JsonObject root = gson.fromJson(jsonResponse, JsonObject.class);
 
@@ -620,33 +584,28 @@ public final class BrapiClient {
                     if (errEl.isJsonPrimitive()) {
                         JsonPrimitive ep = errEl.getAsJsonPrimitive();
                         if ((ep.isBoolean() && ep.getAsBoolean()) || ep.isString()) {
-                            System.err.println("[IBOV] error: " + errEl);
+                            LOG.warning("[IBOV] error: " + errEl);
                             return Optional.empty();
                         }
                     } else {
-                        System.err.println("[IBOV] error (objeto): " + errEl);
+                        LOG.warning("[IBOV] error (objeto): " + errEl);
                         return Optional.empty();
                     }
                 }
 
                 JsonArray results = root.getAsJsonArray("results");
                 if (results == null || results.isEmpty()) {
-                    System.err.println("[IBOV] results vazio/nulo");
+                    LOG.warning("[IBOV] results vazio/nulo");
                     return Optional.empty();
                 }
 
                 JsonObject result = results.get(0).getAsJsonObject();
-                System.err.println("[IBOV] Result keys: " + result.keySet());
 
                 JsonArray hist = result.getAsJsonArray("historicalDataPrice");
                 if (hist == null || hist.isEmpty()) {
-                    System.err.println("[IBOV] historicalDataPrice nulo/vazio");
+                    LOG.warning("[IBOV] historicalDataPrice nulo/vazio");
                     return Optional.empty();
                 }
-
-                System.err.println("[IBOV] hist entries=" + hist.size()
-                        + " primeira=" + hist.get(0)
-                        + " última=" + hist.get(hist.size() - 1));
 
                 // Extrair preço: close → adjustedClose → open (fallback)
                 double firstPrice = extractPrice(hist.get(0).getAsJsonObject());
@@ -657,10 +616,8 @@ public final class BrapiClient {
                     lastPrice = extractPrice(hist.get(hist.size() - 2).getAsJsonObject());
                 }
 
-                System.err.println("[IBOV] firstPrice=" + firstPrice + " lastPrice=" + lastPrice);
-
                 if (firstPrice <= 0 || lastPrice <= 0) {
-                    System.err.println("[IBOV] preço inválido");
+                    LOG.warning("[IBOV] preço inválido — first=" + firstPrice + " last=" + lastPrice);
                     return Optional.empty();
                 }
 
@@ -668,13 +625,12 @@ public final class BrapiClient {
                 int meses = Math.max(hist.size() - 1, 1);
                 double retornoAnual = Math.pow(1 + retornoPeriodo, 12.0 / meses) - 1;
 
-                System.err.println("[IBOV] Retorno " + meses + "m: "
-                        + String.format("%.2f%%", retornoPeriodo * 100)
-                        + " → anual: " + String.format("%.2f%%", retornoAnual * 100));
+                LOG.fine(String.format("[IBOV] Retorno %dm: %.2f%% → anual: %.2f%%",
+                        meses, retornoPeriodo * 100, retornoAnual * 100));
                 return Optional.of(retornoAnual);
             }
         } catch (Exception e) {
-            System.err.println("[IBOV] Exceção hist: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            LOG.warning("[IBOV] Exceção hist: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             return Optional.empty();
         }
     }
@@ -684,15 +640,6 @@ public final class BrapiClient {
         if (v <= 0) v = getDoubleOrZero(entry, "adjustedClose");
         if (v <= 0) v = getDoubleOrZero(entry, "open");
         return v;
-    }
-
-    public static boolean testConnection() {
-        try {
-            StockData test = fetchStockData("PETR4");
-            return test.isValid();
-        } catch (Exception e) {
-            return false;
-        }
     }
 
     public static boolean testConnectionWithToken(String token) {
