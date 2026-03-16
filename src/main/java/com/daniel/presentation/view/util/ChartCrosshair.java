@@ -230,8 +230,13 @@ public final class ChartCrosshair {
                     if (d.getXValue().longValue() == finalEpoch) {
                         double yVal = d.getYValue().doubleValue();
                         if (firstY == null) firstY = yVal;
-                        sb.append("\n").append(ser.getName()).append(": ")
-                          .append(yFormatter.apply(yVal));
+                        String serName = ser.getName();
+                        if (serName != null && !serName.isBlank()) {
+                            sb.append("\n").append(serName).append(": ")
+                              .append(yFormatter.apply(yVal));
+                        } else {
+                            sb.append("\n").append(yFormatter.apply(yVal));
+                        }
                         break;
                     }
                 }
@@ -278,11 +283,15 @@ public final class ChartCrosshair {
 
             tip.setText(text);
 
-            // Posiciona o tooltip evitando overflow
+            // Posiciona o tooltip evitando overflow em todas as bordas
+            double tipW = 168;
+            double tipH = 54;
             double tipX = plotX + 14;
-            double tipY = plotY - 50;
-            if (tipX + 140 > containerW) tipX = plotX - 150;
-            if (tipY < plot.getMinY())   tipY = plotY + 8;
+            double tipY = plotY - tipH - 4;
+            if (tipX + tipW > containerW)    tipX = plotX - tipW - 4;
+            if (tipX < plot.getMinX() + 4)   tipX = plot.getMinX() + 4;
+            if (tipY < plot.getMinY())        tipY = plotY + 8;
+            if (tipY + tipH > plot.getMaxY()) tipY = Math.max(plot.getMinY(), plot.getMaxY() - tipH - 4);
             tip.setLayoutX(tipX);
             tip.setLayoutY(tipY);
 

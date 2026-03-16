@@ -1032,6 +1032,20 @@
 /* Bar chart fill — cores aplicadas via inline style (verde/vermelho por código) */
 .default-color0.chart-bar { -fx-bar-fill: -color-accent-strong; }
 
+/* Temporal area chart (AssetAnalysisPage) — linha e preenchimento limpos */
+.area-chart .chart-series-area-line {
+    -fx-stroke: #22C55E;
+    -fx-stroke-width: 2px;
+}
+.area-chart .chart-series-area {
+    -fx-fill: linear-gradient(to bottom, rgba(34,197,94,0.20) 0%, rgba(34,197,94,0.01) 100%);
+    -fx-stroke: transparent;
+}
+/* Remove eixo X inferior do gráfico temporal — hover é o mecanismo principal */
+.area-chart > .chart-content > .axis.bottom {
+    -fx-padding: 2 0 0 0;
+}
+
 /* ═══════════════════════════════════════════════
    LISTS
    ═══════════════════════════════════════════════ */
