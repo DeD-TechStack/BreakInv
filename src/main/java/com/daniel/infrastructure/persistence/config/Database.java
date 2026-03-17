@@ -1,5 +1,6 @@
 package com.daniel.infrastructure.persistence.config;
 
+import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -9,8 +10,15 @@ import java.util.logging.Logger;
 public final class Database {
 
     private static final Logger LOG = Logger.getLogger(Database.class.getName());
-    private static final String DEFAULT_URL = "jdbc:sqlite:breakinv.db";
+    private static final String DEFAULT_URL = buildDefaultUrl();
     private static String jdbcUrl = DEFAULT_URL;
+
+    private static String buildDefaultUrl() {
+        String dir = System.getProperty("user.home") + File.separator + "BreakInv";
+        new File(dir).mkdirs();
+        return "jdbc:sqlite:" + dir + File.separator + "breakinv.db";
+    }
+
     private static Connection connection = null;
 
     private Database() {
