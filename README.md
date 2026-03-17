@@ -1,20 +1,34 @@
 # 📈 BreakInv
 
-Aplicação desktop desenvolvida em **Java + JavaFX** para **controle e análise de investimentos**, com persistência local em **SQLite** e integração com serviços externos para complementar informações de mercado, indicadores e comparativos de performance.
+Aplicação desktop desenvolvida em **Java + JavaFX** para **controle, análise e acompanhamento de investimentos**, com persistência local em **SQLite** e integração com serviços externos para complementar **cotações, benchmarks, indicadores e histórico de ativos**.
 
 ---
 
 ## 📌 Visão Geral
 
-O **BreakInv** é um sistema desktop voltado para **organização da carteira de investimentos**, **acompanhamento do patrimônio** e **visualização da performance do portfólio**.
+O **BreakInv** é um sistema desktop voltado para a **organização da carteira de investimentos**, permitindo registrar ativos, acompanhar movimentações, visualizar a evolução patrimonial e analisar a performance do portfólio em uma interface local.
 
-O projeto foi estruturado para funcionar de forma **local**, com banco embutido em **SQLite**, permitindo que os dados fiquem persistidos no próprio ambiente da aplicação, sem depender de um backend separado para o funcionamento principal.
-
-Além disso, a aplicação pode consumir informações externas para enriquecer a análise da carteira, como benchmarks de mercado e cotações utilizadas em comparativos de desempenho.
+A proposta do projeto é funcionar de forma **local-first**, com banco embarcado em **SQLite**, sem depender de um backend dedicado para o fluxo principal da aplicação. As integrações externas entram como complemento analítico, enriquecendo a experiência com dados de mercado e comparativos.
 
 ---
 
-## 🧱 Tecnologias Utilizadas
+## ✨ Principais recursos
+
+- Dashboard com visão consolidada da carteira
+- KPIs de patrimônio, lucro/prejuízo e acompanhamento patrimonial
+- Snapshot diário para evolução da carteira ao longo do tempo
+- Extrato de movimentações com visão consolidada por período
+- Análise de diversificação do portfólio
+- Simulação de cenários de investimento
+- Ranking de ativos com destaques de desempenho
+- Página de **Análise de Ativos** com consulta de ticker, indicadores e histórico
+- Configuração de token para integrações externas
+- Persistência local automática com **SQLite**
+- Interface desktop com navegação por páginas e foco em visualização de dados
+
+---
+
+## 🧱 Tecnologias utilizadas
 
 - **Java 21**
 - **JavaFX**
@@ -29,7 +43,7 @@ Além disso, a aplicação pode consumir informações externas para enriquecer 
 
 ---
 
-## 🏛️ Estrutura do Projeto
+## 🏛️ Estrutura do projeto
 
 ```text
 BreakInv/
@@ -37,7 +51,7 @@ BreakInv/
 │   ├── main/
 │   │   ├── java/com/daniel/
 │   │   │   ├── core/                    # Domínio, contratos e regras de negócio
-│   │   │   ├── infrastructure/          # Configuração, APIs e persistência
+│   │   │   ├── infrastructure/          # APIs, persistência e configurações
 │   │   │   ├── main/                    # Inicialização da aplicação
 │   │   │   └── presentation/            # Telas, componentes e navegação
 │   │   └── resources/
@@ -50,59 +64,47 @@ BreakInv/
 
 ---
 
-## 🚀 Funcionalidades
+## 🖥️ Páginas da aplicação
 
-* Dashboard com visão consolidada da carteira
-* Exibição de **patrimônio total**
-* Cálculo de **lucro / prejuízo**
-* Comparação da carteira com benchmarks
-* Indicadores de apoio para análise do portfólio
-* Visualização de **diversificação por categoria**
-* Distribuição patrimonial em gráficos
-* Ranking de ativos com **maiores altas e baixas**
-* Simulação de cenários de investimento
-* Extrato de investimentos e movimentações
-* Cadastro e gerenciamento dos ativos da carteira
-* Configuração de token para integração externa
-* Persistência local automática com **SQLite**
-* Snapshot diário para acompanhamento da evolução patrimonial
+| Página              | Descrição                                                      |
+| ------------------- | -------------------------------------------------------------- |
+| `Dashboard`         | Visão geral da carteira com KPIs, gráficos e comparativos      |
+| `Asset Analysis`    | Consulta de ticker, métricas de mercado e histórico de preços  |
+| `Ranking`           | Destaques de ativos com base em desempenho                     |
+| `Extrato / Reports` | Histórico e consolidação de movimentações e resultados         |
+| `Diversificação`    | Distribuição patrimonial e leitura da concentração da carteira |
+| `Simulação`         | Projeção de cenários para apoio à tomada de decisão            |
+| `Investment Types`  | Organização dos tipos/categorias de investimento               |
+| `Configurações`     | Ajustes da aplicação e configuração de integrações             |
 
 ---
 
-## 🖥️ Páginas da Aplicação
+## 🌐 Integrações externas
 
-| Página                     | Descrição                                                  |
-| -------------------------- | ---------------------------------------------------------- |
-| `Dashboard`                | Resumo geral da carteira com KPIs, gráficos e comparativos |
-| `Cadastrar Investimento`   | Cadastro e gerenciamento dos investimentos                 |
-| `Diversificação`           | Análise da distribuição da carteira                        |
-| `Simulação`                | Projeção de cenários e apoio à tomada de decisão           |
-| `Extrato de Investimentos` | Histórico e visão consolidada das movimentações            |
-| `Configurações`            | Ajustes da aplicação e configuração de integrações         |
+O BreakInv utiliza integrações externas para enriquecer a análise local da carteira.
 
----
+### BRAPI
 
-## 🌐 Integrações Externas
+Utilizada para apoiar a consulta de:
 
-O projeto utiliza integrações externas para complementar a análise local da carteira.
+* cotações de ativos
+* dados de mercado
+* histórico de preços
+* comparativos e informações usadas em análises da aplicação
 
-### 1. BRAPI
+### Banco Central do Brasil (BCB)
 
-Utilizada para apoiar a consulta de dados de mercado, cotações e comparativos de performance no dashboard.
+Utilizado para consulta de indicadores econômicos e benchmarks que ajudam na leitura de desempenho e comparação da carteira.
 
-### 2. Banco Central do Brasil (BCB)
-
-Utilizado para consulta de indicadores e benchmarks econômicos, como apoio aos comparativos exibidos na aplicação.
-
-> **Observação:** o funcionamento principal do sistema continua centrado na persistência local. As integrações externas enriquecem a análise, mas a base da aplicação permanece local.
+> O funcionamento principal da aplicação continua centrado na persistência local. As integrações externas complementam a análise, mas não substituem a base local do sistema.
 
 ---
 
-## 💾 Persistência de Dados
+## 💾 Persistência de dados
 
 A aplicação utiliza **SQLite** como banco local e cria automaticamente a base de dados ao iniciar o sistema.
 
-O arquivo gerado localmente é:
+Arquivo gerado localmente:
 
 ```text
 breakinv.db
@@ -119,7 +121,7 @@ Isso torna o projeto adequado para uso local, estudo de arquitetura desktop e co
 
 ---
 
-## ⚙️ Como Executar o Projeto
+## ⚙️ Como executar o projeto
 
 ### Pré-requisitos
 
@@ -128,25 +130,27 @@ Antes de iniciar, tenha instalado:
 * **JDK 21**
 * **Maven**
 
-### Ambiente de desenvolvimento
+### Executar em ambiente de desenvolvimento
 
 ```bash
 mvn clean javafx:run
 ```
 
-A aplicação será iniciada em ambiente local com interface desktop JavaFX.
+A aplicação será iniciada localmente com interface desktop JavaFX.
 
----
+### Rodar os testes
 
-## 🏗️ Build do Projeto
+```bash
+mvn test
+```
 
-Para compilar e empacotar o projeto:
+### Gerar build do projeto
 
 ```bash
 mvn clean package
 ```
 
-Os artefatos gerados ficarão na pasta:
+Os artefatos gerados ficarão em:
 
 ```text
 target/
@@ -154,33 +158,34 @@ target/
 
 ---
 
-## 🧭 Funcionamento da Aplicação
+## 🧭 Funcionamento da aplicação
 
-O **BreakInv** segue uma proposta de aplicação desktop com foco em uso local:
+O BreakInv segue uma proposta de aplicação desktop com foco em uso local:
 
 * a interface é construída com **JavaFX**
 * os dados da carteira ficam persistidos em **SQLite**
-* a aplicação sobe diretamente pela classe principal do projeto
-* o banco é preparado automaticamente na inicialização
-* o usuário navega pelas páginas do sistema dentro de uma shell principal com sidebar
+* a aplicação sobe localmente e prepara o banco automaticamente
+* o usuário navega pelas páginas dentro de uma shell principal com sidebar
+* os dados externos são consumidos apenas para enriquecer indicadores, comparativos e análises
 
 ---
 
-## 📊 Análise de Carteira
+## 📊 O que a aplicação permite analisar
 
-A proposta do projeto é oferecer uma visão prática da carteira do usuário, permitindo acompanhar:
+Com o BreakInv, o usuário pode acompanhar:
 
 * evolução do patrimônio
 * lucro ou prejuízo consolidado
+* movimentações da carteira
 * distribuição entre categorias
+* concentração patrimonial
 * comparação com benchmarks
-* apoio visual para entender concentração e performance
-
-Com isso, o sistema funciona tanto como ferramenta de estudo quanto como projeto de portfólio com foco em domínio financeiro e aplicação desktop.
+* comportamento histórico de ativos consultados
+* apoio visual para entender performance e composição do portfólio
 
 ---
 
-## 🧠 Objetivo do Projeto
+## 🧠 Objetivo do projeto
 
 Este projeto foi desenvolvido com foco em:
 
@@ -188,15 +193,21 @@ Este projeto foi desenvolvido com foco em:
 * organização em camadas
 * persistência local com **SQLite**
 * consumo de APIs com **OkHttp** e **Gson**
-* construção de interface rica em dados e gráficos
-* modelagem de regras de negócio para acompanhamento patrimonial
+* modelagem de regras de negócio no contexto de investimentos
+* construção de interface rica em dados, gráficos e indicadores
 * composição de portfólio com uma aplicação Java completa
 
 ---
 
-## 📌 Status do Projeto
+## 📌 Status do projeto
 
-O **BreakInv** está em evolução contínua, com foco em refinamento visual, melhoria das análises e expansão dos recursos relacionados ao acompanhamento da carteira.
+O **BreakInv** está em evolução contínua, com foco em:
+
+* refinamento visual
+* melhoria da experiência de uso
+* evolução das análises da carteira
+* expansão das integrações e leituras de mercado
+* amadurecimento da arquitetura desktop do projeto
 
 ---
 
