@@ -87,50 +87,10 @@ jobs:
           path: output/
 
   # ─────────────────────────────────────────────
-  # macOS — PKG bundle
-  # macos-13 (Intel x86) evita incompatibilidades
-  # de jpackage sem certificado em Apple Silicon
-  # ─────────────────────────────────────────────
-  build-mac:
-    runs-on: macos-13
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4.2.2
-
-      - name: Setup Java 21
-        uses: actions/setup-java@v4.7.0
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Build fat JAR
-        run: mvn clean package
-
-      - name: Package with jpackage (PKG)
-        env:
-          JAVA_TOOL_OPTIONS: -Djpackage.mac.sign=false
-        run: >
-          jpackage
-          --input target/
-          --main-jar breakinv-0.5.0.jar
-          --main-class com.daniel.main.Launcher
-          --name BreakInv
-          --app-version 0.5.0
-          --dest output/
-          --type pkg
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4.6.2
-        with:
-          name: BreakInv-mac
-          path: output/
-
-  # ─────────────────────────────────────────────
-  # Publish GitHub Release with all three installers
+  # Publish GitHub Release with Windows and Linux installers
   # ─────────────────────────────────────────────
   publish-release:
-    needs: [build-windows, build-linux, build-mac]
+    needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
 
     steps:
