@@ -30,14 +30,17 @@ jobs:
       - name: Build fat JAR
         run: mvn clean package
 
-      - name: Download JavaFX Windows modules
+      - name: Copy JavaFX Windows modules to fx-mods
+        shell: pwsh
         run: |
-          mvn dependency:copy -Dartifact=org.openjfx:javafx-controls:21.0.10:jar:win -DoutputDirectory=fx-mods
-          mvn dependency:copy -Dartifact=org.openjfx:javafx-graphics:21.0.10:jar:win -DoutputDirectory=fx-mods
-          mvn dependency:copy -Dartifact=org.openjfx:javafx-base:21.0.10:jar:win -DoutputDirectory=fx-mods
-          mvn dependency:copy -Dartifact=org.openjfx:javafx-fxml:21.0.10:jar:win -DoutputDirectory=fx-mods
+          New-Item -ItemType Directory -Force -Path fx-mods | Out-Null
+          $mods = @("javafx-controls", "javafx-graphics", "javafx-base", "javafx-fxml")
+          foreach ($m in $mods) {
+              Copy-Item "$env:USERPROFILE\.m2\repository\org\openjfx\$m\21.0.10\$m-21.0.10-win.jar" fx-mods\
+          }
 
       - name: Create runtime image with jlink
+        shell: pwsh
         run: >
           jlink
           --module-path "$env:JAVA_HOME/jmods;fx-mods"
@@ -49,6 +52,7 @@ jobs:
           --compress=2
 
       - name: Package with jpackage (MSI)
+        shell: pwsh
         run: >
           jpackage
           --input target/
@@ -92,12 +96,10 @@ jobs:
       - name: Build fat JAR
         run: mvn clean package
 
-      - name: Download JavaFX Linux modules
+      - name: Copy JavaFX Linux modules to fx-mods
         run: |
-          mvn dependency:copy -Dartifact=org.openjfx:javafx-controls:21.0.10:jar:linux -DoutputDirectory=fx-mods
-          mvn dependency:copy -Dartifact=org.openjfx:javafx-graphics:21.0.10:jar:linux -DoutputDirectory=fx-mods
-          mvn dependency:copy -Dartifact=org.openjfx:javafx-base:21.0.10:jar:linux -DoutputDirectory=fx-mods
-          mvn dependency:copy -Dartifact=org.openjfx:javafx-fxml:21.0.10:jar:linux -DoutputDirectory=fx-mods
+          mkdir -p fx-mods
+          find $HOME/.m2/repository/org/openjfx -name "*-21.0.10-linux.jar" -exec cp {} fx-mods/ \;
 
       - name: Create runtime image with jlink
         run: >
