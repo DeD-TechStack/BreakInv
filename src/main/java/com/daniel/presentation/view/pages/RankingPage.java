@@ -80,6 +80,9 @@ public final class RankingPage implements Page {
     private final javafx.scene.control.DatePicker maFromPicker = new javafx.scene.control.DatePicker();
     private final javafx.scene.control.DatePicker maToPicker   = new javafx.scene.control.DatePicker();
     private Label maLoadingLabel;
+    private Label maCrossLabel;
+    private final Spinner<Integer> maShortPeriod = new Spinner<>(2, 50, 9);
+    private final Spinner<Integer> maLongPeriod  = new Spinner<>(5, 200, 21);
     /** Epoch seconds dos pontos do último render do maChart. */
     private List<Long> lastMAEpochSecs = List.of();
 
@@ -595,8 +598,22 @@ public final class RankingPage implements Page {
         Label title = new Label("ANÁLISE DE MÉDIA MÓVEL");
         title.getStyleClass().add("card-title");
 
-        Label hint = new Label("Informe o ticker e o período para calcular a média móvel do ativo");
+        Label hint = new Label(
+                "Como usar: digite o ticker, ajuste o intervalo de datas e defina as janelas MM Curta e MM Longa. " +
+                "A MM Longa determina o mínimo de pontos necessários — ex.: MM 200 exige ~200 pregões (~10 meses de dados). " +
+                "Clique em \"Calcular\" para plotar as três linhas.");
         hint.getStyleClass().add("section-subtitle");
+        hint.setWrapText(true);
+
+        Label hintLegend = new Label(
+                "Linhas: \uD83D\uDFE2 Verde (contínuo) — preço do ativo  ·  \uD83D\uDFE1 Amarelo tracejado — MM Curta  ·  \uD83D\uDD35 Azul (contínuo) — MM Longa");
+        hintLegend.getStyleClass().add("section-subtitle");
+
+        Label hintSignals = new Label(
+                "Sinais: \u2B06 Golden Cross → MM Curta (amarela) cruza acima da MM Longa (azul) — tendência de alta  ·  " +
+                "\u2B07 Death Cross → MM Curta (amarela) cruza abaixo da MM Longa (azul) — tendência de baixa");
+        hintSignals.getStyleClass().add("section-subtitle");
+        hintSignals.setWrapText(true);
 
         // ── Input fields ──
         maTickerCombo.setEditable(true);
@@ -682,22 +699,29 @@ public final class RankingPage implements Page {
         calcBtn.getStyleClass().addAll("btn-primary", "btn-sm");
         calcBtn.setOnAction(e -> loadMAChart());
 
+        maShortPeriod.setPrefWidth(75);
+        maShortPeriod.setEditable(true);
+        maLongPeriod.setPrefWidth(75);
+        maLongPeriod.setEditable(true);
+
         HBox inputBar = new HBox(8,
                 maTickerCombo,
                 new Label("De:"), maFromPicker,
                 new Label("Até:"), maToPicker,
+                new Label("MM Curta:"), maShortPeriod,
+                new Label("MM Longa:"), maLongPeriod,
                 calcBtn);
         inputBar.setAlignment(Pos.CENTER_LEFT);
         inputBar.getStyleClass().add("toolbar");
 
-        maLoadingLabel = new Label("Calculando média móvel...");
+        maLoadingLabel = new Label("Calculando médias móveis...");
         maLoadingLabel.getStyleClass().add("section-subtitle");
         maLoadingLabel.setVisible(false);
         maLoadingLabel.setManaged(false);
 
         // ── Chart setup — NumberAxis temporal ──
         maChart.setAnimated(false);
-        maChart.setLegendVisible(true);
+        maChart.setLegendVisible(false);
         maChart.setCreateSymbols(false);
         maChart.setMinHeight(300);
         maYAxis.setLabel("Preço (R$)");
@@ -715,7 +739,10 @@ public final class RankingPage implements Page {
                         .format(MA_DATE_FMT),
                 y -> "R$ " + String.format("%.2f", y).replace('.', ','));
 
-        VBox card = new VBox(8, title, hint, inputBar, maLoadingLabel, chartWrapper);
+        maCrossLabel = new Label("⚪ Sem cruzamento recente detectado");
+        maCrossLabel.getStyleClass().add("section-subtitle");
+
+        VBox card = new VBox(8, title, hint, hintLegend, hintSignals, inputBar, maLoadingLabel, chartWrapper, maCrossLabel);
         card.getStyleClass().add("chart-card");
         return card;
     }
@@ -766,19 +793,32 @@ public final class RankingPage implements Page {
             return;
         }
 
+        int shortPeriod = maShortPeriod.getValue();
+        int longPeriod  = maLongPeriod.getValue();
+
+        if (shortPeriod >= longPeriod) {
+            maCrossLabel.setText("⚠ MM Curta deve ter período menor que MM Longa.");
+            ToastHost.showWarn("MM Curta deve ter período menor que MM Longa.");
+            return;
+        }
+
         int total = points.size();
-        int maWindow;
-        if      (total < 10)  { ToastHost.showWarn("Período muito curto para calcular média móvel (mínimo 10 pontos)."); return; }
-        else if (total < 30)  maWindow = 5;
-        else if (total < 60)  maWindow = 10;
-        else if (total < 200) maWindow = 20;
-        else                  maWindow = 50;
+        if (total < longPeriod) {
+            int monthsNeeded = (int) Math.ceil(longPeriod / 21.0);
+            maCrossLabel.setText("⚠ Dados insuficientes: " + total + " pontos obtidos, MM Longa=" + longPeriod
+                    + " exige ~" + longPeriod + " pregões (~" + monthsNeeded + " meses). Amplie o intervalo de datas.");
+            ToastHost.showWarn("Período muito curto: " + total + " pontos, MM Longa=" + longPeriod
+                    + " exige ~" + longPeriod + " pregões (~" + monthsNeeded + " meses).");
+            return;
+        }
 
-        XYChart.Series<Number, Number> priceSeries = new XYChart.Series<>();
+        XYChart.Series<Number, Number> priceSeries   = new XYChart.Series<>();
+        XYChart.Series<Number, Number> maShortSeries = new XYChart.Series<>();
+        XYChart.Series<Number, Number> maLongSeries  = new XYChart.Series<>();
+
         priceSeries.setName("Preço " + ticker);
-
-        XYChart.Series<Number, Number> maSeries = new XYChart.Series<>();
-        maSeries.setName("MM" + maWindow);
+        maShortSeries.setName("MM" + shortPeriod);
+        maLongSeries.setName("MM" + longPeriod);
 
         double minPrice = Double.MAX_VALUE;
         double maxPrice = -Double.MAX_VALUE;
@@ -786,20 +826,25 @@ public final class RankingPage implements Page {
         List<Long> epochSecs = new ArrayList<>(total);
 
         for (int i = 0; i < total; i++) {
-            HistoryPoint p = points.get(i);
-            long sec = p.dateTime().toEpochSecond(ZoneOffset.UTC);
-            double price = p.close();
+            HistoryPoint p   = points.get(i);
+            long sec         = p.dateTime().toEpochSecond(ZoneOffset.UTC);
+            double price     = p.close();
 
             priceSeries.getData().add(new XYChart.Data<>(sec, price));
             epochSecs.add(sec);
             if (price < minPrice) minPrice = price;
             if (price > maxPrice) maxPrice = price;
 
-            if (i >= maWindow - 1) {
+            if (i >= shortPeriod - 1) {
                 double sum = 0;
-                for (int j = i - maWindow + 1; j <= i; j++) sum += points.get(j).close();
-                long maSec = points.get(i).dateTime().toEpochSecond(ZoneOffset.UTC);
-                maSeries.getData().add(new XYChart.Data<>(maSec, sum / maWindow));
+                for (int j = i - shortPeriod + 1; j <= i; j++) sum += points.get(j).close();
+                maShortSeries.getData().add(new XYChart.Data<>(sec, sum / shortPeriod));
+            }
+
+            if (i >= longPeriod - 1) {
+                double sum = 0;
+                for (int j = i - longPeriod + 1; j <= i; j++) sum += points.get(j).close();
+                maLongSeries.getData().add(new XYChart.Data<>(sec, sum / longPeriod));
             }
         }
 
@@ -812,18 +857,43 @@ public final class RankingPage implements Page {
         maYAxis.setUpperBound(maxPrice + padding);
         maYAxis.setTickUnit((range + 2 * padding) / 6.0);
 
-        maChart.getData().addAll(priceSeries, maSeries);
+        maChart.getData().addAll(priceSeries, maShortSeries, maLongSeries);
 
-        // Estiliza as linhas após renderização
-        Platform.runLater(() -> {
+        // Detectar cruzamento nos dois últimos pontos sobrepostos
+        int shortSize = maShortSeries.getData().size();
+        int longSize  = maLongSeries.getData().size();
+        if (shortSize >= 2 && longSize >= 2) {
+            double shortLast = maShortSeries.getData().get(shortSize - 1).getYValue().doubleValue();
+            double longLast  = maLongSeries.getData().get(longSize - 1).getYValue().doubleValue();
+            double shortPrev = maShortSeries.getData().get(shortSize - 2).getYValue().doubleValue();
+            double longPrev  = maLongSeries.getData().get(longSize - 2).getYValue().doubleValue();
+
+            if (shortLast > longLast && shortPrev <= longPrev) {
+                maCrossLabel.setText("🟢 Golden Cross: MM Curta cruzou acima da MM Longa (sinal de alta)");
+            } else if (shortLast < longLast && shortPrev >= longPrev) {
+                maCrossLabel.setText("🔴 Death Cross: MM Curta cruzou abaixo da MM Longa (sinal de baixa)");
+            } else {
+                maCrossLabel.setText("⚪ Sem cruzamento recente detectado");
+            }
+        } else {
+            maCrossLabel.setText("⚪ Sem cruzamento recente detectado");
+        }
+
+        // Estiliza as linhas após renderização — duplo runLater garante que o JavaFX
+        // tenha completado o ciclo de layout e exposto os nós de série no scene graph.
+        Platform.runLater(() -> Platform.runLater(() -> {
             javafx.scene.Node priceLine = maChart.lookup(".series0.chart-series-line");
             if (priceLine != null)
                 priceLine.setStyle("-fx-stroke: #22c55e; -fx-stroke-width: 1.5;");
 
-            javafx.scene.Node maLine = maChart.lookup(".series1.chart-series-line");
-            if (maLine != null)
-                maLine.setStyle("-fx-stroke: #f59e0b; -fx-stroke-width: 2.5; -fx-stroke-dash-array: 8 4;");
-        });
+            javafx.scene.Node maShortLine = maChart.lookup(".series1.chart-series-line");
+            if (maShortLine != null)
+                maShortLine.setStyle("-fx-stroke: #f59e0b; -fx-stroke-width: 2; -fx-stroke-dash-array: 8 4;");
+
+            javafx.scene.Node maLongLine = maChart.lookup(".series2.chart-series-line");
+            if (maLongLine != null)
+                maLongLine.setStyle("-fx-stroke: #3b82f6; -fx-stroke-width: 2;");
+        }));
 
         Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(maXAxis, lastMAEpochSecs, maChart.getWidth()));
     }
