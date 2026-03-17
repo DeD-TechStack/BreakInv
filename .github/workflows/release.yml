@@ -1,0 +1,142 @@
+name: Build and Release BreakInv
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+
+  # ─────────────────────────────────────────────
+  # Windows — MSI installer (requires WiX 3.x)
+  # WiX 3.11 is pre-installed on windows-latest
+  # ─────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build fat JAR
+        run: mvn clean package
+
+      - name: Package with jpackage (MSI)
+        run: >
+          jpackage
+          --input target/
+          --main-jar breakinv-0.5.0.jar
+          --main-class com.daniel.main.Launcher
+          --name BreakInv
+          --app-version 0.5.0
+          --dest output/
+          --type msi
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BreakInv-windows
+          path: output/
+
+  # ─────────────────────────────────────────────
+  # Linux — DEB package (requires fakeroot/dpkg)
+  # ─────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Install DEB packaging tools
+        run: sudo apt-get install -y fakeroot binutils
+
+      - name: Build fat JAR
+        run: mvn clean package
+
+      - name: Package with jpackage (DEB)
+        run: >
+          jpackage
+          --input target/
+          --main-jar breakinv-0.5.0.jar
+          --main-class com.daniel.main.Launcher
+          --name BreakInv
+          --app-version 0.5.0
+          --dest output/
+          --type deb
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BreakInv-linux
+          path: output/
+
+  # ─────────────────────────────────────────────
+  # macOS — DMG bundle
+  # ─────────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build fat JAR
+        run: mvn clean package
+
+      - name: Package with jpackage (DMG)
+        run: >
+          jpackage
+          --input target/
+          --main-jar breakinv-0.5.0.jar
+          --main-class com.daniel.main.Launcher
+          --name BreakInv
+          --app-version 0.5.0
+          --dest output/
+          --type dmg
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BreakInv-mac
+          path: output/
+
+  # ─────────────────────────────────────────────
+  # Publish GitHub Release with all three installers
+  # ─────────────────────────────────────────────
+  publish-release:
+    needs: [build-windows, build-linux, build-mac]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: BreakInv ${{ github.ref_name }}
+          files: artifacts/**/*

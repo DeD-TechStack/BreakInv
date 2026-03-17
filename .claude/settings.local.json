@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn compile:*)",
+      "Bash(mvn test:*)",
+      "Bash(mvn javafx:run:*)",
+      "Bash(mvn clean:*)",
+      "Bash(kill 1250:*)",
+      "Bash(wc:*)",
+      "Bash(chmod +x:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(powershell:*)",
+      "Bash(unzip:*)"
+    ]
+  }
+}
