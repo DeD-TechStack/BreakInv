@@ -121,6 +121,13 @@ Isso torna o projeto adequado para uso local, estudo de arquitetura desktop e co
 
 ---
 
+## 📦 Download e instalação
+
+Baixe o instalador oficial na página de **Releases** deste repositório.
+Para instruções de instalação, verificação de checksums SHA256 e informações sobre o aviso do Windows SmartScreen, consulte o [Guia de Release](docs/release.md).
+
+---
+
 ## ⚙️ Como executar o projeto
 
 ### Pré-requisitos
