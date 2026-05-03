@@ -290,14 +290,14 @@ public final class DailyTrackingUseCase {
     }
 
     /**
-     * Agrega snapshots históricos de todos os investimentos e do caixa por data dentro do
-     * intervalo. O caixa é somado a cada data que já possui snapshot de investimento, usando
-     * carry-forward (último valor conhecido na data ou antes dela).
+     * Agrega snapshots históricos de todos os investimentos (sem caixa) por data dentro do
+     * intervalo. Usado para gráficos de performance onde apenas o retorno dos investimentos
+     * deve ser representado.
      *
-     * @return TreeMap data→total em centavos (investimentos + caixa), ordenado por data.
-     *         Retorna mapa vazio se não houver snapshots de investimento no período.
+     * @return TreeMap data→total investimentos em centavos, ordenado por data.
+     *         Retorna mapa vazio se não houver snapshots no período.
      */
-    public TreeMap<LocalDate, Long> getPortfolioSnapshotSeries(LocalDate from, LocalDate to) {
+    public TreeMap<LocalDate, Long> getInvestmentSnapshotSeries(LocalDate from, LocalDate to) {
         TreeMap<LocalDate, Long> totals = new TreeMap<>();
         List<InvestmentType> investments = typeRepo.listAll();
         for (InvestmentType inv : investments) {
@@ -311,6 +311,19 @@ public final class DailyTrackingUseCase {
                 } catch (Exception ignored) {}
             }
         }
+        return totals;
+    }
+
+    /**
+     * Agrega snapshots históricos de todos os investimentos e do caixa por data dentro do
+     * intervalo. O caixa é somado a cada data que já possui snapshot de investimento, usando
+     * carry-forward (último valor conhecido na data ou antes dela).
+     *
+     * @return TreeMap data→patrimônio total em centavos (investimentos + caixa), ordenado por data.
+     *         Retorna mapa vazio se não houver snapshots de investimento no período.
+     */
+    public TreeMap<LocalDate, Long> getPortfolioSnapshotSeries(LocalDate from, LocalDate to) {
+        TreeMap<LocalDate, Long> totals = getInvestmentSnapshotSeries(from, to);
         // Add latest known cash balance (carry-forward) to each investment snapshot date
         for (LocalDate date : new ArrayList<>(totals.keySet())) {
             long cashCents = snapshotRepo.getCashOnOrBefore(date);

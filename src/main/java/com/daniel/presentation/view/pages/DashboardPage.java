@@ -284,7 +284,13 @@ public final class DashboardPage implements Page {
         List<InvestmentType> investments = daily.listTypes();
 
         if (investments.isEmpty()) {
-            totalLabel.setText("—");
+            // Show cash patrimony even when no investments are registered
+            long cashPatrimony = daily.getTotalPatrimony(today);
+            if (cashPatrimony > 0) {
+                Motion.animateLabelChange(totalLabel, daily.brl(cashPatrimony));
+            } else {
+                totalLabel.setText("—");
+            }
             profitLabel.setText("—");
             cdiComparisonLabel.setText("—");
             pieChart.getData().clear();
@@ -320,7 +326,9 @@ public final class DashboardPage implements Page {
         updatePieChart(investments, currentValues);
         updateWaterfallChart(investments, currentValues);
         updateComparisonChart(investments, currentValues, today);
-        updateInvestmentsByCategory(investments, currentValues, totalPatrimony);
+        // Pass investment-only total as denominator: % Alocação represents share of the investment
+        // portfolio, not share of total patrimony (which would dilute % when cash exists).
+        updateInvestmentsByCategory(investments, currentValues, totalInvestmentValue);
         updateRankPanel(investments, currentValues);
         updateHealthScore(investments, currentValues, totalPatrimony, totalProfit);
         updateRecentActivity();
@@ -723,9 +731,9 @@ public final class DashboardPage implements Page {
         double rentCartFinal = 0;
         double rentBenchFinal = 0;
 
-        // ── Try real snapshot data ───────────────────────────────────────────
+        // ── Try real snapshot data (investment-only: performance chart, not patrimony evolution) ──
         java.util.TreeMap<LocalDate, Long> snapshots =
-                daily.getPortfolioSnapshotSeries(dataInicio, dataFim);
+                daily.getInvestmentSnapshotSeries(dataInicio, dataFim);
 
         // Deduplicate by bucket key — keep last snapshot per bucket to avoid vertical-line artifact
         LinkedHashMap<String, Map.Entry<LocalDate, Long>> dedupMap = new LinkedHashMap<>();

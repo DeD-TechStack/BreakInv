@@ -1162,4 +1162,70 @@ class DailyTrackingUseCaseTest {
         // getCurrentValue = investedValue = 100000; investedCents = 100000 → profit = 0
         assertEquals(0L, uc.getTotalProfit(today));
     }
+
+    // ===== getInvestmentSnapshotSeries — investment-only, no cash =====
+
+    @Test
+    void getInvestmentSnapshotSeries_neverIncludesCash() {
+        InvestmentType inv = new InvestmentType(1, "CDB");
+        typeRepo.add(inv);
+        LocalDate d1 = LocalDate.of(2024, 1, 1);
+        LocalDate d2 = LocalDate.of(2024, 2, 1);
+        snapRepo.putSeries(1L, Map.of(
+                d1.toString(), 50000L,
+                d2.toString(), 55000L
+        ));
+        snapRepo.putCash(d1, 10000L); // cash present but must not appear
+
+        TreeMap<LocalDate, Long> series = uc.getInvestmentSnapshotSeries(d1, d2);
+
+        assertEquals(50000L, series.get(d1)); // investment only
+        assertEquals(55000L, series.get(d2)); // investment only
+    }
+
+    @Test
+    void getInvestmentSnapshotSeries_differsFromPortfolioSeriesWhenCashExists() {
+        InvestmentType inv = new InvestmentType(1, "CDB");
+        typeRepo.add(inv);
+        LocalDate d1 = LocalDate.of(2024, 3, 1);
+        LocalDate d2 = LocalDate.of(2024, 4, 1);
+        snapRepo.putSeries(1L, Map.of(
+                d1.toString(), 30000L,
+                d2.toString(), 32000L
+        ));
+        snapRepo.putCash(d1, 5000L);
+
+        TreeMap<LocalDate, Long> invSeries = uc.getInvestmentSnapshotSeries(d1, d2);
+        TreeMap<LocalDate, Long> patSeries = uc.getPortfolioSnapshotSeries(d1, d2);
+
+        // investment series excludes cash
+        assertEquals(30000L, invSeries.get(d1));
+        // portfolio series includes cash
+        assertEquals(35000L, patSeries.get(d1));
+    }
+
+    @Test
+    void getInvestmentSnapshotSeries_noInvestments_returnsEmpty() {
+        LocalDate d1 = LocalDate.of(2024, 1, 1);
+        LocalDate d2 = LocalDate.of(2024, 3, 1);
+        snapRepo.putCash(d1, 20000L); // cash only, no investment series
+        assertTrue(uc.getInvestmentSnapshotSeries(d1, d2).isEmpty());
+    }
+
+    // ===== cash-only patrimony — no investments registered =====
+
+    @Test
+    void getTotalPatrimony_noInvestments_returnsCashOnly() {
+        // No investment types registered; only cash snapshots
+        LocalDate today = LocalDate.of(2024, 7, 1);
+        snapRepo.putCash(today, 25000L);
+        assertEquals(25000L, uc.getTotalPatrimony(today)); // 0 investments + 25000 cash
+    }
+
+    @Test
+    void getTotalInvestmentValue_noInvestments_returnsZero() {
+        LocalDate today = LocalDate.of(2024, 7, 1);
+        snapRepo.putCash(today, 25000L);
+        assertEquals(0L, uc.getTotalInvestmentValue(today));
+    }
 }
