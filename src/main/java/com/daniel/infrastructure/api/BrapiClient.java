@@ -525,24 +525,10 @@ public final class BrapiClient {
             return hist;
         }
 
-        // Fallback: quote básico — usa regularMarketChangePercent (variação diária)
-        // anualizado como estimativa grosseira
-        LOG.info("[IBOV] Histórico falhou, tentando quote básico...");
-        try {
-            StockData data = fetchStockData("^BVSP");
-            if (data != null && data.isValid()) {
-                double dailyPct = data.regularMarketChangePercent() / 100.0;
-                double annualized = Math.pow(1 + dailyPct, 252) - 1;
-                cachedIbovReturn = annualized;
-                cachedIbovTimestamp = System.currentTimeMillis();
-                LOG.fine(String.format("[IBOV] Fallback quote: diário=%.4f%% anualizado=%.2f%%",
-                        dailyPct * 100, annualized * 100));
-                return Optional.of(annualized);
-            }
-        } catch (Exception e) {
-            LOG.warning("[IBOV] Fallback quote falhou: " + e.getMessage());
-        }
-
+        // Fallback diário intencionalmente omitido: regularMarketChangePercent é a variação de
+        // um único pregão e não pode ser anualizado como retorno de benchmark de 12 meses —
+        // um dia de +1,5% anualizado em 252 pregões produziria ~4100%, um valor absurdo.
+        LOG.info("[IBOV] Histórico indisponível — benchmark IBOVESPA não exibido.");
         return Optional.empty();
     }
 
