@@ -202,14 +202,23 @@ public final class DailyTrackingUseCase {
         return 0L;
     }
 
+    /**
+     * Returns total patrimony = investments current value + latest known cash balance on or
+     * before {@code today}. Cash is carried forward from the last recorded snapshot date.
+     */
     public long getTotalPatrimony(LocalDate today) {
-        Map<Long, Long> values = getAllCurrentValues(today);
-        long total = values.values().stream()
-                .mapToLong(Long::longValue)
-                .sum();
-
+        long investmentTotal = getTotalInvestmentValue(today);
+        long cashCents = snapshotRepo.getCashOnOrBefore(today);
+        long total = investmentTotal + cashCents;
         LOG.fine(String.format("PATRIMONIO TOTAL: %s", brl(total)));
         return total;
+    }
+
+    /** Returns the sum of current investment values only, without cash. */
+    public long getTotalInvestmentValue(LocalDate today) {
+        return getAllCurrentValues(today).values().stream()
+                .mapToLong(Long::longValue)
+                .sum();
     }
 
     public long getTotalProfit(LocalDate today) {
@@ -281,11 +290,12 @@ public final class DailyTrackingUseCase {
     }
 
     /**
-     * Agrega snapshots históricos de todos os investimentos por data dentro do intervalo.
-     * Útil para construir gráficos de performance com dados reais em vez de projeções.
+     * Agrega snapshots históricos de todos os investimentos e do caixa por data dentro do
+     * intervalo. O caixa é somado a cada data que já possui snapshot de investimento, usando
+     * carry-forward (último valor conhecido na data ou antes dela).
      *
-     * @return TreeMap data→total em centavos, ordenado por data.
-     *         Retorna mapa vazio se não houver snapshots no período.
+     * @return TreeMap data→total em centavos (investimentos + caixa), ordenado por data.
+     *         Retorna mapa vazio se não houver snapshots de investimento no período.
      */
     public TreeMap<LocalDate, Long> getPortfolioSnapshotSeries(LocalDate from, LocalDate to) {
         TreeMap<LocalDate, Long> totals = new TreeMap<>();
@@ -299,6 +309,13 @@ public final class DailyTrackingUseCase {
                         totals.merge(date, entry.getValue(), Long::sum);
                     }
                 } catch (Exception ignored) {}
+            }
+        }
+        // Add latest known cash balance (carry-forward) to each investment snapshot date
+        for (LocalDate date : new ArrayList<>(totals.keySet())) {
+            long cashCents = snapshotRepo.getCashOnOrBefore(date);
+            if (cashCents > 0) {
+                totals.merge(date, cashCents, Long::sum);
             }
         }
         return totals;

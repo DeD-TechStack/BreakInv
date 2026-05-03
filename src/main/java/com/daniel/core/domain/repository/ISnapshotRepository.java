@@ -5,6 +5,13 @@ import java.util.Map;
 
 public interface ISnapshotRepository {
     long getCash(LocalDate date);
+
+    /**
+     * Returns the latest known cash balance on or before {@code date}, or 0 if no cash snapshot
+     * exists on or before that date. Carries the cash balance forward across days with no entry.
+     */
+    default long getCashOnOrBefore(LocalDate date) { return 0L; }
+
     Map<Long, Long> getAllInvestimentsForDate(LocalDate date);
     Map<String, Long> seriesForInvestiments(long investimentsTypeId);
 

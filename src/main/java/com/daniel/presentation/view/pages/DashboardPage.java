@@ -313,7 +313,10 @@ public final class DashboardPage implements Page {
             profitLabel.getStyleClass().add(totalProfit >= 0 ? "pos" : "neg");
         }
 
-        updateCDIComparison(today, investments, totalPatrimony);
+        // CDI comparison uses investment-only value: cash is not invested capital and should not
+        // inflate the benchmark comparison as if it earned CDI returns.
+        long totalInvestmentValue = daily.getTotalInvestmentValue(today);
+        updateCDIComparison(today, investments, totalInvestmentValue);
         updatePieChart(investments, currentValues);
         updateWaterfallChart(investments, currentValues);
         updateComparisonChart(investments, currentValues, today);
