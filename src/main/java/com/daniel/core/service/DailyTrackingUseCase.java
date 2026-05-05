@@ -442,12 +442,9 @@ public final class DailyTrackingUseCase {
         long totalInvCents = 0;
         long totalProfitCents = 0;
 
-        // Pre-index yesterday's values by id for O(1) lookup instead of O(n) inner loop
-        Map<Integer, Long> prevValueById = new HashMap<>();
-        for (var prevMap : prevEntry.investmentValuesCents().entrySet()) {
-            prevValueById.put(prevMap.getKey().id(),
-                    prevMap.getValue() != null ? prevMap.getValue() : 0L);
-        }
+        // Raw yesterday snapshot: keys present only when a snapshot was actually recorded.
+        // Avoids treating the first recorded value as profit (no baseline → profit = 0).
+        Map<Long, Long> prevRawInvestments = snapshotRepo.getAllInvestimentsForDate(prev);
 
         // Busca os fluxos do dia uma única vez fora do loop (evita N queries idênticas)
         List<Flow> flows = flowsFor(date);
@@ -455,8 +452,6 @@ public final class DailyTrackingUseCase {
         for (var entryMap : entry.investmentValuesCents().entrySet()) {
             InvestmentType t = entryMap.getKey();
             long todayCents = entryMap.getValue() != null ? entryMap.getValue() : 0L;
-
-            long yesterdayCents = prevValueById.getOrDefault(t.id(), 0L);
 
             investmentTodayCents.put((long) t.id(), todayCents);
 
@@ -474,7 +469,14 @@ public final class DailyTrackingUseCase {
                 }
             }
 
-            long profitCents = todayCents - yesterdayCents - flowsInCents + flowsOutCents;
+            // No previous snapshot → first recorded value establishes the baseline; profit = 0.
+            long profitCents;
+            if (!prevRawInvestments.containsKey((long) t.id())) {
+                profitCents = 0L;
+            } else {
+                long yesterdayCents = prevRawInvestments.get((long) t.id());
+                profitCents = todayCents - yesterdayCents - flowsInCents + flowsOutCents;
+            }
             investmentProfitTodayCents.put((long) t.id(), profitCents);
 
             totalInvCents += todayCents;

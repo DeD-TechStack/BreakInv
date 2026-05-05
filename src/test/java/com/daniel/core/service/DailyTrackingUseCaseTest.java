@@ -530,7 +530,7 @@ class DailyTrackingUseCaseTest {
     }
 
     @Test
-    void summaryFor_firstEntry_noYesterdayData_profitEqualsValue() {
+    void summaryFor_firstEntry_noYesterdayData_profitIsZero() {
         InvestmentType inv = new InvestmentType(
                 1, "Tesouro", "RENDA_FIXA", "ALTA",
                 LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
@@ -539,12 +539,77 @@ class DailyTrackingUseCaseTest {
 
         LocalDate today = LocalDate.of(2024, 3, 7);
         snapRepo.putInvestment(today, 1L, 40000L);
-        // No yesterday data → yesterdayCents = 0
+        // No yesterday snapshot → first recorded value establishes baseline; profit must be 0
 
         DailySummary summary = uc.summaryFor(today);
 
-        // profit = 40000 - 0 = 40000
-        assertEquals(40000L, summary.investmentProfitTodayCents().get(1L));
+        assertEquals(0L, summary.investmentProfitTodayCents().get(1L));
+    }
+
+    @Test
+    void summaryFor_firstEntry_totalTodayCentsIncludesFirstSnapshotValue() {
+        InvestmentType inv = new InvestmentType(
+                1, "Tesouro", "RENDA_FIXA", "ALTA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
+        );
+        typeRepo.add(inv);
+
+        LocalDate today = LocalDate.of(2024, 3, 7);
+        snapRepo.putCash(today, 5000L);
+        snapRepo.putInvestment(today, 1L, 40000L);
+
+        DailySummary summary = uc.summaryFor(today);
+
+        // Profit is 0 but the snapshot value still counts toward today's total
+        assertEquals(0L, summary.investmentProfitTodayCents().get(1L));
+        assertEquals(45000L, summary.totalTodayCents()); // cash + investment
+    }
+
+    @Test
+    void summaryFor_secondEntry_normalProfitAfterFirstSnapshot() {
+        InvestmentType inv = new InvestmentType(
+                1, "Tesouro", "RENDA_FIXA", "ALTA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
+        );
+        typeRepo.add(inv);
+
+        LocalDate today     = LocalDate.of(2024, 3, 8);
+        LocalDate yesterday = today.minusDays(1);
+
+        // Day 1 (baseline) and Day 2 (normal profit)
+        snapRepo.putInvestment(yesterday, 1L, 40000L);
+        snapRepo.putInvestment(today, 1L, 41500L);
+
+        DailySummary summary = uc.summaryFor(today);
+
+        // yesterday exists → normal formula: 41500 - 40000 = 1500
+        assertEquals(1500L, summary.investmentProfitTodayCents().get(1L));
+    }
+
+    @Test
+    void summaryFor_firstEntry_twoInvestments_neitherHasProfit() {
+        InvestmentType t1 = new InvestmentType(
+                1, "CDB", "RENDA_FIXA", "ALTA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
+        );
+        InvestmentType t2 = new InvestmentType(
+                2, "LCI", "RENDA_FIXA", "MEDIA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.10), BigDecimal.valueOf(500)
+        );
+        typeRepo.add(t1);
+        typeRepo.add(t2);
+
+        LocalDate today = LocalDate.of(2024, 3, 7);
+        snapRepo.putInvestment(today, 1L, 30000L);
+        snapRepo.putInvestment(today, 2L, 20000L);
+
+        DailySummary summary = uc.summaryFor(today);
+
+        assertEquals(0L, summary.investmentProfitTodayCents().get(1L));
+        assertEquals(0L, summary.investmentProfitTodayCents().get(2L));
+        assertEquals(0L, summary.totalProfitTodayCents());
+        // totalTodayCents still includes both values
+        assertEquals(50000L, summary.totalTodayCents());
     }
 
     // ===== groupByTicker — blank ticker excluded =====
