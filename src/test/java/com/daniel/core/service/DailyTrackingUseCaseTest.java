@@ -677,6 +677,32 @@ class DailyTrackingUseCaseTest {
     }
 
     @Test
+    void getCurrentValue_fixedIncome_roundsToNearestCent() {
+        // R$200 at 12% p.a. for 1 month.
+        // monthlyRate = Math.pow(1.12, 1/12) - 1 ≈ 0.009489
+        // currentValue = 20000 × 1.009489 ≈ 20189.776
+        // Math.round → 20190; direct (long) cast → 20189
+        LocalDate investmentDate = LocalDate.of(2024, 1, 1);
+        LocalDate today          = LocalDate.of(2024, 2, 1); // exactly 1 month
+
+        InvestmentType inv = new InvestmentType(
+                1, "CDB", "RENDA_FIXA", "MEDIA",
+                investmentDate, BigDecimal.valueOf(12.0), BigDecimal.valueOf(200.0)
+        );
+
+        long result = uc.getCurrentValue(inv, today);
+
+        double monthlyRate = Math.pow(1.12, 1.0 / 12) - 1;
+        long truncated = (long)(20000.0 * (1 + monthlyRate));
+        long rounded   = Math.round(20000.0 * (1 + monthlyRate));
+
+        assertTrue(rounded > truncated,
+                "Test setup: this value must produce a non-integer result to prove rounding");
+        assertEquals(rounded, result,
+                "Fixed-income value must use Math.round, not (long) truncation");
+    }
+
+    @Test
     void getCurrentValue_noValues_returnsZero() {
         // Neither ticker, profitability, investedValue → 0
         InvestmentType inv = new InvestmentType(1, "Empty");

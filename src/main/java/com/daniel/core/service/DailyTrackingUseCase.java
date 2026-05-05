@@ -182,13 +182,15 @@ public final class DailyTrackingUseCase {
             double monthlyRate = Math.pow(1 + annualRate, 1.0/12) - 1;
             double currentValue = investedCents * Math.pow(1 + monthlyRate, months);
 
+            long valueCents = Math.round(currentValue);
+
             LOG.fine(String.format(
                     "[RENDA FIXA] %s: %s x %.2f%% a.a. x %d meses = %s",
                     inv.name(), brl(investedCents), annualRate * 100,
-                    months, brl((long)currentValue)
+                    months, brl(valueCents)
             ));
 
-            return (long)currentValue;
+            return valueCents;
         }
 
         if (inv.investedValue() != null) {
