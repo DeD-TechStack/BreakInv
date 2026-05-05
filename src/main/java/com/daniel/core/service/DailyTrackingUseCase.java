@@ -5,6 +5,7 @@ import com.daniel.core.domain.repository.*;
 import com.daniel.core.util.MoneyFormat;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -136,7 +137,7 @@ public final class DailyTrackingUseCase {
                 Double currentPrice = priceProvider.fetchPrice(inv.ticker());
                 if (currentPrice != null) {
                     int quantity = inv.quantity();
-                    long valueCents = (long)(currentPrice * quantity * 100);
+                    long valueCents = Math.round(currentPrice * quantity * 100);
 
                     LOG.fine(String.format(
                             "[ACAO] %s: Qtd=%d x R$%.2f = %s",
@@ -150,13 +151,16 @@ public final class DailyTrackingUseCase {
             }
 
             // Fallback: usar preço de compra
-            double purchasePrice = inv.purchasePrice().doubleValue();
             int quantity = inv.quantity();
-            long valueCents = (long)(purchasePrice * quantity * 100);
+            long valueCents = inv.purchasePrice()
+                    .multiply(BigDecimal.valueOf(quantity))
+                    .multiply(BigDecimal.valueOf(100))
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .longValue();
 
             LOG.fine(String.format(
                     "[ACAO FALLBACK] %s: Qtd=%d x R$%.2f (preco compra) = %s",
-                    inv.ticker(), quantity, purchasePrice, brl(valueCents)
+                    inv.ticker(), quantity, inv.purchasePrice().doubleValue(), brl(valueCents)
             ));
 
             return valueCents;

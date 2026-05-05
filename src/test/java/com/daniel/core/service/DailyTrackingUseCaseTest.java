@@ -1059,8 +1059,9 @@ class DailyTrackingUseCaseTest {
     }
 
     @Test
-    void getCurrentValue_priceMathTruncatesToLong() {
-        // 33.33 × 3 × 100 = 9999.0 → (long) truncates to 9999, not rounded to 10000
+    void getCurrentValue_priceMath_33_33_times_3_gives_9999_cents() {
+        // 33.33 × 3 × 100 evaluates to 9999.0 in IEEE 754 double;
+        // rounding and truncation both yield 9999 for this value
         priceProvider.put("TEST", 33.33);
         InvestmentType inv = new InvestmentType(
                 1, "TEST", "ACOES", "MUITO_ALTA",
@@ -1068,6 +1069,31 @@ class DailyTrackingUseCaseTest {
                 "ACAO", null, null, "TEST", BigDecimal.valueOf(30.0), 3, null
         );
         assertEquals(9999L, uc.getCurrentValue(inv, LocalDate.now()));
+    }
+
+    @Test
+    void getCurrentValue_withTickerAndProvider_roundsToNearestCent() {
+        // 10.005 × 1 × 100 = 1000.5 → rounds to 1001, not truncates to 1000
+        priceProvider.put("XPTO3", 10.005);
+        InvestmentType inv = new InvestmentType(
+                1, "XPTO3", "ACOES", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000),
+                "ACAO", null, null, "XPTO3", BigDecimal.valueOf(30.0), 1, null
+        );
+        assertEquals(1001L, uc.getCurrentValue(inv, LocalDate.now()));
+    }
+
+    @Test
+    void getCurrentValue_providerReturnsNull_purchasePriceFallbackRoundsToNearestCent() {
+        // purchasePrice = 10.005, quantity = 1
+        // BigDecimal("10.005") × 1 × 100 = 1000.5 → HALF_UP → 1001, not 1000
+        InvestmentType inv = new InvestmentType(
+                1, "XPTO3", "ACOES", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000),
+                "ACAO", null, null, "XPTO3", new BigDecimal("10.005"), 1, null
+        );
+        // priceProvider has no entry for XPTO3 → fallback to purchasePrice
+        assertEquals(1001L, uc.getCurrentValue(inv, LocalDate.now()));
     }
 
     // ===== getTotalPatrimony — includes cash =====
