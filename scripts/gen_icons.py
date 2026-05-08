@@ -146,6 +146,32 @@ def gen_pixels(size: int) -> list:
     return grid
 
 
+# ── Supersampling antialiaser ─────────────────────────────────────────────────
+_SS = 4   # supersample factor; raise for sharper edges (4 is sufficient)
+
+def supersample(size: int) -> list:
+    """
+    Render at size×_SS then box-filter downsample to size×size.
+    Each output pixel is the average of a _SS×_SS block of hi-res pixels.
+    """
+    hi  = gen_pixels(size * _SS)
+    f2  = _SS * _SS
+    out = []
+    for y in range(size):
+        row = []
+        for x in range(size):
+            r = g = b = 0
+            for dy in range(_SS):
+                for dx in range(_SS):
+                    p   = hi[y * _SS + dy][x * _SS + dx]
+                    r  += p[0]
+                    g  += p[1]
+                    b  += p[2]
+            row.append((r // f2, g // f2, b // f2))
+        out.append(row)
+    return out
+
+
 # ── Minimal PNG writer (no external deps) ────────────────────────────────────
 def _chunk(tag: bytes, data: bytes) -> bytes:
     crc = zlib.crc32(tag + data) & 0xFFFFFFFF
@@ -169,7 +195,7 @@ def make_ico(sizes: list) -> bytes:
     Build a Windows ICO file containing one PNG image per requested size.
     PNG-in-ICO is supported on Windows Vista and later, and by jpackage.
     """
-    entries = [(sz, make_png(gen_pixels(sz))) for sz in sizes]
+    entries = [(sz, make_png(supersample(sz))) for sz in sizes]
     count   = len(entries)
 
     # ICONDIR header: reserved=0, type=1 (icon), count
@@ -204,7 +230,7 @@ if __name__ == "__main__":
     # Resolve repo root regardless of where the script is invoked from
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    png256 = make_png(gen_pixels(256))
+    png256 = make_png(supersample(256))
     ico    = make_ico([256, 48, 32, 16])
 
     write(os.path.join(repo, "src/main/resources/app/icon.png"), png256)
