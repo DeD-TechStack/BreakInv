@@ -30,6 +30,8 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
+import com.daniel.presentation.view.util.UiExecutor;
 
 public final class DashboardPage implements Page {
 
@@ -76,6 +78,8 @@ public final class DashboardPage implements Page {
             "Sem dados suficientes — adicione investimentos com valor registrado para ver o gráfico de performance.");
     private final Label sparseChartHint = new Label(
             "Histórico insuficiente no período selecionado.");
+
+    private final AtomicLong refreshEpoch = new AtomicLong(0);
 
     private int selectedFilterMonths = 12;
     private LocalDate customFrom = null;
@@ -281,11 +285,60 @@ public final class DashboardPage implements Page {
         LocalDate today = LocalDate.now();
         dateLabel.setText(formatDate(today));
 
-        List<InvestmentType> investments = daily.listTypes();
+        final int filterMonths = selectedFilterMonths;
+        final boolean useCustom = useCustomRange;
+        final LocalDate customFromCapture = customFrom;
+        final LocalDate customToCapture = customTo;
+
+        final long epoch = refreshEpoch.incrementAndGet();
+
+        CompletableFuture.supplyAsync(() -> {
+            List<InvestmentType> investments = daily.listTypes();
+
+            if (investments.isEmpty()) {
+                long cashPatrimony = daily.getTotalPatrimony(today);
+                List<com.daniel.core.domain.entity.Transaction> txs =
+                        daily.listTransactions(YearMonth.now());
+                return new DashData(investments, null, cashPatrimony, 0, 0, null, null, null, txs);
+            }
+
+            LocalDate dataFim = today;
+            LocalDate dataInicio;
+            if (useCustom && customFromCapture != null && customToCapture != null) {
+                dataInicio = customFromCapture;
+                dataFim = customToCapture;
+            } else {
+                dataInicio = today.minusMonths(filterMonths);
+                LocalDate maisAntiga = investments.stream()
+                        .filter(inv -> inv.investmentDate() != null)
+                        .map(InvestmentType::investmentDate)
+                        .min(LocalDate::compareTo)
+                        .orElse(dataInicio);
+                if (maisAntiga.isAfter(dataInicio)) dataInicio = maisAntiga;
+            }
+
+            Map<Long, Long> currentValues = daily.getAllCurrentValues(today);
+            long totalPatrimony = daily.getTotalPatrimony(today);
+            long totalProfit = daily.getTotalProfit(today);
+            long totalInvestmentValue = daily.getTotalInvestmentValue(today);
+            java.util.TreeMap<LocalDate, Long> snaps =
+                    daily.getInvestmentSnapshotSeries(dataInicio, dataFim);
+            List<com.daniel.core.domain.entity.Transaction> txs =
+                    daily.listTransactions(YearMonth.now());
+
+            return new DashData(investments, currentValues, totalPatrimony, totalProfit,
+                    totalInvestmentValue, snaps, dataInicio, dataFim, txs);
+        }, UiExecutor.get()).thenAcceptAsync(data -> {
+            if (refreshEpoch.get() != epoch) return;
+            Platform.runLater(() -> applyDashData(data, today));
+        });
+    }
+
+    private void applyDashData(DashData data, LocalDate today) {
+        List<InvestmentType> investments = data.investments();
 
         if (investments.isEmpty()) {
-            // Show cash patrimony even when no investments are registered
-            long cashPatrimony = daily.getTotalPatrimony(today);
+            long cashPatrimony = data.totalPatrimony();
             if (cashPatrimony > 0) {
                 Motion.animateLabelChange(totalLabel, daily.brl(cashPatrimony));
             } else {
@@ -300,13 +353,13 @@ public final class DashboardPage implements Page {
             healthBar.setProgress(0);
             healthScoreLabel.setText("—");
             healthDescLabel.setText("Sem investimentos cadastrados.");
-            updateRecentActivity();
+            updateRecentActivity(data.recentTransactions());
             return;
         }
 
-        Map<Long, Long> currentValues = daily.getAllCurrentValues(today);
-        long totalPatrimony = daily.getTotalPatrimony(today);
-        long totalProfit = daily.getTotalProfit(today);
+        Map<Long, Long> currentValues = data.currentValues();
+        long totalPatrimony = data.totalPatrimony();
+        long totalProfit = data.totalProfit();
 
         Motion.animateLabelChange(totalLabel, daily.brl(totalPatrimony));
 
@@ -321,17 +374,18 @@ public final class DashboardPage implements Page {
 
         // CDI comparison uses investment-only value: cash is not invested capital and should not
         // inflate the benchmark comparison as if it earned CDI returns.
-        long totalInvestmentValue = daily.getTotalInvestmentValue(today);
+        long totalInvestmentValue = data.totalInvestmentValue();
         updateCDIComparison(today, investments, totalInvestmentValue);
         updatePieChart(investments, currentValues);
         updateWaterfallChart(investments, currentValues);
-        updateComparisonChart(investments, currentValues, today);
+        updateComparisonChart(investments, currentValues, today,
+                data.snapshotFrom(), data.snapshotTo(), data.snapshotSeries());
         // Pass investment-only total as denominator: % Alocação represents share of the investment
         // portfolio, not share of total patrimony (which would dilute % when cash exists).
         updateInvestmentsByCategory(investments, currentValues, totalInvestmentValue);
         updateRankPanel(investments, currentValues);
         updateHealthScore(investments, currentValues, totalPatrimony, totalProfit);
-        updateRecentActivity();
+        updateRecentActivity(data.recentTransactions());
     }
 
     private void updateCDIComparison(LocalDate today, List<InvestmentType> investments, long totalPatrimony) {
@@ -646,7 +700,10 @@ public final class DashboardPage implements Page {
 
     private void updateComparisonChart(List<InvestmentType> investments,
                                        Map<Long, Long> currentValues,
-                                       LocalDate today) {
+                                       LocalDate today,
+                                       LocalDate dataInicio,
+                                       LocalDate dataFim,
+                                       java.util.TreeMap<LocalDate, Long> snapshots) {
         comparisonChart.getData().clear();
 
         // ── Empty state ──────────────────────────────────────────────────────
@@ -658,22 +715,6 @@ public final class DashboardPage implements Page {
         }
         noComparisonHint.setVisible(false);
         noComparisonHint.setManaged(false);
-
-        // ── Determine date range ─────────────────────────────────────────────
-        LocalDate dataInicio;
-        LocalDate dataFim = today;
-        if (useCustomRange && customFrom != null && customTo != null) {
-            dataInicio = customFrom;
-            dataFim = customTo;
-        } else {
-            dataInicio = today.minusMonths(selectedFilterMonths);
-            LocalDate maisAntiga = investments.stream()
-                    .filter(inv -> inv.investmentDate() != null)
-                    .map(InvestmentType::investmentDate)
-                    .min(LocalDate::compareTo)
-                    .orElse(dataInicio);
-            if (maisAntiga.isAfter(dataInicio)) dataInicio = maisAntiga;
-        }
 
         // ── Benchmark rate ───────────────────────────────────────────────────
         double taxaAnualBench = switch (selectedBenchmark) {
@@ -732,8 +773,6 @@ public final class DashboardPage implements Page {
         double rentBenchFinal = 0;
 
         // ── Try real snapshot data (investment-only: performance chart, not patrimony evolution) ──
-        java.util.TreeMap<LocalDate, Long> snapshots =
-                daily.getInvestmentSnapshotSeries(dataInicio, dataFim);
 
         // Deduplicate by bucket key — keep last snapshot per bucket to avoid vertical-line artifact
         LinkedHashMap<String, Map.Entry<LocalDate, Long>> dedupMap = new LinkedHashMap<>();
@@ -842,6 +881,7 @@ public final class DashboardPage implements Page {
     private record RankEntry(String name, String ticker, double changePercent, long valueCents) {}
 
     private void updateRankPanel(List<InvestmentType> investments, Map<Long, Long> currentValues) {
+        final long rankEpoch = refreshEpoch.get();
         // Keep the titles, show loading
         rankPanelAltas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("card-title")));
         rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("card-title")));
@@ -918,6 +958,7 @@ public final class DashboardPage implements Page {
             // Retornar lista completa; separação em altas/baixas feita no Platform.runLater
             return entries;
         }).thenAcceptAsync(entries -> Platform.runLater(() -> {
+            if (refreshEpoch.get() != rankEpoch) return;
             rankPanelAltas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("card-title")));
             rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("card-title")));
 
@@ -1537,9 +1578,8 @@ public final class DashboardPage implements Page {
         healthDescLabel.setText(desc);
     }
 
-    private void updateRecentActivity() {
+    private void updateRecentActivity(List<Transaction> txs) {
         recentActivityList.getChildren().clear();
-        List<Transaction> txs = daily.listTransactions(YearMonth.now());
         if (txs.isEmpty()) {
             Label empty = new Label("Nenhum lançamento este mês");
             empty.getStyleClass().add("text-helper");
@@ -1577,6 +1617,18 @@ public final class DashboardPage implements Page {
     }
 
     private record InvestmentValue(String name, long valueCents) {}
+
+    private record DashData(
+        List<InvestmentType> investments,
+        Map<Long, Long> currentValues,
+        long totalPatrimony,
+        long totalProfit,
+        long totalInvestmentValue,
+        java.util.TreeMap<LocalDate, Long> snapshotSeries,
+        LocalDate snapshotFrom,
+        LocalDate snapshotTo,
+        List<com.daniel.core.domain.entity.Transaction> recentTransactions
+    ) {}
 
     /** Instala tooltip num nó XYChart, com fallback para nodeProperty se o nó ainda não existe. */
     private static void installXYTooltip(XYChart.Data<String, Number> d, String text) {
