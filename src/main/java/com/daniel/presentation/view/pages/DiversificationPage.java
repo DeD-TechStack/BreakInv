@@ -311,7 +311,9 @@ public final class DiversificationPage implements Page {
             }
         });
 
-        currentTable.getColumns().setAll(catCol, valueCol, percentCol);
+        currentTable.getColumns().add(catCol);
+        currentTable.getColumns().add(valueCol);
+        currentTable.getColumns().add(percentCol);
         Label currentPh = new Label("Nenhum dado disponível");
         currentPh.getStyleClass().add("text-helper");
         currentTable.setPlaceholder(currentPh);
@@ -374,7 +376,9 @@ public final class DiversificationPage implements Page {
             }
         });
 
-        idealTable.getColumns().setAll(catCol, valueCol, percentCol);
+        idealTable.getColumns().add(catCol);
+        idealTable.getColumns().add(valueCol);
+        idealTable.getColumns().add(percentCol);
         Label idealPh = new Label("Selecione um método");
         idealPh.getStyleClass().add("text-helper");
         idealTable.setPlaceholder(idealPh);
@@ -437,7 +441,8 @@ public final class DiversificationPage implements Page {
             }
         });
 
-        suggestionsTable.getColumns().setAll(catCol, actionCol);
+        suggestionsTable.getColumns().add(catCol);
+        suggestionsTable.getColumns().add(actionCol);
         Label suggPh = new Label("Sua carteira está perfeitamente balanceada!");
         suggPh.getStyleClass().add("text-helper");
         suggestionsTable.setPlaceholder(suggPh);

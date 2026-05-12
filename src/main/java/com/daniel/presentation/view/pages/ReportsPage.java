@@ -182,7 +182,10 @@ public final class ReportsPage implements Page {
         emptyState.getChildren().addAll(emptyIcon, emptyTitle, emptyHint);
         table.setPlaceholder(emptyState);
 
-        table.getColumns().setAll(dateCol, typeCol, descCol, valueCol);
+        table.getColumns().add(dateCol);
+        table.getColumns().add(typeCol);
+        table.getColumns().add(descCol);
+        table.getColumns().add(valueCol);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
     }
 
@@ -197,7 +200,7 @@ public final class ReportsPage implements Page {
     private void reload() {
         final YearMonth month = currentMonth;
         monthLabel.setText(month.format(
-                DateTimeFormatter.ofPattern("MMMM 'de' yyyy", new Locale("pt", "BR"))));
+                DateTimeFormatter.ofPattern("MMMM 'de' yyyy", Locale.forLanguageTag("pt-BR"))));
 
         final boolean isCurrentMonth = month.equals(YearMonth.now());
         final LocalDate refDate = isCurrentMonth ? LocalDate.now() : month.atEndOfMonth();

@@ -8,7 +8,7 @@ public final class MoneyFormat {
     private MoneyFormat() {}
 
     private static final NumberFormat BRL =
-            NumberFormat.getCurrencyInstance(new Locale("pt", "BR"));
+            NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"));
 
     public static String brl(long cents) {
         return BRL.format(cents / 100.0);

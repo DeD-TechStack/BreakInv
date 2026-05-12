@@ -835,7 +835,8 @@ public final class DashboardPage implements Page {
 
         // Only render if both series have at least 2 distinct points
         if (carteiraSeries.getData().size() >= 2) {
-            comparisonChart.getData().addAll(carteiraSeries, benchSeries);
+            comparisonChart.getData().add(carteiraSeries);
+            comparisonChart.getData().add(benchSeries);
 
             // Atualiza densidade de labels do eixo X com base na largura atual
             Platform.runLater(() -> ChartAxisUtils.refreshLabels(compXAxis, comparisonChart.getWidth()));

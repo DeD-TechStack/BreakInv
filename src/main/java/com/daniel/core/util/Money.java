@@ -11,7 +11,7 @@ import java.util.regex.Pattern;
 
 public final class Money {
 
-    private static final Locale LOCALE_BR = new Locale("pt", "BR");
+    private static final Locale LOCALE_BR = Locale.forLanguageTag("pt-BR");
     private static final NumberFormat BRL = NumberFormat.getCurrencyInstance(LOCALE_BR);
 
     private static final char DECIMAL_SEP = new DecimalFormatSymbols(LOCALE_BR).getDecimalSeparator();

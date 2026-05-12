@@ -380,7 +380,13 @@ public final class InvestmentTypesPage implements Page {
         emptyState.getChildren().addAll(emptyIcon, emptyTitle, emptyHint);
         table.setPlaceholder(emptyState);
 
-        table.getColumns().setAll(nameCol, catCol, liqCol, dateCol, profCol, valueCol, actionsCol);
+        table.getColumns().add(nameCol);
+        table.getColumns().add(catCol);
+        table.getColumns().add(liqCol);
+        table.getColumns().add(dateCol);
+        table.getColumns().add(profCol);
+        table.getColumns().add(valueCol);
+        table.getColumns().add(actionsCol);
     }
 
     private void updateClearFiltersVisibility(Button clearBtn) {
