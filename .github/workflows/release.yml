@@ -27,6 +27,13 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      # Derive version from the git tag (v0.5.0 → 0.5.0)
+      - name: Extract version
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}" -replace '^v', ''
+          "VERSION=$v" | Add-Content -Path $env:GITHUB_ENV
+
       - name: Build fat JAR
         run: mvn clean package
 
@@ -53,20 +60,39 @@ jobs:
 
       - name: Package with jpackage (MSI)
         shell: pwsh
-        run: >
-          jpackage
-          --input target/
-          --main-jar breakinv-0.5.0.jar
-          --main-class com.daniel.main.App
-          --name BreakInv
-          --app-version 0.5.0
-          --dest output/
-          --type msi
-          --runtime-image jlink-runtime
-          --java-options '-Dfile.encoding=UTF-8'
-          --win-menu
-          --win-shortcut
-          --win-menu-group BreakInv
+        run: |
+          jpackage `
+            --input target/ `
+            --main-jar "breakinv-$env:VERSION.jar" `
+            --main-class com.daniel.main.App `
+            --name BreakInv `
+            --app-version $env:VERSION `
+            --dest output/ `
+            --type msi `
+            --runtime-image jlink-runtime `
+            --icon packaging/windows/BreakInv.ico `
+            --vendor "DeD TechStack" `
+            --description "BreakInv - desktop portfolio tracker for investments" `
+            --copyright "Copyright 2026 DeD TechStack" `
+            --java-options '-Dfile.encoding=UTF-8' `
+            --win-menu `
+            --win-shortcut `
+            --win-menu-group BreakInv `
+            --win-upgrade-uuid b72a4f3c-9e1d-4a2b-8c5d-f3e7a1b94d2e
+
+          # ↑ IMPORTANT: do not change --win-upgrade-uuid after the first public release.
+          #   Windows uses this GUID to recognise upgrades; changing it creates a new product
+          #   that installs side-by-side instead of replacing the old version.
+
+      - name: Rename artifact and generate SHA256
+        shell: pwsh
+        run: |
+          $msi  = (Get-ChildItem output/ -Filter "*.msi" | Select-Object -First 1).FullName
+          $dest = "output/BreakInv-$env:VERSION-windows-x64.msi"
+          Rename-Item $msi $dest
+          $hash = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
+          "$hash  BreakInv-$env:VERSION-windows-x64.msi" |
+            Out-File -FilePath "output/BreakInv-$env:VERSION-windows-x64.msi.sha256" -Encoding ascii
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4.6.2
@@ -93,6 +119,13 @@ jobs:
       - name: Install DEB packaging tools
         run: sudo apt-get install -y fakeroot binutils
 
+      # Derive version from the git tag (v0.5.0 → 0.5.0)
+      - name: Extract version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
       - name: Build fat JAR
         run: mvn clean package
 
@@ -113,17 +146,29 @@ jobs:
           --compress=2
 
       - name: Package with jpackage (DEB)
-        run: >
-          jpackage
-          --input target/
-          --main-jar breakinv-0.5.0.jar
-          --main-class com.daniel.main.App
-          --name BreakInv
-          --app-version 0.5.0
-          --dest output/
-          --type deb
-          --runtime-image jlink-runtime
-          --java-options '-Dfile.encoding=UTF-8'
+        run: |
+          jpackage \
+            --input target/ \
+            --main-jar "breakinv-${VERSION}.jar" \
+            --main-class com.daniel.main.App \
+            --name BreakInv \
+            --app-version "$VERSION" \
+            --dest output/ \
+            --type deb \
+            --runtime-image jlink-runtime \
+            --icon packaging/linux/breakinv.png \
+            --vendor "DeD TechStack" \
+            --description "BreakInv - desktop portfolio tracker for investments" \
+            --java-options '-Dfile.encoding=UTF-8' \
+            --linux-app-category Finance \
+            --linux-shortcut
+
+      - name: Rename artifact and generate SHA256
+        run: |
+          deb=$(ls output/*.deb | head -1)
+          dest="output/BreakInv-${VERSION}-linux-amd64.deb"
+          mv "$deb" "$dest"
+          sha256sum "$dest" > "output/BreakInv-${VERSION}-linux-amd64.deb.sha256"
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4.6.2
@@ -132,7 +177,8 @@ jobs:
           path: output/
 
   # ─────────────────────────────────────────────
-  # Publish GitHub Release with Windows and Linux installers
+  # Publish GitHub Release with both installers
+  # and their SHA256 checksum files
   # ─────────────────────────────────────────────
   publish-release:
     needs: [build-windows, build-linux]

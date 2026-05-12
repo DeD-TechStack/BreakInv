@@ -3,6 +3,7 @@ package com.daniel.presentation.view.pages;
 import com.daniel.core.domain.entity.Transaction;
 import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.PageHeader;
+import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
@@ -15,6 +16,9 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
+import com.daniel.presentation.view.util.UiExecutor;
 
 public final class ReportsPage implements Page {
 
@@ -35,6 +39,7 @@ public final class ReportsPage implements Page {
     private final TableView<ExtractRow> table = new TableView<>();
 
     private YearMonth currentMonth = YearMonth.now();
+    private final AtomicLong reloadEpoch = new AtomicLong(0);
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
@@ -177,82 +182,93 @@ public final class ReportsPage implements Page {
         emptyState.getChildren().addAll(emptyIcon, emptyTitle, emptyHint);
         table.setPlaceholder(emptyState);
 
-        table.getColumns().setAll(dateCol, typeCol, descCol, valueCol);
+        table.getColumns().add(dateCol);
+        table.getColumns().add(typeCol);
+        table.getColumns().add(descCol);
+        table.getColumns().add(valueCol);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
     }
 
+    private record ReloadData(
+            List<ExtractRow> rows,
+            long totalCompras,
+            boolean empty,
+            long lucroTotal,
+            long patrimony
+    ) {}
+
     private void reload() {
-        monthLabel.setText(currentMonth.format(
-                DateTimeFormatter.ofPattern("MMMM 'de' yyyy", new Locale("pt", "BR"))));
+        final YearMonth month = currentMonth;
+        monthLabel.setText(month.format(
+                DateTimeFormatter.ofPattern("MMMM 'de' yyyy", Locale.forLanguageTag("pt-BR"))));
 
-        List<Transaction> transactions = daily.listTransactions(currentMonth);
+        final boolean isCurrentMonth = month.equals(YearMonth.now());
+        final LocalDate refDate = isCurrentMonth ? LocalDate.now() : month.atEndOfMonth();
+        final long epoch = reloadEpoch.incrementAndGet();
 
-        List<ExtractRow> rows = new ArrayList<>();
-        long totalCompras = 0;
-        long totalVendas = 0;
+        CompletableFuture.supplyAsync(() -> {
+            List<Transaction> transactions = daily.listTransactions(month);
 
-        for (Transaction tx : transactions) {
-            boolean isBuy = Transaction.BUY.equals(tx.type());
-            String type = isBuy ? "Compra" : "Venda";
+            List<ExtractRow> rows = new ArrayList<>();
+            long totalCompras = 0;
 
-            StringBuilder desc = new StringBuilder();
-            desc.append(type).append(" de ").append(tx.name());
-            if (tx.ticker() != null) {
-                desc.append(" (").append(tx.ticker()).append(")");
-            }
-            if (tx.quantity() != null && tx.unitPriceCents() != null) {
-                desc.append(" — ").append(tx.quantity()).append(" x ").append(daily.brl(tx.unitPriceCents()));
-            }
-            if (tx.note() != null) {
-                desc.append(" | ").append(tx.note());
-            }
+            for (Transaction tx : transactions) {
+                boolean isBuy = Transaction.BUY.equals(tx.type());
+                String type = isBuy ? "Compra" : "Venda";
 
-            String value;
-            if (isBuy) {
-                value = "- " + daily.brl(tx.totalCents());
-                totalCompras += tx.totalCents();
-            } else {
-                value = "+ " + daily.brl(tx.totalCents());
-                totalVendas += tx.totalCents();
-            }
+                StringBuilder desc = new StringBuilder();
+                desc.append(type).append(" de ").append(tx.name());
+                if (tx.ticker() != null) {
+                    desc.append(" (").append(tx.ticker()).append(")");
+                }
+                if (tx.quantity() != null && tx.unitPriceCents() != null) {
+                    desc.append(" — ").append(tx.quantity()).append(" x ").append(daily.brl(tx.unitPriceCents()));
+                }
+                if (tx.note() != null) {
+                    desc.append(" | ").append(tx.note());
+                }
 
-            rows.add(new ExtractRow(tx.date(), type, desc.toString(), value));
-        }
-
-        table.setItems(FXCollections.observableArrayList(rows));
-
-        // ── KPI 1: Total de aportes ─────────────────────────────────────────
-        // Soma das compras do período (dinheiro investido)
-        setKpi(totalComprasLabel, totalCompras, false);
-
-        // ── KPI 2 & 3: month-scoped semantics ──────────────────────────────
-        boolean isCurrentMonth = currentMonth.equals(YearMonth.now());
-        LocalDate refDate = isCurrentMonth ? LocalDate.now() : currentMonth.atEndOfMonth();
-
-        if (transactions.isEmpty()) {
-            // No activity in selected month: never leak global portfolio state into empty period
-            setKpi(totalVendasLabel, 0, true);
-            setKpiPositive(lucroRealizadoLabel, 0);
-        } else {
-            // KPI 2: Lucro acumulado — scoped to end of selected month (not global today)
-            long lucroTotal = daily.getTotalProfit(refDate);
-            setKpi(totalVendasLabel, lucroTotal, true);
-
-            // KPI 3: Patrimônio — for past months prefer snapshot-backed total;
-            // live prices should not bleed into historical month views.
-            if (isCurrentMonth) {
-                setKpiPositive(lucroRealizadoLabel, daily.getTotalPatrimony(LocalDate.now()));
-            } else {
-                TreeMap<LocalDate, Long> snaps = daily.getPortfolioSnapshotSeries(
-                        currentMonth.atDay(1), currentMonth.atEndOfMonth());
-                if (!snaps.isEmpty()) {
-                    setKpiPositive(lucroRealizadoLabel, snaps.lastEntry().getValue());
+                String value;
+                if (isBuy) {
+                    value = "- " + daily.brl(tx.totalCents());
+                    totalCompras += tx.totalCents();
                 } else {
-                    // No historical snapshots for this period: show dash, not live prices
-                    setKpiPositive(lucroRealizadoLabel, 0);
+                    value = "+ " + daily.brl(tx.totalCents());
+                }
+
+                rows.add(new ExtractRow(tx.date(), type, desc.toString(), value));
+            }
+
+            long lucroTotal = 0;
+            long patrimony = 0;
+            if (!transactions.isEmpty()) {
+                lucroTotal = daily.getTotalProfit(refDate);
+                if (isCurrentMonth) {
+                    patrimony = daily.getTotalPatrimony(LocalDate.now());
+                } else {
+                    TreeMap<LocalDate, Long> snaps = daily.getPortfolioSnapshotSeries(
+                            month.atDay(1), month.atEndOfMonth());
+                    patrimony = snaps.isEmpty() ? 0 : snaps.lastEntry().getValue();
                 }
             }
-        }
+
+            return new ReloadData(rows, totalCompras, transactions.isEmpty(), lucroTotal, patrimony);
+        }, UiExecutor.get()).thenAcceptAsync(data -> {
+            if (reloadEpoch.get() != epoch) return;
+            Platform.runLater(() -> {
+                table.setItems(FXCollections.observableArrayList(data.rows()));
+                // KPI 1: Total de aportes
+                setKpi(totalComprasLabel, data.totalCompras(), false);
+                // KPI 2 & 3: never leak global state into an empty period
+                if (data.empty()) {
+                    setKpi(totalVendasLabel, 0, true);
+                    setKpiPositive(lucroRealizadoLabel, 0);
+                } else {
+                    setKpi(totalVendasLabel, data.lucroTotal(), true);
+                    setKpiPositive(lucroRealizadoLabel, data.patrimony());
+                }
+            });
+        });
     }
 
     /** Exibe valor com sinal (+/−) e cor verde/vermelho, ou "—" se zero. */

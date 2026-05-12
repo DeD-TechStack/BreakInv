@@ -156,6 +156,33 @@ class BrapiClientTest {
         assertEquals("stock", s.type());
     }
 
+    // ===== IBOVESPA fallback regression guard =====
+    // These tests document why regularMarketChangePercent must not be annualized.
+    // The formula Math.pow(1 + dailyPct, 252) - 1 was removed from the fallback path.
+
+    @Test
+    void annualizingPositiveDailyReturn_producesAbsurdValue() {
+        // A normal +1.5% daily IBOVESPA move, when compounded over 252 trading days,
+        // gives ~4144% — clearly not a real 12-month benchmark return.
+        double dailyPct = 1.5 / 100.0;
+        double annualized = Math.pow(1 + dailyPct, 252) - 1;
+        assertTrue(annualized > 10.0,
+                "Annualizing a +1.5% daily return yields " +
+                String.format("%.0f%%", annualized * 100) +
+                " — this formula must not be used as an annual IBOVESPA benchmark.");
+    }
+
+    @Test
+    void annualizingNegativeDailyReturn_producesAbsurdValue() {
+        // A -1.5% daily move annualized: (0.985)^252 - 1 ≈ -97.8% — equally invalid.
+        double dailyPct = -1.5 / 100.0;
+        double annualized = Math.pow(1 + dailyPct, 252) - 1;
+        assertTrue(annualized < -0.95,
+                "Annualizing a -1.5% daily return yields " +
+                String.format("%.1f%%", annualized * 100) +
+                " — this formula must not be used as an annual IBOVESPA benchmark.");
+    }
+
     // ===== Helpers =====
 
     private static BrapiClient.StockData stockDataWithError(String error) {

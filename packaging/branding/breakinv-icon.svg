@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!--
+    BreakInv icon — original project mark
+    Concept: bold geometric B monogram with a rising gold arrow cutting through it.
+    The diagonal arrow (break-even line rising) is the "break" in BreakInv.
+
+    Colours
+      BG    #0B1220  dark background
+      GREEN #22C55E  brand green  (B monogram)
+      GOLD  #F59E0B  accent gold  (rising arrow)
+
+    Coordinates are for 256×256 canvas.
+    Python renderer: scripts/gen_icons.py
+  -->
+
+  <!-- Background -->
+  <rect width="256" height="256" fill="#0B1220"/>
+
+  <!-- ── B monogram ──────────────────────────────────────── -->
+  <!-- left stem: x 52-80, y 44-212 -->
+  <rect x="52" y="44" width="28" height="168" fill="#22C55E"/>
+  <!-- top bar: x 80-168, y 44-68 -->
+  <rect x="80" y="44" width="88" height="24" fill="#22C55E"/>
+  <!-- upper-right bump: x 144-168, y 68-116 -->
+  <rect x="144" y="68" width="24" height="48" fill="#22C55E"/>
+  <!-- mid bar: x 80-160, y 116-140 -->
+  <rect x="80" y="116" width="80" height="24" fill="#22C55E"/>
+  <!-- lower-right bump: x 156-180, y 140-188 -->
+  <rect x="156" y="140" width="24" height="48" fill="#22C55E"/>
+  <!-- bottom bar: x 80-180, y 188-212 -->
+  <rect x="80" y="188" width="100" height="24" fill="#22C55E"/>
+
+  <!-- ── Rising gold arrow ────────────────────────────────── -->
+  <!-- Line from (38,200) to (206,64), stroke-width 12 -->
+  <line x1="38" y1="200" x2="206" y2="64"
+        stroke="#F59E0B" stroke-width="12" stroke-linecap="round"/>
+  <!-- Arrowhead at (206,64).
+       Direction (168,-136)/216.2 ≈ (0.777,-0.629), perp (0.629,0.777).
+       base_center=(185,81), half-width=14 →
+       b1=(193,91)  b2=(177,71) -->
+  <polygon points="206,64 193,91 177,71" fill="#F59E0B"/>
+</svg>

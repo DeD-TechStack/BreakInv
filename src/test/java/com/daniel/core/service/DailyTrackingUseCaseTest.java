@@ -91,6 +91,15 @@ class DailyTrackingUseCaseTest {
         void putSeries(long typeId, Map<String, Long> series) { seriesData.put(typeId, series); }
 
         @Override public long getCash(LocalDate date) { return cash.getOrDefault(date, 0L); }
+
+        @Override public long getCashOnOrBefore(LocalDate date) {
+            return cash.entrySet().stream()
+                    .filter(e -> !e.getKey().isAfter(date))
+                    .max(Map.Entry.comparingByKey())
+                    .map(Map.Entry::getValue)
+                    .orElse(0L);
+        }
+
         @Override public Map<Long, Long> getAllInvestimentsForDate(LocalDate date) {
             return investments.getOrDefault(date, Map.of());
         }
@@ -521,7 +530,7 @@ class DailyTrackingUseCaseTest {
     }
 
     @Test
-    void summaryFor_firstEntry_noYesterdayData_profitEqualsValue() {
+    void summaryFor_firstEntry_noYesterdayData_profitIsZero() {
         InvestmentType inv = new InvestmentType(
                 1, "Tesouro", "RENDA_FIXA", "ALTA",
                 LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
@@ -530,12 +539,77 @@ class DailyTrackingUseCaseTest {
 
         LocalDate today = LocalDate.of(2024, 3, 7);
         snapRepo.putInvestment(today, 1L, 40000L);
-        // No yesterday data → yesterdayCents = 0
+        // No yesterday snapshot → first recorded value establishes baseline; profit must be 0
 
         DailySummary summary = uc.summaryFor(today);
 
-        // profit = 40000 - 0 = 40000
-        assertEquals(40000L, summary.investmentProfitTodayCents().get(1L));
+        assertEquals(0L, summary.investmentProfitTodayCents().get(1L));
+    }
+
+    @Test
+    void summaryFor_firstEntry_totalTodayCentsIncludesFirstSnapshotValue() {
+        InvestmentType inv = new InvestmentType(
+                1, "Tesouro", "RENDA_FIXA", "ALTA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
+        );
+        typeRepo.add(inv);
+
+        LocalDate today = LocalDate.of(2024, 3, 7);
+        snapRepo.putCash(today, 5000L);
+        snapRepo.putInvestment(today, 1L, 40000L);
+
+        DailySummary summary = uc.summaryFor(today);
+
+        // Profit is 0 but the snapshot value still counts toward today's total
+        assertEquals(0L, summary.investmentProfitTodayCents().get(1L));
+        assertEquals(45000L, summary.totalTodayCents()); // cash + investment
+    }
+
+    @Test
+    void summaryFor_secondEntry_normalProfitAfterFirstSnapshot() {
+        InvestmentType inv = new InvestmentType(
+                1, "Tesouro", "RENDA_FIXA", "ALTA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
+        );
+        typeRepo.add(inv);
+
+        LocalDate today     = LocalDate.of(2024, 3, 8);
+        LocalDate yesterday = today.minusDays(1);
+
+        // Day 1 (baseline) and Day 2 (normal profit)
+        snapRepo.putInvestment(yesterday, 1L, 40000L);
+        snapRepo.putInvestment(today, 1L, 41500L);
+
+        DailySummary summary = uc.summaryFor(today);
+
+        // yesterday exists → normal formula: 41500 - 40000 = 1500
+        assertEquals(1500L, summary.investmentProfitTodayCents().get(1L));
+    }
+
+    @Test
+    void summaryFor_firstEntry_twoInvestments_neitherHasProfit() {
+        InvestmentType t1 = new InvestmentType(
+                1, "CDB", "RENDA_FIXA", "ALTA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
+        );
+        InvestmentType t2 = new InvestmentType(
+                2, "LCI", "RENDA_FIXA", "MEDIA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.10), BigDecimal.valueOf(500)
+        );
+        typeRepo.add(t1);
+        typeRepo.add(t2);
+
+        LocalDate today = LocalDate.of(2024, 3, 7);
+        snapRepo.putInvestment(today, 1L, 30000L);
+        snapRepo.putInvestment(today, 2L, 20000L);
+
+        DailySummary summary = uc.summaryFor(today);
+
+        assertEquals(0L, summary.investmentProfitTodayCents().get(1L));
+        assertEquals(0L, summary.investmentProfitTodayCents().get(2L));
+        assertEquals(0L, summary.totalProfitTodayCents());
+        // totalTodayCents still includes both values
+        assertEquals(50000L, summary.totalTodayCents());
     }
 
     // ===== groupByTicker — blank ticker excluded =====
@@ -600,6 +674,32 @@ class DailyTrackingUseCaseTest {
         );
         long result = uc.getCurrentValue(inv, today);
         assertTrue(result > 100000L, "Expected compound growth > R$1000, got: " + result);
+    }
+
+    @Test
+    void getCurrentValue_fixedIncome_roundsToNearestCent() {
+        // R$200 at 12% p.a. for 1 month.
+        // monthlyRate = Math.pow(1.12, 1/12) - 1 ≈ 0.009489
+        // currentValue = 20000 × 1.009489 ≈ 20189.776
+        // Math.round → 20190; direct (long) cast → 20189
+        LocalDate investmentDate = LocalDate.of(2024, 1, 1);
+        LocalDate today          = LocalDate.of(2024, 2, 1); // exactly 1 month
+
+        InvestmentType inv = new InvestmentType(
+                1, "CDB", "RENDA_FIXA", "MEDIA",
+                investmentDate, BigDecimal.valueOf(12.0), BigDecimal.valueOf(200.0)
+        );
+
+        long result = uc.getCurrentValue(inv, today);
+
+        double monthlyRate = Math.pow(1.12, 1.0 / 12) - 1;
+        long truncated = (long)(20000.0 * (1 + monthlyRate));
+        long rounded   = Math.round(20000.0 * (1 + monthlyRate));
+
+        assertTrue(rounded > truncated,
+                "Test setup: this value must produce a non-integer result to prove rounding");
+        assertEquals(rounded, result,
+                "Fixed-income value must use Math.round, not (long) truncation");
     }
 
     @Test
@@ -985,8 +1085,9 @@ class DailyTrackingUseCaseTest {
     }
 
     @Test
-    void getCurrentValue_priceMathTruncatesToLong() {
-        // 33.33 × 3 × 100 = 9999.0 → (long) truncates to 9999, not rounded to 10000
+    void getCurrentValue_priceMath_33_33_times_3_gives_9999_cents() {
+        // 33.33 × 3 × 100 evaluates to 9999.0 in IEEE 754 double;
+        // rounding and truncation both yield 9999 for this value
         priceProvider.put("TEST", 33.33);
         InvestmentType inv = new InvestmentType(
                 1, "TEST", "ACOES", "MUITO_ALTA",
@@ -994,5 +1095,254 @@ class DailyTrackingUseCaseTest {
                 "ACAO", null, null, "TEST", BigDecimal.valueOf(30.0), 3, null
         );
         assertEquals(9999L, uc.getCurrentValue(inv, LocalDate.now()));
+    }
+
+    @Test
+    void getCurrentValue_withTickerAndProvider_roundsToNearestCent() {
+        // 10.005 × 1 × 100 = 1000.5 → rounds to 1001, not truncates to 1000
+        priceProvider.put("XPTO3", 10.005);
+        InvestmentType inv = new InvestmentType(
+                1, "XPTO3", "ACOES", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000),
+                "ACAO", null, null, "XPTO3", BigDecimal.valueOf(30.0), 1, null
+        );
+        assertEquals(1001L, uc.getCurrentValue(inv, LocalDate.now()));
+    }
+
+    @Test
+    void getCurrentValue_providerReturnsNull_purchasePriceFallbackRoundsToNearestCent() {
+        // purchasePrice = 10.005, quantity = 1
+        // BigDecimal("10.005") × 1 × 100 = 1000.5 → HALF_UP → 1001, not 1000
+        InvestmentType inv = new InvestmentType(
+                1, "XPTO3", "ACOES", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000),
+                "ACAO", null, null, "XPTO3", new BigDecimal("10.005"), 1, null
+        );
+        // priceProvider has no entry for XPTO3 → fallback to purchasePrice
+        assertEquals(1001L, uc.getCurrentValue(inv, LocalDate.now()));
+    }
+
+    // ===== getTotalPatrimony — includes cash =====
+
+    @Test
+    void getTotalPatrimony_includesCashOnExactDate() {
+        InvestmentType inv = new InvestmentType(
+                1, "Poupança", "RENDA_FIXA", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000.0)
+        );
+        typeRepo.add(inv);
+        LocalDate today = LocalDate.of(2024, 6, 1);
+        snapRepo.putCash(today, 20000L); // R$200 cash
+        // getCurrentValue: investedValue=1000 → 100000 cents
+        assertEquals(120000L, uc.getTotalPatrimony(today)); // 100000 + 20000
+    }
+
+    @Test
+    void getTotalPatrimony_usesCashCarryForward_whenNoCashOnExactDate() {
+        InvestmentType inv = new InvestmentType(
+                1, "Poupança", "RENDA_FIXA", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000.0)
+        );
+        typeRepo.add(inv);
+        LocalDate cashDate = LocalDate.of(2024, 5, 15);
+        LocalDate today    = LocalDate.of(2024, 6, 1);
+        snapRepo.putCash(cashDate, 20000L); // recorded 2 weeks ago, no entry for today
+        // getCashOnOrBefore(today) should return 20000 (carry-forward from 2024-05-15)
+        assertEquals(120000L, uc.getTotalPatrimony(today));
+    }
+
+    @Test
+    void getTotalPatrimony_noCashAnywhere_returnsInvestmentOnly() {
+        InvestmentType inv = new InvestmentType(
+                1, "Poupança", "RENDA_FIXA", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000.0)
+        );
+        typeRepo.add(inv);
+        LocalDate today = LocalDate.of(2024, 6, 1);
+        assertEquals(100000L, uc.getTotalPatrimony(today)); // no cash entry
+    }
+
+    @Test
+    void getTotalPatrimony_cashAfterToday_notIncluded() {
+        InvestmentType inv = new InvestmentType(
+                1, "Poupança", "RENDA_FIXA", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000.0)
+        );
+        typeRepo.add(inv);
+        LocalDate today    = LocalDate.of(2024, 6, 1);
+        LocalDate future   = LocalDate.of(2024, 6, 10);
+        snapRepo.putCash(future, 50000L); // future cash — must not count
+        // getCashOnOrBefore(today) sees no entry on or before today → 0
+        assertEquals(100000L, uc.getTotalPatrimony(today));
+    }
+
+    // ===== getTotalInvestmentValue — investment-only, no cash =====
+
+    @Test
+    void getTotalInvestmentValue_excludesCash() {
+        InvestmentType inv = new InvestmentType(
+                1, "Poupança", "RENDA_FIXA", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000.0)
+        );
+        typeRepo.add(inv);
+        LocalDate today = LocalDate.of(2024, 6, 1);
+        snapRepo.putCash(today, 99999L); // cash must not appear in investment-only total
+        assertEquals(100000L, uc.getTotalInvestmentValue(today));
+    }
+
+    // ===== getPortfolioSnapshotSeries — includes cash =====
+
+    @Test
+    void getPortfolioSnapshotSeries_includesCashOnSnapshotDates() {
+        InvestmentType inv = new InvestmentType(1, "CDB");
+        typeRepo.add(inv);
+        LocalDate d1 = LocalDate.of(2024, 1, 1);
+        LocalDate d2 = LocalDate.of(2024, 2, 1);
+        snapRepo.putSeries(1L, Map.of(
+                d1.toString(), 50000L,
+                d2.toString(), 55000L
+        ));
+        snapRepo.putCash(d1, 10000L); // R$100 cash on d1
+
+        TreeMap<LocalDate, Long> series = uc.getPortfolioSnapshotSeries(d1, d2);
+
+        assertEquals(60000L, series.get(d1)); // 50000 + 10000
+        assertEquals(65000L, series.get(d2)); // 55000 + 10000 (carry-forward from d1)
+    }
+
+    @Test
+    void getPortfolioSnapshotSeries_noCash_returnsInvestmentOnly() {
+        InvestmentType inv = new InvestmentType(1, "CDB");
+        typeRepo.add(inv);
+        LocalDate d1 = LocalDate.of(2024, 1, 1);
+        LocalDate d2 = LocalDate.of(2024, 2, 1);
+        snapRepo.putSeries(1L, Map.of(
+                d1.toString(), 50000L,
+                d2.toString(), 55000L
+        ));
+
+        TreeMap<LocalDate, Long> series = uc.getPortfolioSnapshotSeries(d1, d2);
+
+        assertEquals(50000L, series.get(d1));
+        assertEquals(55000L, series.get(d2));
+    }
+
+    @Test
+    void getPortfolioSnapshotSeries_cashCarryForwardToSnapshotDatesWithNoCashEntry() {
+        InvestmentType inv = new InvestmentType(1, "CDB");
+        typeRepo.add(inv);
+        LocalDate cashDate = LocalDate.of(2023, 12, 31);
+        LocalDate d1 = LocalDate.of(2024, 1, 15);
+        LocalDate d2 = LocalDate.of(2024, 2, 15);
+        snapRepo.putSeries(1L, Map.of(
+                d1.toString(), 40000L,
+                d2.toString(), 42000L
+        ));
+        snapRepo.putCash(cashDate, 8000L); // no cash snapshots in range; carries forward
+
+        TreeMap<LocalDate, Long> series = uc.getPortfolioSnapshotSeries(d1, d2);
+
+        assertEquals(48000L, series.get(d1)); // 40000 + 8000
+        assertEquals(50000L, series.get(d2)); // 42000 + 8000
+    }
+
+    // ===== summaryFor — existing behavior unchanged after getTotalPatrimony change =====
+
+    @Test
+    void summaryFor_totalTodayCents_stillCashPlusInvestments_after_patrimonyChange() {
+        InvestmentType inv = new InvestmentType(
+                1, "Tesouro", "RENDA_FIXA", "ALTA",
+                LocalDate.of(2023, 1, 1), BigDecimal.valueOf(0.12), BigDecimal.valueOf(1000)
+        );
+        typeRepo.add(inv);
+        LocalDate today = LocalDate.of(2024, 6, 1);
+        snapRepo.putCash(today, 5000L);
+        snapRepo.putInvestment(today, 1L, 30000L);
+
+        DailySummary summary = uc.summaryFor(today);
+        assertEquals(35000L, summary.totalTodayCents());
+    }
+
+    // ===== getTotalProfit — unchanged (investment-only) =====
+
+    @Test
+    void getTotalProfit_excludesCash_investmentOnlySemantics() {
+        // One investment: investedValue=R$1000 (100000 cents), current value=investedValue (no growth)
+        // Cash of R$500 must not affect profit calculation
+        InvestmentType inv = new InvestmentType(
+                1, "Poupança", "RENDA_FIXA", "MUITO_ALTA",
+                null, null, BigDecimal.valueOf(1000.0)
+        );
+        typeRepo.add(inv);
+        LocalDate today = LocalDate.of(2024, 6, 1);
+        snapRepo.putCash(today, 50000L); // R$500 cash
+        // getCurrentValue = investedValue = 100000; investedCents = 100000 → profit = 0
+        assertEquals(0L, uc.getTotalProfit(today));
+    }
+
+    // ===== getInvestmentSnapshotSeries — investment-only, no cash =====
+
+    @Test
+    void getInvestmentSnapshotSeries_neverIncludesCash() {
+        InvestmentType inv = new InvestmentType(1, "CDB");
+        typeRepo.add(inv);
+        LocalDate d1 = LocalDate.of(2024, 1, 1);
+        LocalDate d2 = LocalDate.of(2024, 2, 1);
+        snapRepo.putSeries(1L, Map.of(
+                d1.toString(), 50000L,
+                d2.toString(), 55000L
+        ));
+        snapRepo.putCash(d1, 10000L); // cash present but must not appear
+
+        TreeMap<LocalDate, Long> series = uc.getInvestmentSnapshotSeries(d1, d2);
+
+        assertEquals(50000L, series.get(d1)); // investment only
+        assertEquals(55000L, series.get(d2)); // investment only
+    }
+
+    @Test
+    void getInvestmentSnapshotSeries_differsFromPortfolioSeriesWhenCashExists() {
+        InvestmentType inv = new InvestmentType(1, "CDB");
+        typeRepo.add(inv);
+        LocalDate d1 = LocalDate.of(2024, 3, 1);
+        LocalDate d2 = LocalDate.of(2024, 4, 1);
+        snapRepo.putSeries(1L, Map.of(
+                d1.toString(), 30000L,
+                d2.toString(), 32000L
+        ));
+        snapRepo.putCash(d1, 5000L);
+
+        TreeMap<LocalDate, Long> invSeries = uc.getInvestmentSnapshotSeries(d1, d2);
+        TreeMap<LocalDate, Long> patSeries = uc.getPortfolioSnapshotSeries(d1, d2);
+
+        // investment series excludes cash
+        assertEquals(30000L, invSeries.get(d1));
+        // portfolio series includes cash
+        assertEquals(35000L, patSeries.get(d1));
+    }
+
+    @Test
+    void getInvestmentSnapshotSeries_noInvestments_returnsEmpty() {
+        LocalDate d1 = LocalDate.of(2024, 1, 1);
+        LocalDate d2 = LocalDate.of(2024, 3, 1);
+        snapRepo.putCash(d1, 20000L); // cash only, no investment series
+        assertTrue(uc.getInvestmentSnapshotSeries(d1, d2).isEmpty());
+    }
+
+    // ===== cash-only patrimony — no investments registered =====
+
+    @Test
+    void getTotalPatrimony_noInvestments_returnsCashOnly() {
+        // No investment types registered; only cash snapshots
+        LocalDate today = LocalDate.of(2024, 7, 1);
+        snapRepo.putCash(today, 25000L);
+        assertEquals(25000L, uc.getTotalPatrimony(today)); // 0 investments + 25000 cash
+    }
+
+    @Test
+    void getTotalInvestmentValue_noInvestments_returnsZero() {
+        LocalDate today = LocalDate.of(2024, 7, 1);
+        snapRepo.putCash(today, 25000L);
+        assertEquals(0L, uc.getTotalInvestmentValue(today));
     }
 }

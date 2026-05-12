@@ -75,8 +75,7 @@
                     <noManPages>true</noManPages>
                     <stripDebug>true</stripDebug>
                     <compress>2</compress>
-                    <addModules>java.base,java.sql,java.logging,java.desktop,java.xml,java.naming,jdk.unsupported,jdk.crypto.ec,javafx.controls,javafx.graphics,javafx.base,javafx.fxml</addModules>
-                </configuration>
+    </configuration>
             </plugin>
 
             <!-- Compiler plugin -->

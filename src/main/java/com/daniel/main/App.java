@@ -5,10 +5,12 @@ import com.daniel.infrastructure.persistence.config.Database;
 import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.AppShell;
 import com.daniel.presentation.view.components.TitleBar;
+import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.view.util.WindowResize;
 import javafx.application.Application;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -71,13 +73,19 @@ public class App extends Application {
         stage.setMinHeight(600);
         stage.setTitle("BreakInv");
         stage.setScene(scene);
+        try {
+            var icon = getClass().getResourceAsStream("/app/icon.png");
+            if (icon != null) stage.getIcons().add(new Image(icon));
+        } catch (Exception ignored) {}
         stage.show();
 
-        dailyTrackingUseCase.takeSnapshotIfNeeded(java.time.LocalDate.now());
+        UiExecutor.get().execute(
+                () -> dailyTrackingUseCase.takeSnapshotIfNeeded(java.time.LocalDate.now()));
     }
 
     @Override
     public void stop() {
+        UiExecutor.shutdown();
         try { if (conn != null) conn.close(); } catch (Exception ignored) {}
     }
 

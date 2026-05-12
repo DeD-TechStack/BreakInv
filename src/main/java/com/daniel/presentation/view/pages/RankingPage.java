@@ -226,15 +226,17 @@ public final class RankingPage implements Page {
         });
         chgCol.setPrefWidth(90);
 
-        table.getColumns().addAll(tickerCol, priceCol, chgCol);
-        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        table.getColumns().add(tickerCol);
+        table.getColumns().add(priceCol);
+        table.getColumns().add(chgCol);
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         table.setPrefHeight(220);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
         table.setRowFactory(tv -> {
             TableRow<RankingRow> row = new TableRow<>();
             final boolean[] wasSelectedOnPress = {false};
-            final List<Integer>[] prevIndices = new List[]{List.of()};
+            @SuppressWarnings("unchecked") final List<Integer>[] prevIndices = new List[]{List.of()};
 
             row.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                 if (!row.isEmpty()) {
@@ -857,7 +859,9 @@ public final class RankingPage implements Page {
         maYAxis.setUpperBound(maxPrice + padding);
         maYAxis.setTickUnit((range + 2 * padding) / 6.0);
 
-        maChart.getData().addAll(priceSeries, maShortSeries, maLongSeries);
+        maChart.getData().add(priceSeries);
+        maChart.getData().add(maShortSeries);
+        maChart.getData().add(maLongSeries);
 
         // Detectar cruzamento nos dois últimos pontos sobrepostos
         int shortSize = maShortSeries.getData().size();

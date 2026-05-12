@@ -25,6 +25,22 @@ public final class SnapshotRepository implements ISnapshotRepository {
         }
     }
 
+    public long getCashOnOrBefore(LocalDate date) {
+        try {
+            return querySingleLong(
+                    "SELECT value_cents FROM cash_snapshots WHERE date <= ? ORDER BY date DESC LIMIT 1",
+                    date
+            );
+        } catch (RuntimeException ex) {
+            if (!looksLikeMissingColumn(ex)) throw ex;
+
+            return querySingleLong(
+                    "SELECT amount_cents FROM cash_snapshots WHERE date <= ? ORDER BY date DESC LIMIT 1",
+                    date
+            );
+        }
+    }
+
     @Override
     public Map<Long, Long> getAllInvestimentsForDate(LocalDate date) {
         return getAllInvestmentsForDate(date);

@@ -5,6 +5,7 @@ import com.daniel.core.domain.repository.*;
 import com.daniel.core.util.MoneyFormat;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -136,7 +137,7 @@ public final class DailyTrackingUseCase {
                 Double currentPrice = priceProvider.fetchPrice(inv.ticker());
                 if (currentPrice != null) {
                     int quantity = inv.quantity();
-                    long valueCents = (long)(currentPrice * quantity * 100);
+                    long valueCents = Math.round(currentPrice * quantity * 100);
 
                     LOG.fine(String.format(
                             "[ACAO] %s: Qtd=%d x R$%.2f = %s",
@@ -150,13 +151,16 @@ public final class DailyTrackingUseCase {
             }
 
             // Fallback: usar preço de compra
-            double purchasePrice = inv.purchasePrice().doubleValue();
             int quantity = inv.quantity();
-            long valueCents = (long)(purchasePrice * quantity * 100);
+            long valueCents = inv.purchasePrice()
+                    .multiply(BigDecimal.valueOf(quantity))
+                    .multiply(BigDecimal.valueOf(100))
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .longValue();
 
             LOG.fine(String.format(
                     "[ACAO FALLBACK] %s: Qtd=%d x R$%.2f (preco compra) = %s",
-                    inv.ticker(), quantity, purchasePrice, brl(valueCents)
+                    inv.ticker(), quantity, inv.purchasePrice().doubleValue(), brl(valueCents)
             ));
 
             return valueCents;
@@ -178,13 +182,15 @@ public final class DailyTrackingUseCase {
             double monthlyRate = Math.pow(1 + annualRate, 1.0/12) - 1;
             double currentValue = investedCents * Math.pow(1 + monthlyRate, months);
 
+            long valueCents = Math.round(currentValue);
+
             LOG.fine(String.format(
                     "[RENDA FIXA] %s: %s x %.2f%% a.a. x %d meses = %s",
                     inv.name(), brl(investedCents), annualRate * 100,
-                    months, brl((long)currentValue)
+                    months, brl(valueCents)
             ));
 
-            return (long)currentValue;
+            return valueCents;
         }
 
         if (inv.investedValue() != null) {
@@ -202,14 +208,23 @@ public final class DailyTrackingUseCase {
         return 0L;
     }
 
+    /**
+     * Returns total patrimony = investments current value + latest known cash balance on or
+     * before {@code today}. Cash is carried forward from the last recorded snapshot date.
+     */
     public long getTotalPatrimony(LocalDate today) {
-        Map<Long, Long> values = getAllCurrentValues(today);
-        long total = values.values().stream()
-                .mapToLong(Long::longValue)
-                .sum();
-
+        long investmentTotal = getTotalInvestmentValue(today);
+        long cashCents = snapshotRepo.getCashOnOrBefore(today);
+        long total = investmentTotal + cashCents;
         LOG.fine(String.format("PATRIMONIO TOTAL: %s", brl(total)));
         return total;
+    }
+
+    /** Returns the sum of current investment values only, without cash. */
+    public long getTotalInvestmentValue(LocalDate today) {
+        return getAllCurrentValues(today).values().stream()
+                .mapToLong(Long::longValue)
+                .sum();
     }
 
     public long getTotalProfit(LocalDate today) {
@@ -281,13 +296,14 @@ public final class DailyTrackingUseCase {
     }
 
     /**
-     * Agrega snapshots históricos de todos os investimentos por data dentro do intervalo.
-     * Útil para construir gráficos de performance com dados reais em vez de projeções.
+     * Agrega snapshots históricos de todos os investimentos (sem caixa) por data dentro do
+     * intervalo. Usado para gráficos de performance onde apenas o retorno dos investimentos
+     * deve ser representado.
      *
-     * @return TreeMap data→total em centavos, ordenado por data.
+     * @return TreeMap data→total investimentos em centavos, ordenado por data.
      *         Retorna mapa vazio se não houver snapshots no período.
      */
-    public TreeMap<LocalDate, Long> getPortfolioSnapshotSeries(LocalDate from, LocalDate to) {
+    public TreeMap<LocalDate, Long> getInvestmentSnapshotSeries(LocalDate from, LocalDate to) {
         TreeMap<LocalDate, Long> totals = new TreeMap<>();
         List<InvestmentType> investments = typeRepo.listAll();
         for (InvestmentType inv : investments) {
@@ -299,6 +315,26 @@ public final class DailyTrackingUseCase {
                         totals.merge(date, entry.getValue(), Long::sum);
                     }
                 } catch (Exception ignored) {}
+            }
+        }
+        return totals;
+    }
+
+    /**
+     * Agrega snapshots históricos de todos os investimentos e do caixa por data dentro do
+     * intervalo. O caixa é somado a cada data que já possui snapshot de investimento, usando
+     * carry-forward (último valor conhecido na data ou antes dela).
+     *
+     * @return TreeMap data→patrimônio total em centavos (investimentos + caixa), ordenado por data.
+     *         Retorna mapa vazio se não houver snapshots de investimento no período.
+     */
+    public TreeMap<LocalDate, Long> getPortfolioSnapshotSeries(LocalDate from, LocalDate to) {
+        TreeMap<LocalDate, Long> totals = getInvestmentSnapshotSeries(from, to);
+        // Add latest known cash balance (carry-forward) to each investment snapshot date
+        for (LocalDate date : new ArrayList<>(totals.keySet())) {
+            long cashCents = snapshotRepo.getCashOnOrBefore(date);
+            if (cashCents > 0) {
+                totals.merge(date, cashCents, Long::sum);
             }
         }
         return totals;
@@ -412,12 +448,9 @@ public final class DailyTrackingUseCase {
         long totalInvCents = 0;
         long totalProfitCents = 0;
 
-        // Pre-index yesterday's values by id for O(1) lookup instead of O(n) inner loop
-        Map<Integer, Long> prevValueById = new HashMap<>();
-        for (var prevMap : prevEntry.investmentValuesCents().entrySet()) {
-            prevValueById.put(prevMap.getKey().id(),
-                    prevMap.getValue() != null ? prevMap.getValue() : 0L);
-        }
+        // Raw yesterday snapshot: keys present only when a snapshot was actually recorded.
+        // Avoids treating the first recorded value as profit (no baseline → profit = 0).
+        Map<Long, Long> prevRawInvestments = snapshotRepo.getAllInvestimentsForDate(prev);
 
         // Busca os fluxos do dia uma única vez fora do loop (evita N queries idênticas)
         List<Flow> flows = flowsFor(date);
@@ -425,8 +458,6 @@ public final class DailyTrackingUseCase {
         for (var entryMap : entry.investmentValuesCents().entrySet()) {
             InvestmentType t = entryMap.getKey();
             long todayCents = entryMap.getValue() != null ? entryMap.getValue() : 0L;
-
-            long yesterdayCents = prevValueById.getOrDefault(t.id(), 0L);
 
             investmentTodayCents.put((long) t.id(), todayCents);
 
@@ -444,7 +475,14 @@ public final class DailyTrackingUseCase {
                 }
             }
 
-            long profitCents = todayCents - yesterdayCents - flowsInCents + flowsOutCents;
+            // No previous snapshot → first recorded value establishes the baseline; profit = 0.
+            long profitCents;
+            if (!prevRawInvestments.containsKey((long) t.id())) {
+                profitCents = 0L;
+            } else {
+                long yesterdayCents = prevRawInvestments.get((long) t.id());
+                profitCents = todayCents - yesterdayCents - flowsInCents + flowsOutCents;
+            }
             investmentProfitTodayCents.put((long) t.id(), profitCents);
 
             totalInvCents += todayCents;

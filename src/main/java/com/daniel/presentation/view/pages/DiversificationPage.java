@@ -10,6 +10,7 @@ import com.daniel.core.service.DiversificationCalculator.*;
 import com.daniel.core.util.Money;
 import com.daniel.presentation.view.PageHeader;
 
+import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
@@ -22,6 +23,9 @@ import javafx.scene.shape.Circle;
 
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
+import com.daniel.presentation.view.util.UiExecutor;
 
 public final class DiversificationPage implements Page {
 
@@ -307,7 +311,9 @@ public final class DiversificationPage implements Page {
             }
         });
 
-        currentTable.getColumns().setAll(catCol, valueCol, percentCol);
+        currentTable.getColumns().add(catCol);
+        currentTable.getColumns().add(valueCol);
+        currentTable.getColumns().add(percentCol);
         Label currentPh = new Label("Nenhum dado disponível");
         currentPh.getStyleClass().add("text-helper");
         currentTable.setPlaceholder(currentPh);
@@ -370,7 +376,9 @@ public final class DiversificationPage implements Page {
             }
         });
 
-        idealTable.getColumns().setAll(catCol, valueCol, percentCol);
+        idealTable.getColumns().add(catCol);
+        idealTable.getColumns().add(valueCol);
+        idealTable.getColumns().add(percentCol);
         Label idealPh = new Label("Selecione um método");
         idealPh.getStyleClass().add("text-helper");
         idealTable.setPlaceholder(idealPh);
@@ -433,7 +441,8 @@ public final class DiversificationPage implements Page {
             }
         });
 
-        suggestionsTable.getColumns().setAll(catCol, actionCol);
+        suggestionsTable.getColumns().add(catCol);
+        suggestionsTable.getColumns().add(actionCol);
         Label suggPh = new Label("Sua carteira está perfeitamente balanceada!");
         suggPh.getStyleClass().add("text-helper");
         suggestionsTable.setPlaceholder(suggPh);
@@ -461,39 +470,53 @@ public final class DiversificationPage implements Page {
         return box;
     }
 
+    private record DivData(List<InvestmentType> investments, Map<Long, Long> currentValues, long totalPatrimony) {}
+
+    private final AtomicLong refreshEpoch = new AtomicLong(0);
+
     private void refreshData() {
         LocalDate today = LocalDate.now();
-        List<InvestmentType> investments = daily.listTypes();
+        final boolean isArca = arcaRadio.isSelected();
+        final long epoch = refreshEpoch.incrementAndGet();
 
-        if (investments.isEmpty()) {
-            totalPatrimonyLabel.setText("—");
-            currentTable.getItems().clear();
-            idealTable.getItems().clear();
-            suggestionsTable.getItems().clear();
-            noInvestmentsPanel.setVisible(true);
-            noInvestmentsPanel.setManaged(true);
-            return;
-        }
-        noInvestmentsPanel.setVisible(false);
-        noInvestmentsPanel.setManaged(false);
+        CompletableFuture.supplyAsync(() -> {
+            List<InvestmentType> investments = daily.listTypes();
+            if (investments.isEmpty()) {
+                return new DivData(investments, Map.of(), 0);
+            }
+            Map<Long, Long> currentValues = daily.getAllCurrentValues(today);
+            long totalPatrimony = daily.getTotalPatrimony(today);
+            return new DivData(investments, currentValues, totalPatrimony);
+        }, UiExecutor.get()).thenAcceptAsync(data -> {
+            if (refreshEpoch.get() != epoch) return;
+            Platform.runLater(() -> {
+                if (data.investments().isEmpty()) {
+                    totalPatrimonyLabel.setText("—");
+                    currentTable.getItems().clear();
+                    idealTable.getItems().clear();
+                    suggestionsTable.getItems().clear();
+                    noInvestmentsPanel.setVisible(true);
+                    noInvestmentsPanel.setManaged(true);
+                    return;
+                }
+                noInvestmentsPanel.setVisible(false);
+                noInvestmentsPanel.setManaged(false);
+                totalPatrimonyLabel.setText(daily.brl(data.totalPatrimony()));
 
-        Map<Long, Long> currentValues = daily.getAllCurrentValues(today);
-        long totalPatrimony = daily.getTotalPatrimony(today);
+                DiversificationData currentData = DiversificationCalculator.calculateCurrent(
+                        data.investments(),
+                        data.currentValues()
+                );
 
-        totalPatrimonyLabel.setText(daily.brl(totalPatrimony));
+                updateCurrentTable(currentData);
 
-        DiversificationData currentData = DiversificationCalculator.calculateCurrent(
-                investments,
-                currentValues
-        );
-
-        updateCurrentTable(currentData);
-
-        if (arcaRadio.isSelected()) {
-            updateARCAIdeal(totalPatrimony, currentData);
-        } else {
-            updateCustomIdeal(totalPatrimony, currentData);
-        }
+                if (isArca) {
+                    updateARCAIdeal(data.totalPatrimony(), currentData);
+                } else {
+                    updateCustomIdeal(data.totalPatrimony(), currentData);
+                }
+            });
+        });
     }
 
     private void updateCurrentTable(DiversificationData data) {
