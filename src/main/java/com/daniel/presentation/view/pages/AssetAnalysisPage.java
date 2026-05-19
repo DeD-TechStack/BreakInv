@@ -11,6 +11,8 @@ import com.daniel.presentation.view.PageHeader;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.util.ChartAxisUtils;
 import com.daniel.presentation.view.util.ChartCrosshair;
+import com.daniel.presentation.view.components.EmptyState;
+import com.daniel.presentation.view.components.KpiCard;
 import com.daniel.presentation.view.util.Icons;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -56,18 +58,18 @@ public final class AssetAnalysisPage implements Page {
     private String currentTicker = "";
 
     // ── KPI cards ──
-    private final Label lblPrice      = kpiValue("—");
-    private final Label lblChange     = kpiValue("—");
-    private final Label lblChangePct  = kpiValue("—");
-    private final Label lblHigh       = kpiValue("—");
-    private final Label lblLow        = kpiValue("—");
-    private final Label lblOpen       = kpiValue("—");
-    private final Label lblDY         = kpiValue("—");
-    private final Label lblWeekHigh   = kpiValue("—");
-    private final Label lblWeekLow    = kpiValue("—");
-    private final Label lblAvg200     = kpiValue("—");
-    private final Label lblYearChange = kpiValue("—");
-    private final Label lblVolume     = kpiValue("—");
+    private final Label lblPrice      = new Label("—");
+    private final Label lblChange     = new Label("—");
+    private final Label lblChangePct  = new Label("—");
+    private final Label lblHigh       = new Label("—");
+    private final Label lblLow        = new Label("—");
+    private final Label lblOpen       = new Label("—");
+    private final Label lblDY         = new Label("—");
+    private final Label lblWeekHigh   = new Label("—");
+    private final Label lblWeekLow    = new Label("—");
+    private final Label lblAvg200     = new Label("—");
+    private final Label lblYearChange = new Label("—");
+    private final Label lblVolume     = new Label("—");
     private final Label lblName       = new Label();
 
     // ── Chart — NumberAxis para escala temporal proporcional ──
@@ -102,7 +104,8 @@ public final class AssetAnalysisPage implements Page {
                 "Pesquise um ticker para ver cotação e histórico");
 
         HBox searchBar = buildSearchBar();
-        emptyState     = buildEmptyState();
+        emptyState     = EmptyState.of("🔍", "Pesquise um ativo",
+                "Digite o ticker (ex: PETR4) e pressione Buscar");
         kpiSection     = buildKpiSection();
         chartSection   = buildChartSection();
 
@@ -213,20 +216,6 @@ public final class AssetAnalysisPage implements Page {
         return bar;
     }
 
-    private VBox buildEmptyState() {
-        VBox box = new VBox(8);
-        box.getStyleClass().add("empty-state");
-        box.setAlignment(Pos.CENTER);
-        Label icon  = new Label("🔍");
-        icon.getStyleClass().add("empty-icon");
-        Label title = new Label("Pesquise um ativo");
-        title.getStyleClass().add("empty-title");
-        Label hint  = new Label("Digite o ticker (ex: PETR4) e pressione Buscar");
-        hint.getStyleClass().add("empty-hint");
-        box.getChildren().addAll(icon, title, hint);
-        return box;
-    }
-
     private VBox buildKpiSection() {
         lblName.getStyleClass().add("section-subtitle");
 
@@ -234,18 +223,18 @@ public final class AssetAnalysisPage implements Page {
         grid.setHgap(12);
         grid.setVgap(12);
 
-        grid.add(kpiCard("Preço Atual",   lblPrice),     0, 0);
-        grid.add(kpiCard("Variação (R$)", lblChange),    1, 0);
-        grid.add(kpiCard("Variação (%)",  lblChangePct), 2, 0);
-        grid.add(kpiCard("Abertura",      lblOpen),      0, 1);
-        grid.add(kpiCard("Máx. Dia",      lblHigh),      1, 1);
-        grid.add(kpiCard("Mín. Dia",      lblLow),       2, 1);
-        grid.add(kpiCard("Máx. 52 Sem.", lblWeekHigh),   0, 2);
-        grid.add(kpiCard("Mín. 52 Sem.", lblWeekLow),    1, 2);
-        grid.add(kpiCard("Méd. 200 dias", lblAvg200),    2, 2);
-        grid.add(kpiCard("Div. Yield",    lblDY),        0, 3);
-        grid.add(kpiCard("Var. 52 Sem.",  lblYearChange),1, 3);
-        grid.add(kpiCard("Volume",        lblVolume),    2, 3);
+        grid.add(KpiCard.analysis("Preço Atual",   lblPrice),     0, 0);
+        grid.add(KpiCard.analysis("Variação (R$)", lblChange),    1, 0);
+        grid.add(KpiCard.analysis("Variação (%)",  lblChangePct), 2, 0);
+        grid.add(KpiCard.analysis("Abertura",      lblOpen),      0, 1);
+        grid.add(KpiCard.analysis("Máx. Dia",      lblHigh),      1, 1);
+        grid.add(KpiCard.analysis("Mín. Dia",      lblLow),       2, 1);
+        grid.add(KpiCard.analysis("Máx. 52 Sem.", lblWeekHigh),   0, 2);
+        grid.add(KpiCard.analysis("Mín. 52 Sem.", lblWeekLow),    1, 2);
+        grid.add(KpiCard.analysis("Méd. 200 dias", lblAvg200),    2, 2);
+        grid.add(KpiCard.analysis("Div. Yield",    lblDY),        0, 3);
+        grid.add(KpiCard.analysis("Var. 52 Sem.",  lblYearChange),1, 3);
+        grid.add(KpiCard.analysis("Volume",        lblVolume),    2, 3);
 
         for (int i = 0; i < 3; i++) {
             ColumnConstraints cc = new ColumnConstraints();
@@ -329,24 +318,6 @@ public final class AssetAnalysisPage implements Page {
         VBox section = new VBox(10, periodBar, chartWrapper, chartEmptyLabel);
         section.getStyleClass().add("chart-card");
         return section;
-    }
-
-    // ── Card factories ─────────────────────────────────────────────────────
-
-    private static VBox kpiCard(String title, Label value) {
-        Label lbl = new Label(title.toUpperCase());
-        lbl.getStyleClass().add("kpi-label");
-        value.getStyleClass().add("kpi-value");
-        VBox card = new VBox(4, lbl, value);
-        card.getStyleClass().add("kpi-card");
-        card.setPadding(new Insets(10, 14, 10, 14));
-        return card;
-    }
-
-    private static Label kpiValue(String text) {
-        Label l = new Label(text);
-        l.getStyleClass().add("kpi-value");
-        return l;
     }
 
     // ── Search logic ───────────────────────────────────────────────────────
