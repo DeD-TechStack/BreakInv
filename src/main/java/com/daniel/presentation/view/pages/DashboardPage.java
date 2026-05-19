@@ -13,7 +13,10 @@ import com.daniel.infrastructure.api.BcbClient;
 import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.infrastructure.persistence.repository.AppSettingsRepository;
 import com.daniel.presentation.view.PageHeader;
+import com.daniel.presentation.view.components.KpiCard;
+import com.daniel.presentation.view.util.ChartSeriesStyle;
 import com.daniel.presentation.view.util.Icons;
+import com.daniel.presentation.view.util.UiSpacer;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -127,18 +130,17 @@ public final class DashboardPage implements Page {
         VBox chipBox = new VBox(4, freshnessChip, connectionChip);
         chipBox.setAlignment(javafx.geometry.Pos.TOP_RIGHT);
 
-        Region headerSpacer = new Region();
-        HBox.setHgrow(headerSpacer, Priority.ALWAYS);
+        Region headerSpacer = UiSpacer.hGrow();
         HBox.setHgrow(header, Priority.ALWAYS);
 
         HBox headerRow = new HBox(8, header, headerSpacer, chipBox);
         headerRow.setAlignment(javafx.geometry.Pos.TOP_LEFT);
 
         HBox cards = new HBox(12,
-                kpiCard(Icons.calendar(),    "Data",             dateLabel,           null),
-                kpiCard(Icons.dollar(),      "Patrimônio Total", totalLabel,           null),
-                kpiCard(Icons.trendingUp(),  "Lucro acumulado",  profitLabel,          null),
-                kpiCard(Icons.activity(),    "vs CDI (acum.)",   cdiComparisonLabel,   null)
+                KpiCard.hero(Icons.calendar(),    "Data",             dateLabel),
+                KpiCard.hero(Icons.dollar(),      "Patrimônio Total", totalLabel),
+                KpiCard.hero(Icons.trendingUp(),  "Lucro acumulado",  profitLabel),
+                KpiCard.hero(Icons.activity(),    "vs CDI (acum.)",   cdiComparisonLabel)
         );
         cards.getStyleClass().add("dashboard-kpi-row");
 
@@ -847,12 +849,8 @@ public final class DashboardPage implements Page {
 
             // Estilizar linhas das séries — aplica cores após o layout (lookup exige nós renderizados)
             Platform.runLater(() -> {
-                javafx.scene.Node cartLine = comparisonChart.lookup(".series0.chart-series-line");
-                if (cartLine != null) cartLine.setStyle("-fx-stroke: #22c55e; -fx-stroke-width: 2;");
-
-                javafx.scene.Node benchLine = comparisonChart.lookup(".series1.chart-series-line");
-                if (benchLine != null) benchLine.setStyle(
-                        "-fx-stroke: rgba(255,255,255,0.85); -fx-stroke-width: 1.5;");
+                ChartSeriesStyle.accent(comparisonChart.lookup(".series0.chart-series-line"), 2.0);
+                ChartSeriesStyle.muted(comparisonChart.lookup(".series1.chart-series-line"), 1.5);
             });
         }
 
@@ -1115,10 +1113,7 @@ public final class DashboardPage implements Page {
                 categoryPercent, daily.brl(categoryTotal)));
         categoryPercentLabel.getStyleClass().add("category-percent");
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        header.getChildren().addAll(circle, categoryName, spacer, categoryPercentLabel);
+        header.getChildren().addAll(circle, categoryName, UiSpacer.hGrow(), categoryPercentLabel);
 
         VBox investmentsList = new VBox(8);
 
@@ -1221,9 +1216,7 @@ public final class DashboardPage implements Page {
         primary.setAlignment(Pos.CENTER_LEFT);
         Label nameLabel = new Label(ticker);
         nameLabel.getStyleClass().add("inv-row-name");
-        Region sp1 = new Region();
-        HBox.setHgrow(sp1, Priority.ALWAYS);
-        primary.getChildren().addAll(nameLabel, sp1,
+        primary.getChildren().addAll(nameLabel, UiSpacer.hGrow(),
                 createInfoBox("Posição Atual", posicaoLabel),
                 createInfoBox("Rentabilidade", rentLabel));
 
@@ -1234,9 +1227,7 @@ public final class DashboardPage implements Page {
         Label metaLabel = new Label("Qtd: " + qtdFinal
                 + "  ·  PM: R$ " + String.format("%.2f", precoMedioFinal));
         metaLabel.getStyleClass().add("text-dim");
-        Region sp2 = new Region();
-        HBox.setHgrow(sp2, Priority.ALWAYS);
-        secondary.getChildren().addAll(metaLabel, sp2,
+        secondary.getChildren().addAll(metaLabel, UiSpacer.hGrow(),
                 createInfoBox("Investido", daily.brl(totalInvestido)),
                 createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
         if (dataInvestimento != null) {
@@ -1299,9 +1290,7 @@ public final class DashboardPage implements Page {
             primary.getChildren().add(tickerBadge);
         }
 
-        Region sp1 = new Region();
-        HBox.setHgrow(sp1, Priority.ALWAYS);
-        primary.getChildren().add(sp1);
+        primary.getChildren().add(UiSpacer.hGrow());
 
         primary.getChildren().add(createInfoBox("Posição Atual", daily.brl(currentValueCents)));
 
@@ -1337,9 +1326,7 @@ public final class DashboardPage implements Page {
             secondary.getChildren().add(typeLabel);
         }
 
-        Region sp2 = new Region();
-        HBox.setHgrow(sp2, Priority.ALWAYS);
-        secondary.getChildren().add(sp2);
+        secondary.getChildren().add(UiSpacer.hGrow());
 
         secondary.getChildren().add(createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
 
@@ -1416,29 +1403,6 @@ public final class DashboardPage implements Page {
             case "ACAO" -> "Ação";
             default -> type;
         };
-    }
-
-    private VBox kpiCard(FontIcon icon, String title, Label value, String subText) {
-        VBox box = new VBox(6);
-        box.getStyleClass().add("hero-card");
-
-        HBox header = new HBox(6);
-        header.setAlignment(Pos.CENTER_LEFT);
-        Label titleLbl = new Label(title);
-        titleLbl.getStyleClass().add("kpi-label");
-        header.getChildren().addAll(icon, titleLbl);
-
-        value.getStyleClass().addAll("kpi-value", "num");
-        box.getChildren().addAll(header, value);
-
-        if (subText != null) {
-            Label sub = new Label(subText);
-            sub.getStyleClass().add("kpi-sub");
-            box.getChildren().add(sub);
-        }
-        HBox.setHgrow(box, Priority.ALWAYS);
-        Motion.hoverLift(box);
-        return box;
     }
 
     private VBox buildHealthCard() {
@@ -1534,13 +1498,11 @@ public final class DashboardPage implements Page {
             typeIcon.getStyleClass().add(isBuy ? "neg" : "pos");
             Label nameLabel = new Label(tx.name());
             nameLabel.getStyleClass().add("text-sm");
-            Region sp = new Region();
-            HBox.setHgrow(sp, Priority.ALWAYS);
             Label valLabel = new Label((isBuy ? "- " : "+ ") + daily.brl(tx.totalCents()));
             valLabel.getStyleClass().addAll("text-sm", isBuy ? "neg" : "pos");
             Label dateLabel = new Label(tx.date().format(fmt));
             dateLabel.getStyleClass().add("text-dim-xs");
-            row.getChildren().addAll(typeIcon, nameLabel, sp, valLabel, dateLabel);
+            row.getChildren().addAll(typeIcon, nameLabel, UiSpacer.hGrow(), valLabel, dateLabel);
             recentActivityList.getChildren().add(row);
         });
     }
