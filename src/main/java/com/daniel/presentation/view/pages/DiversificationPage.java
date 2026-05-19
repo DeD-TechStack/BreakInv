@@ -9,6 +9,7 @@ import com.daniel.core.service.DiversificationCalculator;
 import com.daniel.core.service.DiversificationCalculator.*;
 import com.daniel.core.util.Money;
 import com.daniel.presentation.view.PageHeader;
+import com.daniel.presentation.view.components.EmptyState;
 
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
@@ -456,17 +457,8 @@ public final class DiversificationPage implements Page {
     }
 
     private VBox buildNoInvestmentsPanel() {
-        VBox box = new VBox(8);
-        box.getStyleClass().add("empty-state");
-        box.setAlignment(Pos.CENTER);
-        Label icon = new Label("📊");
-        icon.getStyleClass().add("empty-icon");
-        Label title = new Label("Nenhum investimento cadastrado");
-        title.getStyleClass().add("empty-title");
-        Label hint = new Label("Cadastre seus ativos em \"Meus Investimentos\" para ver a análise de diversificação.");
-        hint.getStyleClass().add("empty-hint");
-        hint.setWrapText(true);
-        box.getChildren().addAll(icon, title, hint);
+        VBox box = EmptyState.of("📊", "Nenhum investimento cadastrado",
+                "Cadastre seus ativos em \"Meus Investimentos\" para ver a análise de diversificação.", true);
         box.setVisible(false);
         box.setManaged(false);
         return box;
