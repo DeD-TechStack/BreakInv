@@ -13,6 +13,7 @@ import com.daniel.infrastructure.api.BcbClient;
 import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.infrastructure.persistence.repository.AppSettingsRepository;
 import com.daniel.presentation.view.PageHeader;
+import com.daniel.presentation.view.util.Icons;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -24,6 +25,7 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import org.kordamp.ikonli.javafx.FontIcon;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -91,7 +93,7 @@ public final class DashboardPage implements Page {
     private final HBox datePickerBox = new HBox(8);
 
     private final Label tokenWarningBanner = new Label(
-            "⚠️  Token Brapi não configurado — cotações de ações usam preço de compra como referência. " +
+            "Token Brapi não configurado — cotações de ações usam preço de compra como referência. " +
             "Configure seu token na página Configurações para ver rentabilidade real.");
     private final AppSettingsRepository settingsRepo = new AppSettingsRepository();
 
@@ -133,15 +135,15 @@ public final class DashboardPage implements Page {
         headerRow.setAlignment(javafx.geometry.Pos.TOP_LEFT);
 
         HBox cards = new HBox(12,
-                kpiCard("📅", "Data", dateLabel, null),
-                kpiCard("💰", "Patrimônio Total", totalLabel, null),
-                kpiCard("📈", "Lucro acumulado", profitLabel, null),
-                kpiCard("📊", "vs CDI (acum.)", cdiComparisonLabel, null)
+                kpiCard(Icons.calendar(),    "Data",             dateLabel,           null),
+                kpiCard(Icons.dollar(),      "Patrimônio Total", totalLabel,           null),
+                kpiCard(Icons.trendingUp(),  "Lucro acumulado",  profitLabel,          null),
+                kpiCard(Icons.activity(),    "vs CDI (acum.)",   cdiComparisonLabel,   null)
         );
         cards.getStyleClass().add("dashboard-kpi-row");
 
         Label h2 = new Label("ANÁLISE DA CARTEIRA");
-        h2.getStyleClass().add("section-title");
+        h2.getStyleClass().add("section-header");
 
         HBox chartsRow = new HBox(12);
 
@@ -186,6 +188,8 @@ public final class DashboardPage implements Page {
 
         VBox comparisonBox = buildComparisonSection();
 
+        tokenWarningBanner.setGraphic(Icons.alertTriangle());
+        tokenWarningBanner.setGraphicTextGap(8);
         tokenWarningBanner.setWrapText(true);
         tokenWarningBanner.getStyleClass().add("warning-banner");
         tokenWarningBanner.setVisible(false);
@@ -1151,7 +1155,7 @@ public final class DashboardPage implements Page {
 
             if (groupTotal == 0) continue;
 
-            HBox invRow = buildGroupedStockRow(ticker, tickerInvs, groupTotal, totalPatrimony);
+            VBox invRow = buildGroupedStockRow(ticker, tickerInvs, groupTotal, totalPatrimony);
             investmentsList.getChildren().add(invRow);
         }
 
@@ -1166,7 +1170,7 @@ public final class DashboardPage implements Page {
             long currentValue = currentValues.getOrDefault((long)inv.id(), 0L);
             if (currentValue == 0) continue;
 
-            HBox invRow = buildInvestmentRow(inv, currentValue, totalPatrimony);
+            VBox invRow = buildInvestmentRow(inv, currentValue, totalPatrimony);
             investmentsList.getChildren().add(invRow);
         }
 
@@ -1174,7 +1178,7 @@ public final class DashboardPage implements Page {
         return section;
     }
 
-    private HBox buildGroupedStockRow(String ticker, List<InvestmentType> investments,
+    private VBox buildGroupedStockRow(String ticker, List<InvestmentType> investments,
                                       long totalValueCents, long totalPatrimony) {
         // ─── Calcular consolidado (null quantity tratado como 0) ───
         int qtdTotal = 0;
@@ -1206,51 +1210,45 @@ public final class DashboardPage implements Page {
         final double alocacao = totalPatrimony > 0 ? (totalValueCents * 100.0) / totalPatrimony : 0;
 
         // ─── Construir UI ───
-        HBox row = new HBox(16);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.getStyleClass().add("inv-row-card");
-
-        VBox mainInfo = new VBox(4);
-        Label nameLabel = new Label(ticker);
-        nameLabel.getStyleClass().add("inv-row-name");
-        Label qtdSubLabel = new Label("Qtd: " + qtdFinal);
-        qtdSubLabel.getStyleClass().add("text-dim");
-        mainInfo.getChildren().addAll(nameLabel, qtdSubLabel);
-        row.getChildren().add(mainInfo);
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        row.getChildren().add(spacer);
-
-        // Ticker Badge
-        VBox tickerBox = new VBox(2);
-        tickerBox.setAlignment(Pos.CENTER_RIGHT);
-        Label tickerLabel = new Label(ticker);
-        tickerLabel.getStyleClass().add("ticker-badge");
-        Label tickerHint = new Label("Ticker");
-        tickerHint.getStyleClass().add("text-dim-xs");
-        tickerBox.getChildren().addAll(tickerLabel, tickerHint);
-        row.getChildren().add(tickerBox);
-
         // Labels atualizados assincronamente (Posição Atual e Rentabilidade)
         Label rentLabel = new Label("...");
         rentLabel.getStyleClass().add("rent-dimmed");
-
         Label posicaoLabel = new Label(daily.brl(totalValueCents));
         posicaoLabel.getStyleClass().add("info-box-value");
 
-        row.getChildren().add(createInfoBox("Valor Investido", daily.brl(totalInvestido)));
-        row.getChildren().add(createInfoBox("Posição Atual", posicaoLabel));
-        row.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
-        row.getChildren().add(createInfoBox("% Alocação", String.format("%.1f%%", alocacao)));
-        // Qtd Total e Preço Médio são dados locais — sempre visíveis, independente de token
-        row.getChildren().add(createInfoBox("Qtd Total", String.valueOf(qtdFinal)));
-        row.getChildren().add(createInfoBox("Preço Médio", String.format("R$ %.2f", precoMedioFinal)));
+        // Primary row: name + ticker badge + key async metrics
+        HBox primary = new HBox(12);
+        primary.setAlignment(Pos.CENTER_LEFT);
+        Label nameLabel = new Label(ticker);
+        nameLabel.getStyleClass().add("inv-row-name");
+        Label tickerBadge = new Label(ticker);
+        tickerBadge.getStyleClass().add("ticker-badge");
+        Region sp1 = new Region();
+        HBox.setHgrow(sp1, Priority.ALWAYS);
+        primary.getChildren().addAll(nameLabel, tickerBadge, sp1,
+                createInfoBox("Posição Atual", posicaoLabel),
+                createInfoBox("Rentabilidade", rentLabel));
 
+        // Secondary row: static metadata
+        HBox secondary = new HBox(12);
+        secondary.setAlignment(Pos.CENTER_LEFT);
+        secondary.getStyleClass().add("inv-row-meta");
+        Label metaLabel = new Label("Qtd: " + qtdFinal
+                + "  ·  PM: R$ " + String.format("%.2f", precoMedioFinal));
+        metaLabel.getStyleClass().add("text-dim");
+        Region sp2 = new Region();
+        HBox.setHgrow(sp2, Priority.ALWAYS);
+        secondary.getChildren().addAll(metaLabel, sp2,
+                createInfoBox("Investido", daily.brl(totalInvestido)),
+                createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
         if (dataInvestimento != null) {
-            row.getChildren().add(createInfoBox("Data Investimento",
-                    dataInvestimento.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
+            secondary.getChildren().add(createInfoBox("Data",
+                    dataInvestimento.format(DateTimeFormatter.ofPattern("dd/MM/yy"))));
         }
+
+        VBox row = new VBox(8);
+        row.getStyleClass().add("inv-row-card");
+        row.getChildren().addAll(primary, secondary);
 
         // ─── Busca assíncrona do preço atual via Brapi ───
         if (BrapiClient.hasToken() && qtdFinal > 0) {
@@ -1286,148 +1284,91 @@ public final class DashboardPage implements Page {
         return row;
     }
 
-    private HBox buildInvestmentRow(InvestmentType inv, long currentValueCents, long totalPatrimony) {
-        HBox row = new HBox(16);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.getStyleClass().add("inv-row-card");
+    private VBox buildInvestmentRow(InvestmentType inv, long currentValueCents, long totalPatrimony) {
+        double alocacao = totalPatrimony > 0 ? (currentValueCents * 100.0) / totalPatrimony : 0;
+        boolean isStock = inv.ticker() != null && !inv.ticker().isBlank();
 
-        VBox mainInfo = new VBox(4);
+        // ── Primary row ──
+        HBox primary = new HBox(12);
+        primary.setAlignment(Pos.CENTER_LEFT);
         Label nameLabel = new Label(inv.name());
         nameLabel.getStyleClass().add("inv-row-name");
+        primary.getChildren().add(nameLabel);
 
-        if (inv.typeOfInvestment() != null) {
-            Label typeLabel = new Label(getTypeDisplayName(inv.typeOfInvestment()));
-            typeLabel.getStyleClass().add("text-dim");
-            mainInfo.getChildren().addAll(nameLabel, typeLabel);
-        } else {
-            mainInfo.getChildren().add(nameLabel);
-        }
-        row.getChildren().add(mainInfo);
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        row.getChildren().add(spacer);
-
-        if (inv.ticker() != null && !inv.ticker().isBlank()) {
-            row.getChildren().addAll(buildStockInfo(inv, currentValueCents, totalPatrimony));
-        } else if (inv.category() != null && inv.category().equals("RENDA_FIXA")) {
-            row.getChildren().addAll(buildRendaFixaInfo(inv, currentValueCents, totalPatrimony));
-        } else {
-            row.getChildren().addAll(buildGenericInfo(inv, currentValueCents, totalPatrimony));
+        if (isStock) {
+            Label tickerBadge = new Label(inv.ticker());
+            tickerBadge.getStyleClass().add("ticker-badge");
+            primary.getChildren().add(tickerBadge);
         }
 
-        return row;
-    }
+        Region sp1 = new Region();
+        HBox.setHgrow(sp1, Priority.ALWAYS);
+        primary.getChildren().add(sp1);
 
-    private List<javafx.scene.Node> buildStockInfo(InvestmentType inv, long currentValueCents, long totalPatrimony) {
-        List<javafx.scene.Node> nodes = new ArrayList<>();
+        primary.getChildren().add(createInfoBox("Posição Atual", daily.brl(currentValueCents)));
 
-        VBox tickerBox = new VBox(2);
-        tickerBox.setAlignment(Pos.CENTER_RIGHT);
-        Label tickerLabel = new Label(inv.ticker());
-        tickerLabel.getStyleClass().add("ticker-badge");
-        Label tickerHint = new Label("Ticker");
-        tickerHint.getStyleClass().add("text-dim-xs");
-        tickerBox.getChildren().addAll(tickerLabel, tickerHint);
-        nodes.add(tickerBox);
-
-        if (inv.quantity() != null && inv.purchasePrice() != null) {
-            int qtdTotal = inv.quantity();
+        if (isStock && inv.quantity() != null && inv.purchasePrice() != null) {
             double precoMedio = inv.purchasePrice().doubleValue();
-            double posicaoAtual = currentValueCents / 100.0;
-            double ultimoPreco = posicaoAtual / qtdTotal;
-
-            long valorInvestidoCents = (long)(precoMedio * qtdTotal * 100);
-            nodes.add(createInfoBox("Valor Investido", daily.brl(valorInvestidoCents)));
-
-            Label posicaoLabel = new Label(daily.brl(currentValueCents));
-            posicaoLabel.getStyleClass().add("info-box-value");
-            nodes.add(createInfoBox("Posição Atual", posicaoLabel));
-
-            double rentabilidade = ((ultimoPreco - precoMedio) / precoMedio) * 100;
+            double ultimoPreco = (currentValueCents / 100.0) / inv.quantity();
             Label rentLabel;
             if (!BrapiClient.hasToken()) {
                 rentLabel = new Label("—");
                 applyRentDimmed(rentLabel);
             } else {
-                rentLabel = new Label(String.format("%+.2f%%", rentabilidade));
-                applyRentStyle(rentLabel, rentabilidade);
+                double rent = ((ultimoPreco - precoMedio) / precoMedio) * 100;
+                rentLabel = new Label(String.format("%+.2f%%", rent));
+                applyRentStyle(rentLabel, rent);
             }
-            nodes.add(createInfoBox("Rentabilidade", rentLabel));
-
-            double alocacao = (currentValueCents * 100.0) / totalPatrimony;
-            nodes.add(createInfoBox("% Alocação", String.format("%.1f%%", alocacao)));
-            nodes.add(createInfoBox("Preço Médio", String.format("R$ %.2f", precoMedio)));
-            nodes.add(createInfoBox("Último Preço", String.format("R$ %.2f",
-                    BrapiClient.hasToken() ? ultimoPreco : precoMedio)));
-            nodes.add(createInfoBox("Qtd Total", String.valueOf(qtdTotal)));
-
-            if (inv.investmentDate() != null) {
-                nodes.add(createInfoBox("Data Investimento",
-                        inv.investmentDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
-            }
+            primary.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
+        } else if (!isStock && inv.investedValue() != null) {
+            long investido = inv.investedValue().multiply(java.math.BigDecimal.valueOf(100)).longValue();
+            double rent = investido > 0 ? ((currentValueCents - investido) * 100.0) / investido : 0;
+            Label rentLabel = new Label(String.format("%+.2f%%", rent));
+            applyRentStyle(rentLabel, rent);
+            primary.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
         }
 
-        return nodes;
-    }
+        // ── Secondary row ──
+        HBox secondary = new HBox(12);
+        secondary.setAlignment(Pos.CENTER_LEFT);
+        secondary.getStyleClass().add("inv-row-meta");
 
-    private List<javafx.scene.Node> buildRendaFixaInfo(InvestmentType inv, long currentValueCents, long totalPatrimony) {
-        List<javafx.scene.Node> nodes = new ArrayList<>();
-
-        double alocacao = (currentValueCents * 100.0) / totalPatrimony;
-
-        if (inv.investedValue() != null) {
-            long aplicado = inv.investedValue().multiply(java.math.BigDecimal.valueOf(100)).longValue();
-            nodes.add(createInfoBox("Valor Investido", daily.brl(aplicado)));
-            nodes.add(createInfoBox("Posição Atual", daily.brl(currentValueCents)));
-
-            long lucro = currentValueCents - aplicado;
-            double rentabilidade = (lucro * 100.0) / aplicado;
-            Label rentLabel = new Label(String.format("%+.2f%%", rentabilidade));
-            applyRentStyle(rentLabel, rentabilidade);
-            nodes.add(createInfoBox("Rentabilidade", rentLabel));
+        if (inv.typeOfInvestment() != null) {
+            Label typeLabel = new Label(getTypeDisplayName(inv.typeOfInvestment()));
+            typeLabel.getStyleClass().add("text-dim");
+            secondary.getChildren().add(typeLabel);
         }
 
-        nodes.add(createInfoBox("% Alocação", String.format("%.1f%%", alocacao)));
+        Region sp2 = new Region();
+        HBox.setHgrow(sp2, Priority.ALWAYS);
+        secondary.getChildren().add(sp2);
+
+        secondary.getChildren().add(createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
+
+        if (isStock && inv.quantity() != null && inv.purchasePrice() != null) {
+            long valorInvestido = (long)(inv.purchasePrice().doubleValue() * inv.quantity() * 100);
+            secondary.getChildren().add(createInfoBox("Investido", daily.brl(valorInvestido)));
+            secondary.getChildren().add(createInfoBox("PM", String.format("R$ %.2f",
+                    inv.purchasePrice().doubleValue())));
+        } else if (!isStock && inv.investedValue() != null) {
+            long investido = inv.investedValue().multiply(java.math.BigDecimal.valueOf(100)).longValue();
+            secondary.getChildren().add(createInfoBox("Investido", daily.brl(investido)));
+        }
 
         if (inv.profitability() != null) {
-            String taxa = String.format("%.2f%% a.a.", inv.profitability());
-            nodes.add(createInfoBox("Taxa", taxa));
+            secondary.getChildren().add(createInfoBox("Taxa",
+                    String.format("%.2f%% a.a.", inv.profitability())));
         }
 
         if (inv.investmentDate() != null) {
-            nodes.add(createInfoBox("Data Investimento",
-                    inv.investmentDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
+            secondary.getChildren().add(createInfoBox("Data",
+                    inv.investmentDate().format(DateTimeFormatter.ofPattern("dd/MM/yy"))));
         }
 
-        return nodes;
-    }
-
-    private List<javafx.scene.Node> buildGenericInfo(InvestmentType inv, long currentValueCents, long totalPatrimony) {
-        List<javafx.scene.Node> nodes = new ArrayList<>();
-
-        double alocacao = (currentValueCents * 100.0) / totalPatrimony;
-
-        if (inv.investedValue() != null) {
-            long investido = inv.investedValue().multiply(java.math.BigDecimal.valueOf(100)).longValue();
-            nodes.add(createInfoBox("Valor Investido", daily.brl(investido)));
-            nodes.add(createInfoBox("Posição Atual", daily.brl(currentValueCents)));
-
-            long lucro = currentValueCents - investido;
-            double rentabilidade = investido > 0 ? (lucro * 100.0) / investido : 0;
-            Label rentLabel = new Label(String.format("%+.2f%%", rentabilidade));
-            applyRentStyle(rentLabel, rentabilidade);
-            nodes.add(createInfoBox("Rentabilidade", rentLabel));
-        }
-
-        nodes.add(createInfoBox("% Alocação", String.format("%.1f%%", alocacao)));
-
-        if (inv.investmentDate() != null) {
-            nodes.add(createInfoBox("Data Investimento",
-                    inv.investmentDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
-        }
-
-        return nodes;
+        VBox row = new VBox(8);
+        row.getStyleClass().add("inv-row-card");
+        row.getChildren().addAll(primary, secondary);
+        return row;
     }
 
     private void applyRentStyle(Label label, double value) {
@@ -1479,17 +1420,15 @@ public final class DashboardPage implements Page {
         };
     }
 
-    private VBox kpiCard(String icon, String title, Label value, String subText) {
+    private VBox kpiCard(FontIcon icon, String title, Label value, String subText) {
         VBox box = new VBox(6);
         box.getStyleClass().add("hero-card");
 
         HBox header = new HBox(6);
         header.setAlignment(Pos.CENTER_LEFT);
-        Label iconLbl = new Label(icon);
-        iconLbl.getStyleClass().addAll("kpi-label");
         Label titleLbl = new Label(title);
         titleLbl.getStyleClass().add("kpi-label");
-        header.getChildren().addAll(iconLbl, titleLbl);
+        header.getChildren().addAll(icon, titleLbl);
 
         value.getStyleClass().addAll("kpi-value", "num");
         box.getChildren().addAll(header, value);
