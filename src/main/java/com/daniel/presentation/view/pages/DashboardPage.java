@@ -1216,16 +1216,14 @@ public final class DashboardPage implements Page {
         Label posicaoLabel = new Label(daily.brl(totalValueCents));
         posicaoLabel.getStyleClass().add("info-box-value");
 
-        // Primary row: name + ticker badge + key async metrics
+        // Primary row: name + key async metrics
         HBox primary = new HBox(12);
         primary.setAlignment(Pos.CENTER_LEFT);
         Label nameLabel = new Label(ticker);
         nameLabel.getStyleClass().add("inv-row-name");
-        Label tickerBadge = new Label(ticker);
-        tickerBadge.getStyleClass().add("ticker-badge");
         Region sp1 = new Region();
         HBox.setHgrow(sp1, Priority.ALWAYS);
-        primary.getChildren().addAll(nameLabel, tickerBadge, sp1,
+        primary.getChildren().addAll(nameLabel, sp1,
                 createInfoBox("Posição Atual", posicaoLabel),
                 createInfoBox("Rentabilidade", rentLabel));
 
