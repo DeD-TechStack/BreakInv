@@ -25,7 +25,9 @@ import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
+import org.kordamp.ikonli.javafx.FontIcon;
 
 public final class DiversificationPage implements Page {
 
@@ -82,7 +84,7 @@ public final class DiversificationPage implements Page {
         HBox.setHgrow(currentBox, Priority.ALWAYS);
         HBox.setHgrow(idealBox, Priority.ALWAYS);
 
-        Label arrowLabel = new Label("→");
+        FontIcon arrowLabel = Icons.arrowRight();
         arrowLabel.getStyleClass().add("comparison-arrow");
         VBox arrowBox = new VBox(arrowLabel);
         arrowBox.setAlignment(Pos.CENTER);
