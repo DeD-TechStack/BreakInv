@@ -18,6 +18,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
 
 public final class ReportsPage implements Page {
@@ -27,8 +28,8 @@ public final class ReportsPage implements Page {
     private final VBox root = new VBox(20);
     private final ScrollPane scrollPane = new ScrollPane();
 
-    private final Button btnPrevMonth = new Button("◀");
-    private final Button btnNextMonth = new Button("▶");
+    private final Button btnPrevMonth = new Button();
+    private final Button btnNextMonth = new Button();
     private final Button btnCurrentMonth = new Button("Mês Atual");
     private final Label monthLabel = new Label();
 
@@ -51,6 +52,10 @@ public final class ReportsPage implements Page {
         PageHeader header = new PageHeader("Extrato", "Registro de compras e vendas por período");
 
         // ── Month Nav Toolbar ────────────────────────────────────────────────
+        btnPrevMonth.setGraphic(Icons.chevronLeft());
+        btnPrevMonth.setText(null);
+        btnNextMonth.setGraphic(Icons.chevronRight());
+        btnNextMonth.setText(null);
         btnPrevMonth.getStyleClass().add("icon-btn");
         btnNextMonth.getStyleClass().add("icon-btn");
         btnCurrentMonth.getStyleClass().add("ghost-btn");
