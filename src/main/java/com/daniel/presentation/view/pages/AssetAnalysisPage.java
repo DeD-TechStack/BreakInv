@@ -15,7 +15,6 @@ import com.daniel.presentation.view.components.EmptyState;
 import com.daniel.presentation.view.components.KpiCard;
 import com.daniel.presentation.view.util.Icons;
 import javafx.application.Platform;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.chart.*;
