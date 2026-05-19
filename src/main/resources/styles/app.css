@@ -102,7 +102,7 @@
 }
 
 .section-title  { -fx-font-size: 13px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; -fx-padding: 4 0 2 0; }
-.section-header { -fx-font-size: 15px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
+.section-header { -fx-font-size: 15px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; -fx-padding: 4 0 2 0; }
 
 /* Body copy */
 .body { -fx-font-size: 13px; -fx-font-weight: 400; -fx-text-fill: -color-text-1; }
@@ -2009,7 +2009,8 @@
 
 /* Hero card subtle hover lift (T78) */
 .hero-card:hover {
-    -fx-border-color: -color-border-strong;
+    -fx-border-color: -color-accent-a45 -color-border-strong -color-border-strong -color-border-strong;
+    -fx-border-width: 2 1 1 1;
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.55), 18, 0, 0, 5);
 }
 
