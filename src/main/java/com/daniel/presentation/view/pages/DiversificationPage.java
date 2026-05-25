@@ -446,7 +446,7 @@ public final class DiversificationPage implements Page {
 
         suggestionsTable.getColumns().add(catCol);
         suggestionsTable.getColumns().add(actionCol);
-        Label suggPh = new Label("Sua carteira está perfeitamente balanceada!");
+        Label suggPh = new Label("Cadastre investimentos para receber sugestões de aporte.");
         suggPh.getStyleClass().add("text-helper");
         suggestionsTable.setPlaceholder(suggPh);
 
@@ -458,7 +458,7 @@ public final class DiversificationPage implements Page {
 
     private VBox buildNoInvestmentsPanel() {
         VBox box = EmptyState.of("📊", "Nenhum investimento cadastrado",
-                "Cadastre seus ativos em \"Meus Investimentos\" para ver a análise de diversificação.", true);
+                "Cadastre seus ativos para analisar a distribuição da carteira e receber sugestões de rebalanceamento.", true);
         box.setVisible(false);
         box.setManaged(false);
         return box;
