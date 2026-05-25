@@ -104,7 +104,7 @@ public final class AssetAnalysisPage implements Page {
 
         HBox searchBar = buildSearchBar();
         emptyState     = EmptyState.of("🔍", "Pesquise um ativo",
-                "Digite o ticker (ex: PETR4) e pressione Buscar");
+                "Digite um ticker, como PETR4, ITUB4 ou VALE3, para consultar cotação e histórico.");
         kpiSection     = buildKpiSection();
         chartSection   = buildChartSection();
 
