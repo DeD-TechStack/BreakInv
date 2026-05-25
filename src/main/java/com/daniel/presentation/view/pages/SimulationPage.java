@@ -7,6 +7,8 @@ import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.presentation.view.PageHeader;
 import com.daniel.presentation.view.util.ChartCrosshair;
 
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -14,6 +16,7 @@ import javafx.scene.Parent;
 import javafx.scene.chart.*;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import javafx.util.Duration;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -65,6 +68,8 @@ public final class SimulationPage implements Page {
     private double rateIpca = 0.045;
 
     private InvestmentTypeEnum currentType = InvestmentTypeEnum.PREFIXADO;
+
+    private Timeline tickerLookupDebounce;
 
     // Visibility-controlled VBoxes
     private VBox fixedRateSection;
@@ -331,9 +336,24 @@ public final class SimulationPage implements Page {
         tickerLabel.getStyleClass().add("form-label");
         tickerField.setPromptText("PETR4, VALE3, HGLG11...");
 
+        tickerLookupDebounce = new Timeline(new KeyFrame(
+                Duration.millis(350),
+                ev -> {
+                    String val = tickerField.getText();
+                    if (val != null && val.length() >= 4) {
+                        loadStockDataFromBrapi(val);
+                    }
+                }
+        ));
+        tickerLookupDebounce.setCycleCount(1);
+
         tickerField.textProperty().addListener((obs, old, newVal) -> {
+            tickerLookupDebounce.stop();
             if (newVal != null && newVal.length() >= 4) {
-                loadStockDataFromBrapi(newVal);
+                tickerLookupDebounce.playFromStart();
+            } else {
+                currentPriceField.clear();
+                dividendsField.clear();
             }
         });
 
@@ -475,8 +495,8 @@ public final class SimulationPage implements Page {
         }).thenAcceptAsync(data -> {
             if (data != null && data.isValid()) {
                 Platform.runLater(() -> {
+                    if (!ticker.equalsIgnoreCase(tickerField.getText())) return;
                     currentPriceField.setText(Money.centsToText((long)(data.regularMarketPrice() * 100)));
-
                     double estimatedAnnualDividend = data.regularMarketPrice() * (data.dividendYield() / 100.0);
                     dividendsField.setText(Money.centsToText((long)(estimatedAnnualDividend * 100)));
                 });
