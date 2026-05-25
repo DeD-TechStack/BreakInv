@@ -166,7 +166,7 @@ public final class ReportsPage implements Page {
         valueCol.setPrefWidth(150);
 
         table.setPlaceholder(EmptyState.of("📋", "Nenhum lançamento neste período",
-                "Registre compras ou vendas para vê-las aqui"));
+                "Compras e vendas registradas neste mês aparecerão aqui."));
 
         table.getColumns().add(dateCol);
         table.getColumns().add(typeCol);
