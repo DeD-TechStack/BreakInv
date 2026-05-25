@@ -6,7 +6,6 @@ import com.daniel.presentation.view.PageHeader;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
@@ -18,7 +17,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import com.daniel.presentation.view.components.EmptyState;
+import com.daniel.presentation.view.components.KpiCard;
+import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.UiSpacer;
 
 public final class ReportsPage implements Page {
 
@@ -27,8 +30,8 @@ public final class ReportsPage implements Page {
     private final VBox root = new VBox(20);
     private final ScrollPane scrollPane = new ScrollPane();
 
-    private final Button btnPrevMonth = new Button("◀");
-    private final Button btnNextMonth = new Button("▶");
+    private final Button btnPrevMonth = new Button();
+    private final Button btnNextMonth = new Button();
     private final Button btnCurrentMonth = new Button("Mês Atual");
     private final Label monthLabel = new Label();
 
@@ -51,6 +54,10 @@ public final class ReportsPage implements Page {
         PageHeader header = new PageHeader("Extrato", "Registro de compras e vendas por período");
 
         // ── Month Nav Toolbar ────────────────────────────────────────────────
+        btnPrevMonth.setGraphic(Icons.chevronLeft());
+        btnPrevMonth.setText(null);
+        btnNextMonth.setGraphic(Icons.chevronRight());
+        btnNextMonth.setText(null);
         btnPrevMonth.getStyleClass().add("icon-btn");
         btnNextMonth.getStyleClass().add("icon-btn");
         btnCurrentMonth.getStyleClass().add("ghost-btn");
@@ -70,8 +77,7 @@ public final class ReportsPage implements Page {
 
         monthLabel.getStyleClass().addAll("text-lg", "text-strong");
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Region spacer = UiSpacer.hGrow();
 
         HBox navToolbar = new HBox(8, monthLabel, spacer,
                 btnPrevMonth, btnNextMonth, new Separator(javafx.geometry.Orientation.VERTICAL), btnCurrentMonth);
@@ -80,9 +86,9 @@ public final class ReportsPage implements Page {
 
         // ── KPI Cards ────────────────────────────────────────────────────────
         HBox kpiRow = new HBox(12,
-                kpiCard("Total de aportes", totalComprasLabel),
-                kpiCard("Lucro acumulado", totalVendasLabel),
-                kpiCard("Patrimônio", lucroRealizadoLabel)
+                KpiCard.compact("Total de aportes", totalComprasLabel),
+                KpiCard.compact("Lucro acumulado", totalVendasLabel),
+                KpiCard.compact("Patrimônio", lucroRealizadoLabel)
         );
 
         // ── Table ────────────────────────────────────────────────────────────
@@ -109,17 +115,6 @@ public final class ReportsPage implements Page {
     public void onShow() {
         currentMonth = YearMonth.now();
         reload();
-    }
-
-    private VBox kpiCard(String title, Label value) {
-        VBox b = new VBox(6);
-        b.getStyleClass().add("kpi-card");
-        Label t = new Label(title);
-        t.getStyleClass().add("kpi-label");
-        value.getStyleClass().addAll("kpi-value", "num");
-        b.getChildren().addAll(t, value);
-        HBox.setHgrow(b, Priority.ALWAYS);
-        return b;
     }
 
     private void buildTable() {
@@ -170,17 +165,8 @@ public final class ReportsPage implements Page {
         });
         valueCol.setPrefWidth(150);
 
-        VBox emptyState = new VBox(8);
-        emptyState.getStyleClass().add("empty-state");
-        emptyState.setAlignment(Pos.CENTER);
-        Label emptyIcon = new Label("📋");
-        emptyIcon.getStyleClass().add("empty-icon");
-        Label emptyTitle = new Label("Nenhum lançamento neste período");
-        emptyTitle.getStyleClass().add("empty-title");
-        Label emptyHint = new Label("Registre compras ou vendas para vê-las aqui");
-        emptyHint.getStyleClass().add("empty-hint");
-        emptyState.getChildren().addAll(emptyIcon, emptyTitle, emptyHint);
-        table.setPlaceholder(emptyState);
+        table.setPlaceholder(EmptyState.of("📋", "Nenhum lançamento neste período",
+                "Compras e vendas registradas neste mês aparecerão aqui."));
 
         table.getColumns().add(dateCol);
         table.getColumns().add(typeCol);

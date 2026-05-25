@@ -15,7 +15,10 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.scene.shape.Circle;
+import javafx.util.Duration;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -69,6 +72,9 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
     private VBox hybridBox;
 
     private Timer debounceTimer;
+    private Timeline tickerLookupDebounce;
+    private String lastAutoFilledTicker = null;
+    private boolean applyingBrapiPrice = false;
     private final boolean isEdit;
 
     public InvestmentTypeDialog(String title, InvestmentTypeData existing) {
@@ -134,14 +140,34 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
             updateTypeComboItems();
         });
 
-        purchasePriceField.textProperty().addListener((obs, oldVal, newVal) -> scheduleAutoFill());
+        purchasePriceField.textProperty().addListener((obs, oldVal, newVal) -> {
+            if (!applyingBrapiPrice) {
+                lastAutoFilledTicker = null;
+            }
+            scheduleAutoFill();
+        });
         quantityField.textProperty().addListener((obs, oldVal, newVal) -> scheduleAutoFill());
         purchasePriceField.setOnAction(e -> updateInvestedValueForStock());
         quantityField.setOnAction(e -> updateInvestedValueForStock());
 
+        tickerLookupDebounce = new Timeline(new KeyFrame(
+                Duration.millis(350),
+                ev -> {
+                    String val = tickerField.getText();
+                    if (val != null && val.length() >= 4) {
+                        loadStockDataFromBrapi(val);
+                    }
+                }
+        ));
+        tickerLookupDebounce.setCycleCount(1);
+
         tickerField.textProperty().addListener((obs, old, newVal) -> {
+            tickerLookupDebounce.stop();
             if (newVal != null && newVal.length() >= 4) {
-                loadStockDataFromBrapi(newVal);
+                tickerLookupDebounce.playFromStart();
+            } else if (lastAutoFilledTicker != null) {
+                purchasePriceField.clear();
+                lastAutoFilledTicker = null;
             }
         });
 
@@ -523,8 +549,12 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         }).thenAcceptAsync(data -> {
             if (data != null && data.isValid()) {
                 Platform.runLater(() -> {
-                    if (purchasePriceField.getText().isBlank()) {
-                        purchasePriceField.setText(Money.centsToText((long)(data.regularMarketPrice() * 100)));
+                    if (!ticker.equalsIgnoreCase(tickerField.getText())) return;
+                    if (purchasePriceField.getText().isBlank() || lastAutoFilledTicker != null) {
+                        applyingBrapiPrice = true;
+                        purchasePriceField.setText(String.format("%.2f", data.regularMarketPrice()).replace('.', ','));
+                        applyingBrapiPrice = false;
+                        lastAutoFilledTicker = ticker;
                     }
                 });
             }
@@ -550,7 +580,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         }
         if (data.investedValue() != null) {
             long cents = data.investedValue().multiply(BigDecimal.valueOf(100)).longValue();
-            investedValueField.setText(Money.centsToText(cents));
+            investedValueField.setText(String.format("%.2f", cents / 100.0).replace('.', ','));
         }
         if (data.typeOfInvestment() != null) {
             try { typeCombo.setValue(InvestmentTypeEnum.valueOf(data.typeOfInvestment())); } catch (Exception ignored) {}
@@ -566,7 +596,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         }
         if (data.purchasePrice() != null) {
             long cents = data.purchasePrice().multiply(BigDecimal.valueOf(100)).longValue();
-            purchasePriceField.setText(Money.centsToText(cents));
+            purchasePriceField.setText(String.format("%.2f", cents / 100.0).replace('.', ','));
         }
         if (data.quantity() != null) {
             quantityField.setText(data.quantity().toString());

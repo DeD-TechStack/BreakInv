@@ -50,8 +50,11 @@ public final class Icons {
     public static FontIcon info()       { return of(Feather.INFO, "icon-muted"); }
     public static FontIcon check()      { return of(Feather.CHECK, "icon-accent"); }
     public static FontIcon layers()     { return of(Feather.LAYERS, "icon-muted"); }
-    public static FontIcon arrowLeft()  { return of(Feather.ARROW_LEFT, "icon-muted"); }
-    public static FontIcon arrowRight() { return of(Feather.ARROW_RIGHT, "icon-muted"); }
+    public static FontIcon arrowLeft()     { return of(Feather.ARROW_LEFT,       "icon-muted"); }
+    public static FontIcon arrowRight()    { return of(Feather.ARROW_RIGHT,      "icon-muted"); }
+    public static FontIcon alertTriangle() { return of(Feather.ALERT_TRIANGLE,   "icon-warn");  }
+    public static FontIcon chevronLeft()   { return of(Feather.CHEVRON_LEFT,     "icon-muted"); }
+    public static FontIcon chevronRight()  { return of(Feather.CHEVRON_RIGHT,    "icon-muted"); }
 
     // ── Navigation / sidebar ───────────────────────────────────────────────
     public static FontIcon home()       { return of(Feather.HOME,       "icon-muted"); }

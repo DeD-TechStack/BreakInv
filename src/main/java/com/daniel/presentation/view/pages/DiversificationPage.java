@@ -9,6 +9,7 @@ import com.daniel.core.service.DiversificationCalculator;
 import com.daniel.core.service.DiversificationCalculator.*;
 import com.daniel.core.util.Money;
 import com.daniel.presentation.view.PageHeader;
+import com.daniel.presentation.view.components.EmptyState;
 
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
@@ -25,7 +26,9 @@ import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
+import org.kordamp.ikonli.javafx.FontIcon;
 
 public final class DiversificationPage implements Page {
 
@@ -82,7 +85,7 @@ public final class DiversificationPage implements Page {
         HBox.setHgrow(currentBox, Priority.ALWAYS);
         HBox.setHgrow(idealBox, Priority.ALWAYS);
 
-        Label arrowLabel = new Label("→");
+        FontIcon arrowLabel = Icons.arrowRight();
         arrowLabel.getStyleClass().add("comparison-arrow");
         VBox arrowBox = new VBox(arrowLabel);
         arrowBox.setAlignment(Pos.CENTER);
@@ -443,7 +446,7 @@ public final class DiversificationPage implements Page {
 
         suggestionsTable.getColumns().add(catCol);
         suggestionsTable.getColumns().add(actionCol);
-        Label suggPh = new Label("Sua carteira está perfeitamente balanceada!");
+        Label suggPh = new Label("Cadastre investimentos para receber sugestões de aporte.");
         suggPh.getStyleClass().add("text-helper");
         suggestionsTable.setPlaceholder(suggPh);
 
@@ -454,17 +457,8 @@ public final class DiversificationPage implements Page {
     }
 
     private VBox buildNoInvestmentsPanel() {
-        VBox box = new VBox(8);
-        box.getStyleClass().add("empty-state");
-        box.setAlignment(Pos.CENTER);
-        Label icon = new Label("📊");
-        icon.getStyleClass().add("empty-icon");
-        Label title = new Label("Nenhum investimento cadastrado");
-        title.getStyleClass().add("empty-title");
-        Label hint = new Label("Cadastre seus ativos em \"Meus Investimentos\" para ver a análise de diversificação.");
-        hint.getStyleClass().add("empty-hint");
-        hint.setWrapText(true);
-        box.getChildren().addAll(icon, title, hint);
+        VBox box = EmptyState.of("📊", "Nenhum investimento cadastrado",
+                "Cadastre seus ativos para analisar a distribuição da carteira e receber sugestões de rebalanceamento.", true);
         box.setVisible(false);
         box.setManaged(false);
         return box;

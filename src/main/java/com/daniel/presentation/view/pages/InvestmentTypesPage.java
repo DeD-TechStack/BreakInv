@@ -7,6 +7,7 @@ import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.PageHeader;
 import com.daniel.core.util.Money;
 import com.daniel.presentation.view.components.ColorBadge;
+import com.daniel.presentation.view.components.EmptyState;
 import com.daniel.presentation.view.components.InvestmentTypeDialog;
 import com.daniel.presentation.view.components.InvestmentTypeDialog.InvestmentTypeData;
 import com.daniel.presentation.view.components.ToastHost;
@@ -368,17 +369,8 @@ public final class InvestmentTypesPage implements Page {
         });
         actionsColRef = actionsCol;
 
-        VBox emptyState = new VBox(8);
-        emptyState.getStyleClass().add("empty-state");
-        emptyState.setAlignment(Pos.CENTER);
-        Label emptyIcon = new Label("📂");
-        emptyIcon.getStyleClass().add("empty-icon");
-        Label emptyTitle = new Label("Nenhum investimento cadastrado");
-        emptyTitle.getStyleClass().add("empty-title");
-        Label emptyHint = new Label("Clique em \"+ Novo Investimento\" para começar");
-        emptyHint.getStyleClass().add("empty-hint");
-        emptyState.getChildren().addAll(emptyIcon, emptyTitle, emptyHint);
-        table.setPlaceholder(emptyState);
+        table.setPlaceholder(EmptyState.of("📂", "Nenhum investimento cadastrado",
+                "Cadastre seu primeiro investimento para acompanhar patrimônio, rentabilidade e distribuição."));
 
         table.getColumns().add(nameCol);
         table.getColumns().add(catCol);
@@ -425,17 +417,8 @@ public final class InvestmentTypesPage implements Page {
 
         // Update placeholder to distinguish filtered vs empty portfolio
         if (filterActive && filteredItems.isEmpty() && !allItems.isEmpty()) {
-            VBox filteredEmpty = new VBox(8);
-            filteredEmpty.getStyleClass().add("empty-state");
-            filteredEmpty.setAlignment(Pos.CENTER);
-            Label fIcon = new Label("🔍");
-            fIcon.getStyleClass().add("empty-icon");
-            Label fTitle = new Label("Nenhum resultado encontrado");
-            fTitle.getStyleClass().add("empty-title");
-            Label fHint = new Label("Tente outros termos ou remova os filtros ativos.");
-            fHint.getStyleClass().add("empty-hint");
-            filteredEmpty.getChildren().addAll(fIcon, fTitle, fHint);
-            table.setPlaceholder(filteredEmpty);
+            table.setPlaceholder(EmptyState.of("🔍", "Nenhum resultado encontrado",
+                    "Tente outros termos ou remova os filtros ativos."));
         }
     }
 

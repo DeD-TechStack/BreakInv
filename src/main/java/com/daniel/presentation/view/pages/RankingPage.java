@@ -13,9 +13,11 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import com.daniel.presentation.view.PageHeader;
+import com.daniel.presentation.view.components.EmptyState;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.util.ChartAxisUtils;
 import com.daniel.presentation.view.util.ChartCrosshair;
+import com.daniel.presentation.view.util.ChartSeriesStyle;
 import com.daniel.presentation.viewmodel.RankingViewModel;
 import com.daniel.presentation.viewmodel.RankingViewModel.RankingRow;
 import javafx.application.Platform;
@@ -133,17 +135,8 @@ public final class RankingPage implements Page {
     // ── Build helpers ──────────────────────────────────────────────────────
 
     private VBox buildEmptyState() {
-        VBox box = new VBox(8);
-        box.getStyleClass().add("empty-state");
-        box.setAlignment(Pos.CENTER);
-        Label icon  = new Label("🏆");
-        icon.getStyleClass().add("empty-icon");
-        Label title = new Label("Nenhum ativo com ticker encontrado");
-        title.getStyleClass().add("empty-title");
-        Label hint  = new Label("Cadastre ativos com ticker em \"Carteira\" para ver o ranking");
-        hint.getStyleClass().add("empty-hint");
-        box.getChildren().addAll(icon, title, hint);
-        return box;
+        return EmptyState.of("🏆", "Nenhum ativo com ticker encontrado",
+                "Cadastre ativos com ticker na Carteira para comparar desempenho.");
     }
 
     private VBox buildContent() {
@@ -886,17 +879,9 @@ public final class RankingPage implements Page {
         // Estiliza as linhas após renderização — duplo runLater garante que o JavaFX
         // tenha completado o ciclo de layout e exposto os nós de série no scene graph.
         Platform.runLater(() -> Platform.runLater(() -> {
-            javafx.scene.Node priceLine = maChart.lookup(".series0.chart-series-line");
-            if (priceLine != null)
-                priceLine.setStyle("-fx-stroke: #22c55e; -fx-stroke-width: 1.5;");
-
-            javafx.scene.Node maShortLine = maChart.lookup(".series1.chart-series-line");
-            if (maShortLine != null)
-                maShortLine.setStyle("-fx-stroke: #f59e0b; -fx-stroke-width: 2; -fx-stroke-dash-array: 8 4;");
-
-            javafx.scene.Node maLongLine = maChart.lookup(".series2.chart-series-line");
-            if (maLongLine != null)
-                maLongLine.setStyle("-fx-stroke: #3b82f6; -fx-stroke-width: 2;");
+            ChartSeriesStyle.accent(maChart.lookup(".series0.chart-series-line"), 1.5);
+            ChartSeriesStyle.warningDashed(maChart.lookup(".series1.chart-series-line"), 2.0);
+            ChartSeriesStyle.info(maChart.lookup(".series2.chart-series-line"), 2.0);
         }));
 
         Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(maXAxis, lastMAEpochSecs, maChart.getWidth()));

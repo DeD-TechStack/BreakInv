@@ -16,6 +16,8 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.*;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import org.kordamp.ikonli.javafx.FontIcon;
 
 import java.util.LinkedHashMap;
@@ -114,13 +116,25 @@ public final class AppShell {
         VBox brand = new VBox(4);
         brand.getStyleClass().add("sidebar-brand");
 
+        HBox brandRow = new HBox(8);
+        brandRow.setAlignment(Pos.CENTER_LEFT);
+        var iconStream = getClass().getResourceAsStream("/app/icon.png");
+        if (iconStream != null) {
+            ImageView logo = new ImageView(new Image(iconStream));
+            logo.setFitWidth(28);
+            logo.setFitHeight(28);
+            logo.setPreserveRatio(true);
+            logo.setSmooth(true);
+            brandRow.getChildren().add(logo);
+        }
         Label title = new Label("BreakInv");
         title.getStyleClass().add("sidebar-title");
+        brandRow.getChildren().add(title);
 
         Label sub = new Label("Controle de investimentos");
         sub.getStyleClass().add("sidebar-sub");
 
-        brand.getChildren().addAll(title, sub);
+        brand.getChildren().addAll(brandRow, sub);
 
         // ── Nav section ──────────────────────────────
         VBox navBox = new VBox(2);
