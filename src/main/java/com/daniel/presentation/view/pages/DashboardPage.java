@@ -78,7 +78,7 @@ public final class DashboardPage implements Page {
     private final Label metricBenchmarkTitleLabel = new Label("Rent. CDI");
 
     private final Label noComparisonHint = new Label(
-            "Sem dados suficientes — adicione investimentos com valor registrado para ver o gráfico de performance.");
+            "Cadastre seus primeiros investimentos para desbloquear o gráfico de performance, benchmarks e indicadores de rentabilidade.");
     private final Label sparseChartHint = new Label(
             "Histórico insuficiente no período selecionado.");
 
