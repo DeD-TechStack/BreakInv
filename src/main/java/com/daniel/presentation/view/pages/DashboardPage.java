@@ -893,20 +893,13 @@ public final class DashboardPage implements Page {
         CompletableFuture.supplyAsync(() -> {
             List<RankEntry> entries = new ArrayList<>();
 
-            // Collect tickers that need Brapi lookup
-            List<InvestmentType> withTicker = new ArrayList<>();
-            List<InvestmentType> withoutTicker = new ArrayList<>();
+            // Only ticker-based assets have meaningful daily market variation
+            List<InvestmentType> withTicker = investments.stream()
+                    .filter(inv -> inv.ticker() != null && !inv.ticker().isBlank())
+                    .toList();
 
-            for (InvestmentType inv : investments) {
-                if (inv.ticker() != null && !inv.ticker().isBlank()) {
-                    withTicker.add(inv);
-                } else {
-                    withoutTicker.add(inv);
-                }
-            }
-
-            // Agrupar por ticker — garante uma entrada única por ticker no ranking
             if (!withTicker.isEmpty()) {
+                // Agrupar por ticker — garante uma entrada única por ticker no ranking
                 Map<String, List<InvestmentType>> tickerGroups = new LinkedHashMap<>();
                 for (InvestmentType inv : withTicker) {
                     tickerGroups.computeIfAbsent(
@@ -933,7 +926,9 @@ public final class DashboardPage implements Page {
                     List<InvestmentType> group = tickerEntry.getValue();
 
                     BrapiClient.StockData data = stockMap.get(ticker);
-                    double change = (data != null && data.isValid()) ? data.regularMarketChangePercent() : 0;
+                    if (data == null || !data.isValid()) continue; // sem dados Brapi válidos
+
+                    double change = data.regularMarketChangePercent();
 
                     long totalValue = group.stream()
                             .mapToLong(inv -> currentValues.getOrDefault((long) inv.id(), 0L))
@@ -944,16 +939,6 @@ public final class DashboardPage implements Page {
                     String displayName = group.size() == 1 ? group.get(0).name() : ticker;
                     entries.add(new RankEntry(displayName, ticker, change, totalValue));
                 }
-            }
-
-            // Renda fixa: variação diária estimada = taxa anual / 252
-            for (InvestmentType inv : withoutTicker) {
-                long value = currentValues.getOrDefault((long) inv.id(), 0L);
-                if (value <= 0) continue; // ignorar ativos sem valor atual
-                double dailyChange = inv.profitability() != null
-                        ? inv.profitability().doubleValue() / 252.0
-                        : 0;
-                entries.add(new RankEntry(inv.name(), null, dailyChange, value));
             }
 
             // Retornar lista completa; separação em altas/baixas feita no Platform.runLater
