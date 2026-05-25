@@ -15,7 +15,10 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.scene.shape.Circle;
+import javafx.util.Duration;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -69,6 +72,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
     private VBox hybridBox;
 
     private Timer debounceTimer;
+    private Timeline tickerLookupDebounce;
     private final boolean isEdit;
 
     public InvestmentTypeDialog(String title, InvestmentTypeData existing) {
@@ -139,9 +143,21 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         purchasePriceField.setOnAction(e -> updateInvestedValueForStock());
         quantityField.setOnAction(e -> updateInvestedValueForStock());
 
+        tickerLookupDebounce = new Timeline(new KeyFrame(
+                Duration.millis(350),
+                ev -> {
+                    String val = tickerField.getText();
+                    if (val != null && val.length() >= 4) {
+                        loadStockDataFromBrapi(val);
+                    }
+                }
+        ));
+        tickerLookupDebounce.setCycleCount(1);
+
         tickerField.textProperty().addListener((obs, old, newVal) -> {
+            tickerLookupDebounce.stop();
             if (newVal != null && newVal.length() >= 4) {
-                loadStockDataFromBrapi(newVal);
+                tickerLookupDebounce.playFromStart();
             }
         });
 
@@ -523,6 +539,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         }).thenAcceptAsync(data -> {
             if (data != null && data.isValid()) {
                 Platform.runLater(() -> {
+                    if (!ticker.equalsIgnoreCase(tickerField.getText())) return;
                     if (purchasePriceField.getText().isBlank()) {
                         purchasePriceField.setText(Money.centsToText((long)(data.regularMarketPrice() * 100)));
                     }
