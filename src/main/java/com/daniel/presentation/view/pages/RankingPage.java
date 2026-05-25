@@ -136,7 +136,7 @@ public final class RankingPage implements Page {
 
     private VBox buildEmptyState() {
         return EmptyState.of("🏆", "Nenhum ativo com ticker encontrado",
-                "Cadastre ativos com ticker em \"Carteira\" para ver o ranking");
+                "Cadastre ativos com ticker na Carteira para comparar desempenho.");
     }
 
     private VBox buildContent() {
