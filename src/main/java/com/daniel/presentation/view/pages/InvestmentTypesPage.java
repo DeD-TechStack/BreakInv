@@ -370,7 +370,7 @@ public final class InvestmentTypesPage implements Page {
         actionsColRef = actionsCol;
 
         table.setPlaceholder(EmptyState.of("📂", "Nenhum investimento cadastrado",
-                "Clique em \"+ Novo Investimento\" para começar"));
+                "Cadastre seu primeiro investimento para acompanhar patrimônio, rentabilidade e distribuição."));
 
         table.getColumns().add(nameCol);
         table.getColumns().add(catCol);
