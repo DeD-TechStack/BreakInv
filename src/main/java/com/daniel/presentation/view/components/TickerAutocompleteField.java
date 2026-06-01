@@ -1,6 +1,7 @@
 package com.daniel.presentation.view.components;
 
 import com.daniel.infrastructure.api.BrapiClient;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.geometry.Bounds;
 import javafx.scene.Node;
@@ -9,6 +10,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
 import javafx.scene.input.MouseEvent;
 import javafx.stage.Popup;
+import javafx.util.Duration;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -29,7 +31,10 @@ public final class TickerAutocompleteField extends TextField {
 
     private final Popup popup = new Popup();
     private final ListView<BrapiClient.TickerSuggestion> listView = new ListView<>();
+    private final PauseTransition suggestionSearchDebounce = new PauseTransition(Duration.millis(350));
     private String lastQuery = "";
+    private String pendingQuery = null;
+    private int searchGeneration = 0;
 
     public TickerAutocompleteField() {
         setPromptText("Digite o ticker (ex: PETR4, VALE3)...");
@@ -93,14 +98,21 @@ public final class TickerAutocompleteField extends TextField {
         });
 
         // ── Autocomplete trigger ──
+        suggestionSearchDebounce.setOnFinished(e -> {
+            if (pendingQuery != null) loadSuggestions(pendingQuery);
+        });
+
         textProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal == null || newVal.length() < 2) {
+                suggestionSearchDebounce.stop();
+                pendingQuery = null;
                 popup.hide();
                 return;
             }
             if (newVal.equals(lastQuery)) return;
             lastQuery = newVal;
-            loadSuggestions(newVal);
+            pendingQuery = newVal;
+            suggestionSearchDebounce.playFromStart();
         });
 
         // Fecha popup ao perder foco para qualquer coisa que não seja o próprio popup
@@ -116,6 +128,8 @@ public final class TickerAutocompleteField extends TextField {
     }
 
     private void selectSuggestion(BrapiClient.TickerSuggestion suggestion) {
+        suggestionSearchDebounce.stop();
+        pendingQuery = null;
         lastQuery = suggestion.ticker(); // deve ser antes de setText para bloquear o listener
         setText(suggestion.ticker());
         positionCaret(getText().length());
@@ -125,6 +139,7 @@ public final class TickerAutocompleteField extends TextField {
 
     private void loadSuggestions(String rawQuery) {
         String query = rawQuery.trim().toUpperCase();
+        int gen = ++searchGeneration;
         CompletableFuture
                 .supplyAsync(() -> {
                     try { return BrapiClient.searchTickers(query); }
@@ -142,6 +157,7 @@ public final class TickerAutocompleteField extends TextField {
                     return CompletableFuture.completedFuture(results);
                 })
                 .thenAcceptAsync(suggestions -> Platform.runLater(() -> {
+                    if (gen != searchGeneration) return; // stale result from an older query
                     if (suggestions.isEmpty()) {
                         updateList(List.of(new BrapiClient.TickerSuggestion(
                                 query, "Pressione Enter para confirmar diretamente", null)));
