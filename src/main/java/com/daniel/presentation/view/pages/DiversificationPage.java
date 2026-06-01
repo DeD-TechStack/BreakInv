@@ -531,19 +531,16 @@ public final class DiversificationPage implements Page {
         Map<CategoryEnum, Double> profile = ARCADiversificationStrategy.getARCAProfile();
 
         List<DiversificationSuggestion> suggestions;
-        long referencePatrimony;
 
         // Escolher método de cálculo
         if (rebalanceByTargetRadio.isSelected()) {
             long targetPatrimony = getTargetPatrimony(currentPatrimony);
-            referencePatrimony = targetPatrimony;
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByTarget(
                     currentPatrimony, targetPatrimony, currentData.valuesCents(), profile
             );
             impliedTargetBox.setVisible(false);
             impliedTargetBox.setManaged(false);
         } else {
-            referencePatrimony = currentPatrimony;
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
                     currentPatrimony, currentData.valuesCents(), profile
             );
@@ -604,18 +601,15 @@ public final class DiversificationPage implements Page {
             }
 
             List<DiversificationSuggestion> suggestions;
-            long referencePatrimony;
 
             if (rebalanceByTargetRadio.isSelected()) {
                 long targetPatrimony = getTargetPatrimony(currentPatrimony);
-                referencePatrimony = targetPatrimony;
                 suggestions = ARCADiversificationStrategy.calculateSuggestionsByTarget(
                         currentPatrimony, targetPatrimony, currentData.valuesCents(), customProfile
                 );
                 impliedTargetBox.setVisible(false);
                 impliedTargetBox.setManaged(false);
             } else {
-                referencePatrimony = currentPatrimony;
                 suggestions = ARCADiversificationStrategy.calculateSuggestionsByContribution(
                         currentPatrimony, currentData.valuesCents(), customProfile
                 );
