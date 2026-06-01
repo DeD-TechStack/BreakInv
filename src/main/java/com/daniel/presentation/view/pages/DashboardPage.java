@@ -80,7 +80,7 @@ public final class DashboardPage implements Page {
     private final Label noComparisonHint = new Label(
             "Cadastre seus primeiros investimentos para desbloquear o gráfico de performance, benchmarks e indicadores de rentabilidade.");
     private final Label sparseChartHint = new Label(
-            "Histórico insuficiente no período selecionado.");
+            "Histórico insuficiente. Selecione um período maior ou aguarde mais dias de registro para desbloquear o gráfico.");
 
     private final AtomicLong refreshEpoch = new AtomicLong(0);
 
