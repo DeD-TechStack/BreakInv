@@ -36,8 +36,8 @@ public final class ReportsPage implements Page {
     private final Label monthLabel = new Label();
 
     private final Label totalComprasLabel = new Label("—");
-    private final Label totalVendasLabel = new Label("—");
-    private final Label lucroRealizadoLabel = new Label("—");
+    private final Label accumulatedProfitLabel = new Label("—");
+    private final Label patrimonyLabel = new Label("—");
 
     private final TableView<ExtractRow> table = new TableView<>();
 
@@ -87,8 +87,8 @@ public final class ReportsPage implements Page {
         // ── KPI Cards ────────────────────────────────────────────────────────
         HBox kpiRow = new HBox(12,
                 KpiCard.compact("Total de aportes", totalComprasLabel),
-                KpiCard.compact("Lucro acumulado", totalVendasLabel),
-                KpiCard.compact("Patrimônio", lucroRealizadoLabel)
+                KpiCard.compact("Lucro acumulado", accumulatedProfitLabel),
+                KpiCard.compact("Patrimônio", patrimonyLabel)
         );
 
         // ── Table ────────────────────────────────────────────────────────────
@@ -247,11 +247,11 @@ public final class ReportsPage implements Page {
                 setKpi(totalComprasLabel, data.totalCompras(), false);
                 // KPI 2 & 3: never leak global state into an empty period
                 if (data.empty()) {
-                    setKpi(totalVendasLabel, 0, true);
-                    setKpiPositive(lucroRealizadoLabel, 0);
+                    setKpi(accumulatedProfitLabel, 0, true);
+                    setKpiPositive(patrimonyLabel, 0);
                 } else {
-                    setKpi(totalVendasLabel, data.lucroTotal(), true);
-                    setKpiPositive(lucroRealizadoLabel, data.patrimony());
+                    setKpi(accumulatedProfitLabel, data.lucroTotal(), true);
+                    setKpiPositive(patrimonyLabel, data.patrimony());
                 }
             });
         });
