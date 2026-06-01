@@ -78,7 +78,7 @@ public final class ConfiguracoesPage implements Page {
         String savedToken = settings.get(BrapiClient.SETTINGS_KEY_TOKEN).orElse("");
         tokenField.setText(savedToken);
 
-        String autoUpdate = settings.get("brapi_auto_update").orElse("false");
+        String autoUpdate = settings.get("brapi_auto_update").orElse("true");
         autoUpdateCheckbox.setSelected(Boolean.parseBoolean(autoUpdate));
 
         updateTokenStatus(savedToken);
