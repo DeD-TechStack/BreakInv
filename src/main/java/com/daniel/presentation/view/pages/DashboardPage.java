@@ -219,7 +219,11 @@ public final class DashboardPage implements Page {
         updateBrapiChips();
         refreshData();
         if (!ratesFetched) {
-            fetchRealRates();
+            boolean autoUpdate = Boolean.parseBoolean(
+                    settingsRepo.get("brapi_auto_update").orElse("true"));
+            if (autoUpdate) {
+                fetchRealRates();
+            }
         }
     }
 
