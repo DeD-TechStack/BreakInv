@@ -10,14 +10,33 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Registration rows. Default constructor uses the shared {@link Database#open()} connection;
+ * {@link #InvestmentTypeRepository(Connection)} binds every statement to a caller-owned
+ * connection so the insert can share a transaction with the ledger opening.
+ */
 public final class InvestmentTypeRepository implements IInvestmentTypeRepository {
+
+    private final Connection fixed;
+
+    public InvestmentTypeRepository() {
+        this.fixed = null;
+    }
+
+    public InvestmentTypeRepository(Connection connection) {
+        this.fixed = connection;
+    }
+
+    private Connection conn() {
+        return fixed != null ? fixed : Database.open();
+    }
 
     @Override
     public List<InvestmentType> listAll() {
         String sql = "SELECT * FROM investment_type ORDER BY name";
 
         List<InvestmentType> list = new ArrayList<>();
-        try (Statement st = Database.open().createStatement();
+        try (Statement st = conn().createStatement();
              ResultSet rs = st.executeQuery(sql)) {
 
             while (rs.next()) {
@@ -33,7 +52,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
     public void save(String name) {
         String sql = "INSERT INTO investment_type (name) VALUES (?)";
 
-        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
+        try (PreparedStatement ps = conn().prepareStatement(sql)) {
             ps.setString(1, name);
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -53,7 +72,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
-        try (PreparedStatement ps = Database.open().prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn().prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, name);
             ps.setString(2, category);
             ps.setString(3, liquidity);
@@ -97,7 +116,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
             WHERE id = ?
             """;
 
-        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
+        try (PreparedStatement ps = conn().prepareStatement(sql)) {
             ps.setString(1, name);
             ps.setString(2, category);
             ps.setString(3, liquidity);
@@ -125,7 +144,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
     public void rename(int id, String newName) {
         String sql = "UPDATE investment_type SET name = ? WHERE id = ?";
 
-        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
+        try (PreparedStatement ps = conn().prepareStatement(sql)) {
             ps.setString(1, newName);
             ps.setInt(2, id);
             ps.executeUpdate();
@@ -138,7 +157,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
     public void delete(int id) {
         String sql = "DELETE FROM investment_type WHERE id = ?";
 
-        try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
+        try (PreparedStatement ps = conn().prepareStatement(sql)) {
             ps.setInt(1, id);
             ps.executeUpdate();
         } catch (SQLException e) {

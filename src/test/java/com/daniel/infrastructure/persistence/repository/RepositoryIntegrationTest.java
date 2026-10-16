@@ -48,6 +48,50 @@ class RepositoryIntegrationTest {
         Database.close();
     }
 
+    /**
+     * Inserts investment_type rows with the given explicit ids. Connections run with
+     * {@code PRAGMA foreign_keys=ON}, so every transactions/investment_snapshots/flows row
+     * must reference a real registration.
+     */
+    static void seedTypes(long... ids) {
+        try (java.sql.Statement st = Database.open().createStatement()) {
+            for (long id : ids) {
+                st.execute("INSERT INTO investment_type (id, name) VALUES (" + id + ", 'Type " + id + "')");
+            }
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    // ===== Foreign keys are enforced on the effective connection =====
+
+    @Test
+    void tx_insert_unknownInvestmentType_rejectedByForeignKey() {
+        TransactionRepository repo = new TransactionRepository();
+        Transaction orphan = new Transaction(0, LocalDate.of(2024, 1, 1), 99, Transaction.BUY,
+                "X", "X", 1, 100L, 100L, null);
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> repo.insert(orphan));
+        assertTrue(ex.getMessage().toUpperCase().contains("FOREIGN KEY"), ex.getMessage());
+        assertTrue(repo.listBetween(LocalDate.of(2000, 1, 1), LocalDate.of(2099, 12, 31)).isEmpty());
+    }
+
+    @Test
+    void snapshot_upsertInvestment_unknownInvestmentType_rejectedByForeignKey() {
+        SnapshotRepository repo = new SnapshotRepository();
+        LocalDate date = LocalDate.of(2024, 1, 1);
+        assertThrows(RuntimeException.class, () -> repo.upsertInvestment(date, 99L, 1L, null));
+        assertTrue(repo.getAllInvestmentsForDate(date).isEmpty());
+    }
+
+    @Test
+    void flow_create_unknownInvestmentType_rejectedByForeignKey() {
+        FlowRepository repo = new FlowRepository();
+        LocalDate date = LocalDate.of(2024, 1, 1);
+        Flow orphan = new Flow(0, date, FlowKind.INVESTMENT, 99L, FlowKind.CASH, null, 1L, null);
+        assertThrows(RuntimeException.class, () -> repo.create(orphan));
+        assertTrue(repo.listForDate(date).isEmpty());
+    }
+
     // ===== FlowRepository =====
 
     @Test
@@ -139,6 +183,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void snapshot_upsertInvestment_andGetAll_roundTrip() {
+        seedTypes(1L, 2L);
         SnapshotRepository repo = new SnapshotRepository();
         LocalDate date = LocalDate.of(2024, 3, 7);
         repo.upsertInvestment(date, 1L, 50000L, null);
@@ -152,6 +197,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void snapshot_upsertInvestment_overwrite_updatesValue() {
+        seedTypes(1L);
         SnapshotRepository repo = new SnapshotRepository();
         LocalDate date = LocalDate.of(2024, 3, 7);
         repo.upsertInvestment(date, 1L, 50000L, null);
@@ -170,6 +216,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void snapshot_seriesForInvestment_multipleEntries_orderedByDate() {
+        seedTypes(5L);
         SnapshotRepository repo = new SnapshotRepository();
         repo.upsertInvestment(LocalDate.of(2024, 1, 1), 5L, 10000L, null);
         repo.upsertInvestment(LocalDate.of(2024, 2, 1), 5L, 11000L, null);
@@ -277,6 +324,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_insert_andListBetween_roundTrip() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         LocalDate date = LocalDate.of(2024, 3, 7);
         Transaction t = new Transaction(0, date, 1, Transaction.BUY,
@@ -298,6 +346,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_listBetween_outsideRange_returnsEmpty() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         LocalDate date = LocalDate.of(2024, 3, 7);
         Transaction t = new Transaction(0, date, 1, Transaction.BUY,
@@ -313,6 +362,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_insert_returnsGeneratedId() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         LocalDate date = LocalDate.of(2024, 6, 1);
         Transaction t1 = new Transaction(0, date, 1, Transaction.BUY, "A", "A", 1, 100L, 100L, null);
@@ -327,6 +377,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_listBetween_multipleDates_onlyReturnsInRange() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         repo.insert(new Transaction(0, LocalDate.of(2024, 2, 1), 1, Transaction.BUY, "X", "X", 1, 100L, 100L, null));
         repo.insert(new Transaction(0, LocalDate.of(2024, 3, 7), 1, Transaction.BUY, "X", "X", 2, 100L, 200L, null));
@@ -339,6 +390,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_insert_sellType_roundTrip() {
+        seedTypes(2L);
         TransactionRepository repo = new TransactionRepository();
         LocalDate date = LocalDate.of(2024, 5, 10);
         Transaction t = new Transaction(0, date, 2, Transaction.SELL,
@@ -369,9 +421,10 @@ class RepositoryIntegrationTest {
 
     @Test
     void flow_create_investmentToInvestment_withTypeIds_roundTrip() {
+        seedTypes(1L, 2L);
         FlowRepository repo = new FlowRepository();
         LocalDate date = LocalDate.of(2024, 4, 1);
-        // SQLite does not enforce FK by default, so arbitrary type IDs are fine
+        // foreign_keys=ON: referenced investment_type rows are seeded explicitly
         Flow f = new Flow(0, date, FlowKind.INVESTMENT, 1L, FlowKind.INVESTMENT, 2L, 7500L, "rebalance");
         long id = repo.create(f);
         assertTrue(id > 0);
@@ -433,6 +486,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void snapshot_upsertInvestment_dateIsolation() {
+        seedTypes(10L);
         SnapshotRepository repo = new SnapshotRepository();
         LocalDate d1 = LocalDate.of(2024, 1, 1);
         LocalDate d2 = LocalDate.of(2024, 2, 1);
@@ -444,6 +498,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void snapshot_getAllInvestimentsForDate_viaInterfaceMethod() {
+        seedTypes(7L);
         // Verifies the @Override method with the intentional "Investiments" typo
         // correctly delegates to the concrete implementation.
         ISnapshotRepository iface = new SnapshotRepository();
@@ -457,6 +512,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void snapshot_seriesForInvestment_isolatedByInvestmentId() {
+        seedTypes(1L, 2L);
         SnapshotRepository repo = new SnapshotRepository();
         repo.upsertInvestment(LocalDate.of(2024, 1, 1), 1L, 10000L, null);
         repo.upsertInvestment(LocalDate.of(2024, 2, 1), 2L, 20000L, null);
@@ -528,6 +584,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_insert_nullQuantity_roundTrip() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         LocalDate date = LocalDate.of(2024, 7, 1);
         Transaction t = new Transaction(0, date, 1, Transaction.BUY,
@@ -540,6 +597,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_insert_nullUnitPrice_roundTrip() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         LocalDate date = LocalDate.of(2024, 7, 2);
         Transaction t = new Transaction(0, date, 1, Transaction.BUY,
@@ -552,6 +610,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_listBetween_inclusiveBoundaries() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         LocalDate start = LocalDate.of(2024, 3, 1);
         LocalDate end   = LocalDate.of(2024, 3, 31);
@@ -564,6 +623,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_listBetween_sameDate_orderedDescById() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         LocalDate date = LocalDate.of(2024, 8, 1);
         long id1 = repo.insert(new Transaction(0, date, 1, Transaction.BUY,  "A", "A", 1, 100L, 100L, null));
@@ -577,6 +637,7 @@ class RepositoryIntegrationTest {
 
     @Test
     void tx_listBetween_largeRange_returnsAll() {
+        seedTypes(1L);
         TransactionRepository repo = new TransactionRepository();
         repo.insert(new Transaction(0, LocalDate.of(2020, 1, 1), 1, Transaction.BUY, "X", "X", 1, 10L, 10L, null));
         repo.insert(new Transaction(0, LocalDate.of(2022, 6, 15), 1, Transaction.BUY, "X", "X", 2, 10L, 20L, null));

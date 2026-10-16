@@ -1421,13 +1421,13 @@
 .dark-dialog .button-bar {
     -fx-background-color: -color-bg-1;
     -fx-background-radius: 0 0 12 12;
-    -fx-padding: 10 14;
+    -fx-padding: 0;
     -fx-border-color: -color-border transparent transparent transparent;
     -fx-border-width: 1 0 0 0;
 }
-/* Neutralize the base .dialog-pane > .button-bar > .container padding so only the
-   button-bar's own padding applies — prevents double-inset in dark-dialog chrome */
-.dark-dialog > .button-bar > .container { -fx-padding: 0; }
+/* ButtonBar's skin measures its container: keep the insets there so preferred
+   height includes the action bar's vertical padding, including after errors. */
+.dark-dialog > .button-bar > .container { -fx-padding: 10 14; }
 .dark-dialog .tab-pane                               { -fx-background-color: -color-bg-0; }
 .dark-dialog .tab-pane .tab-header-area .tab-header-background { -fx-background-color: -color-bg-1; }
 .dark-dialog .tab-pane .tab-header-area              { -fx-padding: 0 0 0 6; }

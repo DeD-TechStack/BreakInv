@@ -1,6 +1,7 @@
 package com.daniel.presentation.view.util;
 
 import javafx.scene.Node;
+import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Dialog;
 import javafx.scene.paint.Color;
@@ -14,6 +15,16 @@ import javafx.stage.Window;
 public final class DialogChrome {
 
     private DialogChrome() {}
+
+    /** Refit after inline validation adds content, keeping the action bar reachable. */
+    public static void resizeToContent(Dialog<?> dialog) {
+        Platform.runLater(() -> {
+            if (!dialog.isShowing()) return;
+            dialog.getDialogPane().applyCss();
+            dialog.getDialogPane().layout();
+            dialog.getDialogPane().getScene().getWindow().sizeToScene();
+        });
+    }
 
     /**
      * @param dialog     the dialog to decorate

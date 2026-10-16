@@ -928,7 +928,7 @@ class DailyTrackingUseCaseTest {
                 null, null, BigDecimal.valueOf(1000.0)
         );
         typeRepo.add(inv);
-        LocalDate date = LocalDate.of(2024, 5, 1);
+        LocalDate date = LocalDate.now();
 
         uc.takeSnapshotIfNeeded(date);
 
@@ -942,7 +942,7 @@ class DailyTrackingUseCaseTest {
         // type with no investedValue/profitability/ticker → getCurrentValue = 0 → not upserted
         InvestmentType inv = new InvestmentType(4, "Empty");
         typeRepo.add(inv);
-        LocalDate date = LocalDate.of(2024, 5, 1);
+        LocalDate date = LocalDate.now();
 
         uc.takeSnapshotIfNeeded(date);
 
@@ -960,7 +960,7 @@ class DailyTrackingUseCaseTest {
                 "ACAO", null, null, "VALE3", BigDecimal.valueOf(30.0), 50, null
         );
         typeRepo.add(inv);
-        LocalDate date = LocalDate.of(2024, 5, 1);
+        LocalDate date = LocalDate.now();
 
         uc.takeSnapshotIfNeeded(date);
 

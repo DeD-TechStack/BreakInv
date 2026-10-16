@@ -6,7 +6,40 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MoneyTest {
 
+    @Test
+    void editableFilter_acceptsTheCurrencyTextUsedWhenReopeningScenarios() {
+        String formatted = Money.centsToText(100_000L);
+        assertTrue(Money.isEditableCurrencyText(formatted), formatted);
+        assertTrue(Money.isEditableCurrencyText("R$\u00a01.000,00"));
+        assertFalse(Money.isEditableCurrencyText("abc"));
+    }
+
     // ===== textToCentsOrZero =====
+
+    @Test
+    void decimalSettlement_usesHalfUpWithoutBinaryFloatingPoint() {
+        assertEquals(101L, Money.textToCentsOrZero("1,005"));
+        assertEquals(-101L, Money.textToCentsOrZero("-1,005"));
+    }
+
+    @Test
+    void valuesOutsideLongCents_areRejectedInsteadOfSaturated() {
+        assertThrows(ArithmeticException.class, () -> Money.textToCentsOrZero("92233720368547758,08"));
+        assertThrows(ArithmeticException.class, () -> Money.textToCentsOrZero("-92233720368547758,09"));
+    }
+
+    @Test
+    void nonFiniteValues_areRejectedInsteadOfZeroOrMaximum() {
+        assertThrows(NumberFormatException.class, () -> Money.textToCentsOrZero("NaN"));
+        assertThrows(NumberFormatException.class, () -> Money.textToCentsOrZero("Infinity"));
+    }
+
+    @Test
+    void formattingAndParsing_preserveAllCentsAtLongLimits() {
+        for (long value : new long[]{Long.MAX_VALUE, Long.MIN_VALUE, 9007199254740993L}) {
+            assertEquals(value, Money.textToCentsOrZero(Money.centsToCurrencyText(value)));
+        }
+    }
 
     @Test
     void null_returnsZero() {

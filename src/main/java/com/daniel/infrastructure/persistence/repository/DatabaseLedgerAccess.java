@@ -1,0 +1,74 @@
+package com.daniel.infrastructure.persistence.repository;
+
+import com.daniel.core.domain.ledger.LedgerStore;
+import com.daniel.core.domain.ledger.OpeningRequest;
+import com.daniel.core.domain.ledger.PortfolioRepository;
+import com.daniel.core.service.DailyTrackingUseCase;
+import com.daniel.core.service.LedgerAccess;
+import com.daniel.core.service.PortfolioService;
+import com.daniel.infrastructure.persistence.config.Database;
+
+import java.sql.Connection;
+import java.util.function.Function;
+import java.util.function.LongFunction;
+
+/**
+ * {@link LedgerAccess} on the configured {@link Database}. Movements go through
+ * {@link PortfolioService#onDatabase()} (one independent connection per unit of work). The
+ * registration + opening pair runs inside ONE {@link Database#inTransaction} unit: the ledger
+ * service used there is bound to a {@link ParticipatingStore}, which never commits or rolls
+ * back by itself, so a rejected opening makes the outer transaction roll the new
+ * {@code investment_type} row back as well.
+ */
+public final class DatabaseLedgerAccess implements LedgerAccess {
+
+    private final PortfolioService portfolio = PortfolioService.onDatabase();
+
+    @Override
+    public PortfolioService portfolio() {
+        return portfolio;
+    }
+
+    @Override
+    public <T> T transact(Function<PortfolioService, T> work) {
+        return Database.inTransaction(conn -> work.apply(new PortfolioService(new ParticipatingStore(conn))));
+    }
+
+    @Override
+    public int createInvestment(DailyTrackingUseCase.NewInvestment inv, LongFunction<OpeningRequest> opening) {
+        return Database.inTransaction(conn -> {
+            InvestmentTypeRepository repo = new InvestmentTypeRepository(conn);
+            int id = repo.createFull(inv.name(), inv.category(), inv.liquidity(), inv.investmentDate(),
+                    inv.profitability(), inv.investedValue(), inv.typeOfInvestment(), inv.indexType(),
+                    inv.indexPercentage(), inv.ticker(), inv.purchasePrice(), inv.quantity());
+            if (id <= 0) throw new IllegalStateException("cadastro sem id gerado");
+            if (inv.note() != null && !inv.note().isBlank()) {
+                new JdbcPortfolioRepository(conn).setNote(id, inv.note());
+            }
+            new PortfolioService(new ParticipatingStore(conn)).registerOpening(opening.apply(id));
+            return id;
+        });
+    }
+
+    /**
+     * Store that joins a transaction owned by the caller: both {@code transact} and {@code read}
+     * simply run on the given connection. Commit/rollback belong to whoever opened it.
+     */
+    static final class ParticipatingStore implements LedgerStore {
+        private final Connection conn;
+
+        ParticipatingStore(Connection conn) {
+            this.conn = conn;
+        }
+
+        @Override
+        public <T> T transact(Function<PortfolioRepository, T> work) {
+            return work.apply(new JdbcPortfolioRepository(conn));
+        }
+
+        @Override
+        public <T> T read(Function<PortfolioRepository, T> work) {
+            return work.apply(new JdbcPortfolioRepository(conn));
+        }
+    }
+}

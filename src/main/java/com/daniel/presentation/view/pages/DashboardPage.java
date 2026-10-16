@@ -1,8 +1,9 @@
 package com.daniel.presentation.view.pages;
 
 import com.daniel.core.domain.entity.InvestmentType;
-import com.daniel.core.domain.entity.Transaction;
+import com.daniel.core.domain.entity.StatementEntry;
 import com.daniel.core.domain.entity.Enums.CategoryEnum;
+import com.daniel.core.domain.ledger.MovementKind;
 import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.util.ChartAxisUtils;
 import com.daniel.presentation.view.util.ChartCrosshair;
@@ -81,6 +82,9 @@ public final class DashboardPage implements Page {
             "Cadastre seus primeiros investimentos para desbloquear o gráfico de performance, benchmarks e indicadores de rentabilidade.");
     private final Label sparseChartHint = new Label(
             "Histórico insuficiente. Selecione um período maior ou aguarde mais dias de registro para desbloquear o gráfico.");
+    private final Label comparisonMethodHint = new Label(
+            "Linha \"Carteira\": variação do valor dos investimentos em relação ao primeiro snapshot do período — inclui aportes e "
+            + "resgates, NÃO é rentabilidade (TWR/XIRR). Benchmark: taxa anual ATUAL projetada sobre o período, não a série histórica.");
 
     private final AtomicLong refreshEpoch = new AtomicLong(0);
 
@@ -137,8 +141,8 @@ public final class DashboardPage implements Page {
         HBox cards = new HBox(12,
                 KpiCard.hero(Icons.calendar(),    "Data",             dateLabel),
                 KpiCard.hero(Icons.dollar(),      "Patrimônio Total", totalLabel),
-                KpiCard.hero(Icons.trendingUp(),  "Lucro acumulado",  profitLabel),
-                KpiCard.hero(Icons.activity(),    "vs CDI (acum.)",   cdiComparisonLabel)
+                KpiCard.hero(Icons.trendingUp(),  "Ganho (realizado + não realizado)",  profitLabel),
+                KpiCard.hero(Icons.activity(),    "vs CDI atual (projeção)",   cdiComparisonLabel)
         );
         cards.getStyleClass().add("dashboard-kpi-row");
 
@@ -305,8 +309,7 @@ public final class DashboardPage implements Page {
 
             if (investments.isEmpty()) {
                 long cashPatrimony = daily.getTotalPatrimony(today);
-                List<com.daniel.core.domain.entity.Transaction> txs =
-                        daily.listTransactions(YearMonth.now());
+                List<StatementEntry> txs = daily.hasLedger() ? daily.statement(YearMonth.now()) : legacyRows(YearMonth.now());
                 return new DashData(investments, null, cashPatrimony, 0, 0, null, null, null, txs);
             }
 
@@ -331,8 +334,7 @@ public final class DashboardPage implements Page {
             long totalInvestmentValue = daily.getTotalInvestmentValue(today);
             java.util.TreeMap<LocalDate, Long> snaps =
                     daily.getInvestmentSnapshotSeries(dataInicio, dataFim);
-            List<com.daniel.core.domain.entity.Transaction> txs =
-                    daily.listTransactions(YearMonth.now());
+            List<StatementEntry> txs = daily.hasLedger() ? daily.statement(YearMonth.now()) : legacyRows(YearMonth.now());
 
             return new DashData(investments, currentValues, totalPatrimony, totalProfit,
                     totalInvestmentValue, snaps, dataInicio, dataFim, txs);
@@ -579,8 +581,8 @@ public final class DashboardPage implements Page {
         metricsPanel.setPadding(new Insets(4, 0, 0, 20));
         metricsPanel.getChildren().addAll(
                 benchBar,
-                buildMetricBox("Rendimento", metricRendimentoLabel),
-                buildMetricBox("Rentabilidade", metricRentabilidadeLabel),
+                buildMetricBox("Variação (R$, inclui aportes)", metricRendimentoLabel),
+                buildMetricBox("Variação % do valor", metricRentabilidadeLabel),
                 buildMetricBoxCustomTitle(metricBenchmarkTitleLabel, metricBenchmarkLabel)
         );
 
@@ -619,7 +621,10 @@ public final class DashboardPage implements Page {
         sparseChartHint.setVisible(false);
         sparseChartHint.setManaged(false);
 
-        box.getChildren().addAll(title, filterBar, datePickerBox, noComparisonHint, sparseChartHint, contentRow);
+        comparisonMethodHint.getStyleClass().add("text-helper");
+        comparisonMethodHint.setWrapText(true);
+
+        box.getChildren().addAll(title, comparisonMethodHint, filterBar, datePickerBox, noComparisonHint, sparseChartHint, contentRow);
         return box;
     }
 
@@ -1467,8 +1472,22 @@ public final class DashboardPage implements Page {
         healthDescLabel.setText(desc);
     }
 
-    private void updateRecentActivity(List<Transaction> txs) {
+    /** Without the ledger (stub wiring) fall back to the legacy transactions table. */
+    private List<StatementEntry> legacyRows(YearMonth month) {
+        List<StatementEntry> out = new ArrayList<>();
+        for (var tx : daily.listTransactions(month)) {
+            out.add(new StatementEntry(tx.date(), null, tx.type(), null, tx.id(), (long) tx.investmentTypeId(), tx.name(),
+                    null, tx.quantity() == null ? null : tx.quantity().longValue(), null, tx.totalCents(), null, null,
+                    tx.note(), null, null, false, true));
+        }
+        return out;
+    }
+
+    private void updateRecentActivity(List<StatementEntry> rows) {
         recentActivityList.getChildren().clear();
+        List<StatementEntry> txs = new ArrayList<>(rows);
+        txs.removeIf(StatementEntry::marker); // openings/reconciliations are not activity
+        Collections.reverse(txs);             // newest first
         if (txs.isEmpty()) {
             Label empty = new Label("Nenhum lançamento este mês");
             empty.getStyleClass().add("text-helper");
@@ -1477,21 +1496,35 @@ public final class DashboardPage implements Page {
         }
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM");
         txs.stream().limit(4).forEach(tx -> {
-            boolean isBuy = Transaction.BUY.equals(tx.type());
+            boolean outflow = isOutflow(tx);
             HBox row = new HBox(8);
             row.setAlignment(Pos.CENTER_LEFT);
             row.getStyleClass().add("rank-row");
-            Label typeIcon = new Label(isBuy ? "▼" : "▲");
-            typeIcon.getStyleClass().add(isBuy ? "neg" : "pos");
-            Label nameLabel = new Label(tx.name());
+            Label typeIcon = new Label(outflow ? "▼" : "▲");
+            typeIcon.getStyleClass().add(outflow ? "neg" : "pos");
+            String kind = tx.legacy() ? ("BUY".equals(tx.legacyType()) ? "Compra (legado)" : "Venda (legado)")
+                    : DailyTrackingUseCase.kindLabel(tx.kind());
+            String who = tx.investmentName() != null ? tx.investmentName() : "Caixa";
+            Label nameLabel = new Label(kind + " · " + who + (tx.reversed() ? " (estornado)" : ""));
             nameLabel.getStyleClass().add("text-sm");
-            Label valLabel = new Label((isBuy ? "- " : "+ ") + daily.brl(tx.totalCents()));
-            valLabel.getStyleClass().addAll("text-sm", isBuy ? "neg" : "pos");
+            Label valLabel = new Label((outflow ? "- " : "+ ") + daily.brl(Math.abs(tx.amountCents())));
+            valLabel.getStyleClass().addAll("text-sm", outflow ? "neg" : "pos");
             Label dateLabel = new Label(tx.date().format(fmt));
             dateLabel.getStyleClass().add("text-dim-xs");
             row.getChildren().addAll(typeIcon, nameLabel, UiSpacer.hGrow(), valLabel, dateLabel);
             recentActivityList.getChildren().add(row);
         });
+    }
+
+    /** Cash-perspective sign: money leaving cash (buy, withdrawal, negative adjustment) is an outflow. */
+    private static boolean isOutflow(StatementEntry e) {
+        if (e.legacy()) return "BUY".equals(e.legacyType());
+        return switch (e.kind()) {
+            case BUY, WITHDRAWAL -> true;
+            case ADJUSTMENT -> e.amountCents() < 0;
+            case REVERSAL -> false;
+            default -> false;
+        };
     }
 
     private String formatDate(LocalDate date) {
@@ -1514,7 +1547,7 @@ public final class DashboardPage implements Page {
         java.util.TreeMap<LocalDate, Long> snapshotSeries,
         LocalDate snapshotFrom,
         LocalDate snapshotTo,
-        List<com.daniel.core.domain.entity.Transaction> recentTransactions
+        List<StatementEntry> recentTransactions
     ) {}
 
     /** Instala tooltip num nó XYChart, com fallback para nodeProperty se o nó ainda não existe. */

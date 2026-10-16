@@ -62,6 +62,13 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
     private final TickerAutocompleteField tickerField = new TickerAutocompleteField();
     private final TextField purchasePriceField = new TextField();
     private final TextField quantityField = new TextField();
+    private final TextArea noteField = new TextArea();
+
+    // Opening (ledger) — create mode only
+    private final ToggleGroup openingGroup = new ToggleGroup();
+    private final RadioButton openingZero = new RadioButton("Começar do zero — a primeira compra/aplicação entra depois como movimento");
+    private final RadioButton openingImport = new RadioButton("Já possuo este saldo — registrar como abertura (não é aporte nem lucro)");
+    private final Label openingHint = new Label();
 
     // Container VBoxes for visibility control
     private VBox indexFieldsBox;
@@ -103,6 +110,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         Tab tab1 = new Tab("Dados Básicos", buildBasicTab());
         Tab tab2 = new Tab("Tipo & Rentabilidade", buildTypeTab());
         tabPane.getTabs().addAll(tab1, tab2);
+        if (!isEdit) tabPane.getTabs().add(new Tab("Saldo inicial", buildOpeningTab()));
 
         // ── Dialog header with title + close button ──
         Label titleLabel = new Label(title);
@@ -270,9 +278,33 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         datePicker.setMaxWidth(Double.MAX_VALUE);
         VBox dateCard = buildCard("Data", dateLabel, datePicker);
 
-        VBox content = new VBox(14, identCard, classifCard, dateCard);
+        Label noteLabel = new Label("Observação");
+        noteLabel.getStyleClass().add("form-label");
+        noteField.setPromptText("Anotações sobre este investimento (persistidas no cadastro)");
+        noteField.setPrefRowCount(2);
+        noteField.setWrapText(true);
+        VBox noteCard = buildCard("Observação", noteLabel, noteField);
+
+        VBox content = new VBox(14, identCard, classifCard, dateCard, noteCard);
         content.setPadding(new Insets(14));
 
+        return wrapInScroll(content);
+    }
+
+    private ScrollPane buildOpeningTab() {
+        openingZero.setToggleGroup(openingGroup);
+        openingImport.setToggleGroup(openingGroup);
+        openingZero.setSelected(true);
+        openingZero.setWrapText(true);
+        openingImport.setWrapText(true);
+        openingHint.getStyleClass().add("text-helper");
+        openingHint.setWrapText(true);
+        openingHint.setText("Com \"Começar do zero\", o Valor Investido/Quantidade acima ficam só como referência do cadastro; "
+                + "o patrimônio só muda quando você registrar um aporte e uma compra. Com \"Já possuo este saldo\", a quantidade e o "
+                + "valor investido informados viram o marco de abertura no ledger (capital de abertura, sem efeito em aporte ou ganho).");
+        VBox card = buildCard("Como o saldo entra no ledger", openingZero, openingImport, openingHint);
+        VBox content = new VBox(14, card);
+        content.setPadding(new Insets(14));
         return wrapInScroll(content);
     }
 
@@ -601,15 +633,27 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         if (data.quantity() != null) {
             quantityField.setText(data.quantity().toString());
         }
+        if (data.note() != null) {
+            noteField.setText(data.note());
+        }
     }
 
-    private boolean validate() {
-        StringBuilder errors = new StringBuilder();
+    TextField investedValueField() {
+        return investedValueField;
+    }
 
-        if (nameField.getText().isBlank()) errors.append("• Nome é obrigatório\n");
-        if (categoryCombo.getValue() == null) errors.append("• Categoria é obrigatória\n");
-        if (liquidityCombo.getValue() == null) errors.append("• Liquidez é obrigatória\n");
-        if (datePicker.getValue() == null) errors.append("• Data é obrigatória\n");
+    TextField purchasePriceField() {
+        return purchasePriceField;
+    }
+
+    /** Validation messages for the current form content; empty when the form may be submitted. */
+    java.util.List<String> validationErrors() {
+        java.util.List<String> errors = new java.util.ArrayList<>();
+
+        if (nameField.getText().isBlank()) errors.add("Nome é obrigatório");
+        if (categoryCombo.getValue() == null) errors.add("Categoria é obrigatória");
+        if (liquidityCombo.getValue() == null) errors.add("Liquidez é obrigatória");
+        if (datePicker.getValue() == null) errors.add("Data é obrigatória");
 
         CategoryEnum selectedCategory = categoryCombo.getValue();
         if (selectedCategory != null) {
@@ -620,17 +664,48 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
 
             if (!isVariableIncome && !isFunds && profitabilityField.getText().isBlank() &&
                     currentRentabilityMode == RentabilityMode.FIXED_RATE) {
-                errors.append("• Rentabilidade é obrigatória para ").append(selectedCategory.getDisplayName()).append("\n");
+                errors.add("Rentabilidade é obrigatória para " + selectedCategory.getDisplayName());
             }
         }
 
-        if (investedValueField.getText().isBlank()) errors.append("• Valor é obrigatório\n");
+        if (investedValueField.getText().isBlank() && (isEdit || openingImport.isSelected())) {
+            errors.add("Valor é obrigatório");
+        }
+        // The editable filter admits partial texts ("1,2,3", "-", "R"); refuse them here, at the
+        // boundary, so the result converter never throws and the typed text stays for correction.
+        if (!investedValueField.getText().isBlank() && !parsesAsMoney(investedValueField.getText())) {
+            errors.add("Valor investido inválido: " + investedValueField.getText().trim() + " (use algo como 1234,56)");
+        }
+        if (!purchasePriceField.getText().isBlank() && !parsesAsMoney(purchasePriceField.getText())) {
+            errors.add("Preço de compra inválido: " + purchasePriceField.getText().trim() + " (use algo como 35,50)");
+        }
+        if (!isEdit && openingImport.isSelected()) {
+            boolean stockLike = typeCombo.getValue() == InvestmentTypeEnum.ACAO || !quantityField.getText().isBlank();
+            if (stockLike && quantityField.getText().trim().replaceAll("[^0-9]", "").isEmpty()) {
+                errors.add("Quantidade inteira é obrigatória para importar saldo de ação/FII");
+            }
+        }
+        return errors;
+    }
 
-        if (errors.length() > 0) {
+    private static boolean parsesAsMoney(String text) {
+        try {
+            Money.textToCentsSafe(text);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private boolean validate() {
+        java.util.List<String> errors = validationErrors();
+        if (!errors.isEmpty()) {
+            StringBuilder text = new StringBuilder();
+            for (String e : errors) text.append("• ").append(e).append('\n');
             Alert alert = new Alert(Alert.AlertType.ERROR);
             alert.setTitle("Validação");
             alert.setHeaderText("Corrija os erros:");
-            alert.setContentText(errors.toString());
+            alert.setContentText(text.toString());
             alert.getDialogPane().getStylesheets().add(
                     getClass().getResource("/styles/app.css").toExternalForm());
             alert.getDialogPane().getStyleClass().addAll("dark-dialog", "dark-dialog-simple");
@@ -648,7 +723,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         return true;
     }
 
-    private InvestmentTypeData buildResult() {
+    InvestmentTypeData buildResult() {
         String name = nameField.getText().trim();
         String category = categoryCombo.getValue().name();
         String liquidity = liquidityCombo.getValue().name();
@@ -659,8 +734,11 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
             profitability = new BigDecimal(profitabilityField.getText().replace(",", "."));
         }
 
-        long cents = Money.textToCentsOrZero(investedValueField.getText());
-        BigDecimal investedValue = BigDecimal.valueOf(cents).divide(BigDecimal.valueOf(100));
+        BigDecimal investedValue = null;
+        if (!investedValueField.getText().isBlank()) {
+            long cents = Money.textToCentsOrZero(investedValueField.getText());
+            investedValue = BigDecimal.valueOf(cents).divide(BigDecimal.valueOf(100));
+        }
 
         String typeOfInv = typeCombo.getValue() != null ? typeCombo.getValue().name() : null;
         String indexType = indexCombo.getValue() != null ? indexCombo.getValue().name() : null;
@@ -684,9 +762,12 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
             if (!cleanQty.isEmpty()) quantity = Integer.parseInt(cleanQty);
         }
 
+        String note = noteField.getText() == null || noteField.getText().isBlank() ? null : noteField.getText().trim();
+        boolean importBalance = !isEdit && openingImport.isSelected();
+
         return new InvestmentTypeData(
                 name, category, liquidity, date, profitability, investedValue,
-                typeOfInv, indexType, indexPerc, ticker, purchasePrice, quantity
+                typeOfInv, indexType, indexPerc, ticker, purchasePrice, quantity, note, importBalance
         );
     }
 
@@ -748,6 +829,16 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
             BigDecimal indexPercentage,
             String ticker,
             BigDecimal purchasePrice,
-            Integer quantity
-    ) {}
+            Integer quantity,
+            String note,
+            boolean importBalance
+    ) {
+        public InvestmentTypeData(String name, String category, String liquidity, LocalDate investmentDate,
+                                  BigDecimal profitability, BigDecimal investedValue, String typeOfInvestment,
+                                  String indexType, BigDecimal indexPercentage, String ticker,
+                                  BigDecimal purchasePrice, Integer quantity) {
+            this(name, category, liquidity, investmentDate, profitability, investedValue, typeOfInvestment,
+                    indexType, indexPercentage, ticker, purchasePrice, quantity, null, false);
+        }
+    }
 }

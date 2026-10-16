@@ -8,6 +8,7 @@ import com.daniel.core.domain.repository.ITransactionRepository;
 import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.infrastructure.api.BrapiStockPriceProvider;
 import com.daniel.infrastructure.persistence.config.Database;
+import com.daniel.infrastructure.persistence.repository.DatabaseLedgerAccess;
 import com.daniel.infrastructure.persistence.repository.FlowRepository;
 import com.daniel.infrastructure.persistence.repository.InvestmentTypeRepository;
 import com.daniel.infrastructure.persistence.repository.SnapshotRepository;
@@ -29,7 +30,9 @@ public class AppConfig {
         ITransactionRepository txRepo = new TransactionRepository();
         IStockPriceProvider priceProvider = new BrapiStockPriceProvider();
 
-        this.dailyTrackingUseCase = new DailyTrackingUseCase(flowRepo, invRepo, snapRepo, txRepo, priceProvider);
+        // Production wiring: every movement goes through the ledger (portfolio_movement).
+        this.dailyTrackingUseCase = new DailyTrackingUseCase(flowRepo, invRepo, snapRepo, txRepo, priceProvider,
+                new DatabaseLedgerAccess());
     }
 
     public DailyTrackingUseCase getDailyTrackingUseCase() {
