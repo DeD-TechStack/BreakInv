@@ -12,15 +12,18 @@ import com.daniel.core.service.DailyTrackingUseCase.NewInvestment;
 import com.daniel.core.service.DailyTrackingUseCase.OpeningSpec;
 import com.daniel.presentation.view.PageHeader;
 import com.daniel.presentation.view.components.ColorBadge;
+import com.daniel.presentation.view.components.DetailsPane;
 import com.daniel.presentation.view.components.EmptyState;
+import com.daniel.presentation.view.components.HeaderActions;
 import com.daniel.presentation.view.components.InvestmentTypeDialog;
 import com.daniel.presentation.view.components.InvestmentTypeDialog.InvestmentTypeData;
 import com.daniel.presentation.view.components.LedgerRecognitionDialog;
 import com.daniel.presentation.view.components.MovementDialog;
+import com.daniel.presentation.view.components.StatStrip;
 import com.daniel.presentation.view.components.ToastHost;
+import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.Dialogs;
 import com.daniel.presentation.view.util.Icons;
-import com.daniel.presentation.view.util.Motion;
 import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.viewmodel.MovementForm;
 import javafx.application.Platform;
@@ -31,7 +34,9 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
+import javafx.scene.input.KeyCode;
 import javafx.scene.layout.*;
+import org.kordamp.ikonli.feather.Feather;
 import org.kordamp.ikonli.javafx.FontIcon;
 
 import java.math.BigDecimal;
@@ -48,18 +53,31 @@ import java.util.concurrent.atomic.AtomicLong;
  * Movimentos (aporte, retirada, compra, venda, ajuste) passam por {@link MovementDialog};
  * cadastro legado sem marco de abertura aparece identificado e só passa a movimentar após
  * reconhecimento explícito ({@link LedgerRecognitionDialog}).
+ *
+ * <p>Composição (direção A): cabeçalho com ações, faixa de valores, toolbar de filtros, tabela
+ * densa (42 px) com um menu ⋯ por linha e um painel de detalhes contextual — ao lado da tabela
+ * no amplo, abaixo dela no médio/estreito. Na tela o vocabulário é do usuário (histórico de
+ * movimentações, saldo inicial, revisão de saldo), nunca o da implementação.
  */
-public final class InvestmentTypesPage implements Page {
+public final class InvestmentTypesPage implements ResponsivePage {
+
+    static final double ROW_HEIGHT = 42;
+    static final String STAT_CASH = "Caixa";
+    static final String STAT_COST = "Custo das posições";
+    static final String STAT_COUNT = "Ativos";
 
     private final DailyTrackingUseCase daily;
-    private final VBox root = new VBox(20);
+    private final VBox root = new VBox(16);
     private final ScrollPane scrollPane = new ScrollPane();
+    private final BorderPane body = new BorderPane();
     private final TableView<InvestmentType> table = new TableView<>();
+    private final DetailsPane details = new DetailsPane();
 
     private final ObservableList<InvestmentType> allItems = FXCollections.observableArrayList();
     private FilteredList<InvestmentType> filteredItems;
     private final Map<Long, InvestmentStatus> statusById = new HashMap<>();
     private CashStatus cashStatus;
+    private Breakpoint breakpoint = Breakpoint.WIDE;
 
     private final TextField searchField = new TextField();
     private final ComboBox<String> categoryFilter = new ComboBox<>();
@@ -70,35 +88,23 @@ public final class InvestmentTypesPage implements Page {
     private TableColumn<InvestmentType, String> dateColRef;
     private TableColumn<InvestmentType, Void>   actionsColRef;
 
-    // Summary KPI labels
-    private final Label kpiTotalValue   = new Label("—");
-    private final Label kpiCountValue   = new Label("—");
-    private final Label kpiCashValue    = new Label("—");
-
-    // Cash card
+    private final StatStrip strip = new StatStrip(STAT_CASH, STAT_COST, STAT_COUNT);
     private final Label cashStateLabel = new Label();
-    private final Button cashRecognizeBtn = new Button("Reconhecer caixa legado");
-    private final Button cashReconcileBtn = new Button("Reconciliar caixa");
+
+    // Header actions
+    private final Button addBtn = new Button("Novo ativo", Icons.plus());
     private final Button depositBtn = new Button("Aporte", Icons.plus());
     private final Button withdrawBtn = new Button("Retirada", Icons.arrowRight());
-    private final Button adjustCashBtn = new Button("Ajuste de caixa", Icons.edit());
+    private final MenuButton cashMoreBtn = new MenuButton(null, Icons.of(Feather.MORE_HORIZONTAL, 14));
+    private final MenuItem adjustCashItem = new MenuItem("Ajuste de caixa…");
+    private final MenuItem cashRecognizeItem = new MenuItem("Reconhecer saldo inicial do caixa…");
+    private final MenuItem cashReconcileItem = new MenuItem("Revisar saldo do caixa…");
 
-    // Details panel
-    private final VBox detailsPanel     = new VBox(12);
-    private final Label detailsName     = new Label();
-    private final Label detailsTicker   = new Label();
-    private final HBox  detailsBadges   = new HBox(6);
-    private final Label detailsValue    = new Label();
-    private final Label detailsQty      = new Label();
-    private final Label detailsDate     = new Label();
-    private final Label detailsProf     = new Label();
-    private final Label detailsNote     = new Label();
-    private final Label detailsLedger   = new Label();
-    private final HBox  detailsActions  = new HBox(10);
-
-    private final Label ledgerBanner = new Label();
+    private final Label warningBanner = new Label();
 
     private final AtomicLong refreshEpoch = new AtomicLong();
+    /** True while a refresh swaps the list, so the transient null selection is not a close. */
+    private boolean refreshingItems;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
@@ -107,41 +113,49 @@ public final class InvestmentTypesPage implements Page {
 
         root.getStyleClass().add("page-root");
 
-        PageHeader header = new PageHeader("Meus Investimentos",
-                "Cadastro, posição e caixa — posição e caixa vêm do ledger de movimentos");
+        // ── Header + actions ─────────────────────────────────────────────────
+        PageHeader header = new PageHeader("Carteira",
+                "Posições, custo e caixa calculados a partir do histórico de movimentações");
+        addBtn.getStyleClass().add("button");
+        addBtn.setOnAction(e -> onCreate());
+        depositBtn.getStyleClass().add("ghost-btn");
+        withdrawBtn.getStyleClass().add("ghost-btn");
+        cashMoreBtn.getStyleClass().addAll("ghost-btn", "more-btn");
+        cashMoreBtn.setTooltip(new Tooltip("Mais ações de caixa"));
+        cashMoreBtn.setAccessibleText("Mais ações de caixa");
+        cashMoreBtn.getItems().addAll(adjustCashItem, cashRecognizeItem, cashReconcileItem);
 
-        // ── Top bar: add button + mini KPI summary ───────────────────────────
-        Button add = new Button("Novo Investimento", Icons.plus());
-        add.getStyleClass().add("button");
-        add.setOnAction(e -> onCreate());
+        depositBtn.setOnAction(e -> openMovement("Aporte externo", "Dinheiro que entra de fora da carteira. Aumenta o caixa; não é lucro.",
+                MovementForm.deposit()));
+        withdrawBtn.setOnAction(e -> openMovement("Retirada externa", "Dinheiro que sai da carteira. Reduz o caixa; não é prejuízo.",
+                MovementForm.withdrawal()));
+        adjustCashItem.setOnAction(e -> openMovement("Ajuste de caixa", "Correção com classificação e motivo. Rendimento/Despesa afetam o ganho realizado; Correção/Outro não.",
+                MovementForm.adjustCash()));
+        cashRecognizeItem.setOnAction(e -> LedgerRecognitionDialog.open(LedgerRecognitionDialog.Mode.OPENING, null, "Caixa", daily, this::refreshAndSnapshot));
+        cashReconcileItem.setOnAction(e -> LedgerRecognitionDialog.open(LedgerRecognitionDialog.Mode.RECONCILIATION, null, "Caixa", daily, this::refreshAndSnapshot));
 
-        HBox kpiRow = new HBox(10,
-                kpiMiniCard("Custo das posições", kpiTotalValue),
-                kpiMiniCard("Ativos",             kpiCountValue),
-                kpiMiniCard("Caixa (ledger)",     kpiCashValue)
-        );
-        kpiRow.setAlignment(Pos.CENTER_RIGHT);
+        HeaderActions headerRow = new HeaderActions(header, withdrawBtn, depositBtn, cashMoreBtn, addBtn);
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        warningBanner.setGraphic(Icons.alertTriangle());
+        warningBanner.setGraphicTextGap(8);
+        warningBanner.setWrapText(true);
+        warningBanner.getStyleClass().add("warning-banner");
+        warningBanner.setVisible(false);
+        warningBanner.setManaged(false);
 
-        HBox topBar = new HBox(12, add, spacer, kpiRow);
-        topBar.getStyleClass().add("toolbar");
-        topBar.setAlignment(Pos.CENTER_LEFT);
+        // ── Value strip + cash explanation ───────────────────────────────────
+        cashStateLabel.getStyleClass().add("text-secondary");
+        cashStateLabel.setWrapText(true);
 
-        ledgerBanner.setGraphic(Icons.alertTriangle());
-        ledgerBanner.setGraphicTextGap(8);
-        ledgerBanner.setWrapText(true);
-        ledgerBanner.getStyleClass().add("warning-banner");
-        ledgerBanner.setVisible(false);
-        ledgerBanner.setManaged(false);
-
-        // ── Filter row ────────────────────────────────────────────────────────
-        searchField.setPromptText("Buscar por nome ou ticker...");
+        // ── Filter toolbar ───────────────────────────────────────────────────
+        searchField.setPromptText("Buscar por nome ou ticker");
+        searchField.setAccessibleText("Buscar por nome ou ticker");
         FontIcon searchIcon = Icons.search();
         searchIcon.setIconSize(13);
         Button clearBtn = new Button(null, Icons.close());
         clearBtn.getStyleClass().add("icon-btn");
+        clearBtn.setTooltip(new Tooltip("Limpar busca"));
+        clearBtn.setAccessibleText("Limpar busca");
         clearBtn.setVisible(false);
         clearBtn.setManaged(false);
         clearBtn.setPadding(new Insets(2));
@@ -156,13 +170,16 @@ public final class InvestmentTypesPage implements Page {
         StackPane.setMargin(searchIcon, new Insets(0, 0, 0, 10));
         StackPane.setAlignment(clearBtn, Pos.CENTER_RIGHT);
         StackPane.setMargin(clearBtn, new Insets(0, 4, 0, 0));
-        searchField.setPadding(new Insets(9, 32, 9, 30));
+        searchField.setPadding(new Insets(7, 32, 7, 30));
+        searchBox.setMinWidth(180);
+        searchBox.setPrefWidth(320);
         HBox.setHgrow(searchBox, Priority.ALWAYS);
 
         categoryFilter.getItems().add("Todas categorias");
         for (CategoryEnum cat : CategoryEnum.values()) categoryFilter.getItems().add(cat.getDisplayName());
         categoryFilter.setValue("Todas categorias");
-        categoryFilter.setMinWidth(170);
+        categoryFilter.setMinWidth(150);
+        categoryFilter.setAccessibleText("Filtrar por categoria");
 
         Button clearFiltersBtn = new Button("Limpar filtros");
         clearFiltersBtn.getStyleClass().add("ghost-btn");
@@ -186,43 +203,45 @@ public final class InvestmentTypesPage implements Page {
         searchField.textProperty().addListener((obs, old, val) -> applyFilter());
         categoryFilter.valueProperty().addListener((obs, old, val) -> applyFilter());
 
-        // ── Table ────────────────────────────────────────────────────────────
+        // ── Table + details ──────────────────────────────────────────────────
         buildTable();
+        table.setMinHeight(280);
+        table.setPrefHeight(440);
+        VBox tableCard = new VBox(0, table);
+        tableCard.getStyleClass().add("table-card");
         VBox.setVgrow(table, Priority.ALWAYS);
-        VBox tableCard = new VBox(0);
-        tableCard.getStyleClass().add("card");
-        tableCard.getChildren().add(table);
 
-        buildDetailsPanel();
-        VBox cashCard = buildCashCard();
+        details.setOnClose(() -> {
+            table.getSelectionModel().clearSelection();
+            table.requestFocus();
+        });
 
-        root.getChildren().addAll(header, ledgerBanner, topBar, cashCard, filterRow, tableCard, detailsPanel);
+        body.setCenter(tableCard);
+        body.getStyleClass().add("carteira-body");
 
+        root.getChildren().addAll(headerRow, warningBanner, strip, cashStateLabel, filterRow, body);
+
+        // Selection lost because the DATA changed (filter/refresh): only hide, never touch the focus.
+        // The user's own close (Esc / X) goes through details.requestClose() -> onClose above.
         table.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) -> {
+            if (refreshingItems) return; // refresh re-selects the same registration right after setAll
             if (sel == null) {
-                detailsPanel.setVisible(false);
-                detailsPanel.setManaged(false);
+                details.hide();
             } else {
-                populateDetails(sel);
-                if (!detailsPanel.isVisible()) {
-                    detailsPanel.setVisible(true);
-                    detailsPanel.setManaged(true);
-                    Motion.fadeSlideIn(detailsPanel, 180, 10);
-                }
+                showDetails(sel);
             }
+        });
+        table.setOnKeyPressed(e -> {
+            InvestmentType sel = table.getSelectionModel().getSelectedItem();
+            if (e.getCode() == KeyCode.ENTER && sel != null) { showDetails(sel); details.requestFocus(); e.consume(); }
+            if (e.getCode() == KeyCode.ESCAPE && details.isVisible()) { details.requestClose(); e.consume(); }
         });
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
         scrollPane.getStyleClass().add("page-scroll");
 
-        scrollPane.sceneProperty().addListener((obs, old, scene) -> {
-            if (scene != null) {
-                applyColumnWidths(scene.getWidth());
-                scene.widthProperty().addListener((o2, w1, w2) -> applyColumnWidths(w2.doubleValue()));
-            }
-        });
-
+        onBreakpoint(Breakpoint.WIDE);
         refresh();
     }
 
@@ -236,17 +255,72 @@ public final class InvestmentTypesPage implements Page {
         refresh();
     }
 
+    @Override
+    public void onBreakpoint(Breakpoint bp) {
+        breakpoint = bp;
+        boolean wide = bp == Breakpoint.WIDE;
+        boolean narrow = bp == Breakpoint.NARROW;
+        if (liqColRef  != null) liqColRef.setVisible(wide);
+        if (dateColRef != null) dateColRef.setVisible(wide);
+        if (catColRef  != null) catColRef.setVisible(!narrow);
+        strip.setColumns(narrow ? 2 : 3);
+        placeDetails();
+        root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
+        root.getStyleClass().add(bp.styleClass());
+    }
+
+    /** Details beside the table when wide, below it otherwise — same node, no re-creation. */
+    private void placeDetails() {
+        boolean beside = breakpoint == Breakpoint.WIDE;
+        body.setRight(null);
+        body.setBottom(null);
+        if (beside) {
+            body.setRight(details);
+            BorderPane.setMargin(details, new Insets(0, 0, 0, 16));
+            details.setPrefWidth(320);
+            details.setMaxWidth(360);
+        } else {
+            body.setBottom(details);
+            BorderPane.setMargin(details, new Insets(16, 0, 0, 0));
+            details.setPrefWidth(Region.USE_COMPUTED_SIZE);
+            details.setMaxWidth(Double.MAX_VALUE);
+        }
+    }
+
     // =====================================================================
     // Table
     // =====================================================================
 
     private void buildTable() {
-        table.getStyleClass().add("table-analytic");
+        table.getStyleClass().addAll("table-analytic", "table-dense");
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        table.setFixedCellSize(ROW_HEIGHT);
 
-        TableColumn<InvestmentType, String> nameCol = new TableColumn<>("Nome");
+        TableColumn<InvestmentType, String> nameCol = new TableColumn<>("Ativo");
         nameCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(c.getValue().name()));
-        nameCol.setPrefWidth(200);
+        nameCol.setCellFactory(col -> new TableCell<>() {
+            private final Label name = new Label();
+            private final Label ticker = new Label();
+            private final HBox box = new HBox(8, name, ticker);
+            {
+                name.getStyleClass().add("cell-primary");
+                ticker.getStyleClass().add("ticker-badge");
+                box.setAlignment(Pos.CENTER_LEFT);
+            }
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setGraphic(null); setText(null); return; }
+                InvestmentType inv = getTableView().getItems().get(getIndex());
+                name.setText(inv.name());
+                boolean hasTicker = inv.ticker() != null && !inv.ticker().isBlank();
+                ticker.setText(hasTicker ? inv.ticker() : "");
+                ticker.setVisible(hasTicker); ticker.setManaged(hasTicker);
+                setGraphic(box);
+                setText(null);
+            }
+        });
+        nameCol.setPrefWidth(240);
+        nameCol.setMinWidth(140);
 
         catColRef = new TableColumn<>("Categoria");
         TableColumn<InvestmentType, String> catCol = catColRef;
@@ -265,7 +339,7 @@ public final class InvestmentTypesPage implements Page {
                 }
             }
         });
-        catCol.setPrefWidth(180);
+        catCol.setPrefWidth(150);
 
         liqColRef = new TableColumn<>("Liquidez");
         TableColumn<InvestmentType, String> liqCol = liqColRef;
@@ -284,7 +358,7 @@ public final class InvestmentTypesPage implements Page {
                 }
             }
         });
-        liqCol.setPrefWidth(160);
+        liqCol.setPrefWidth(130);
 
         dateColRef = new TableColumn<>("Data");
         TableColumn<InvestmentType, String> dateCol = dateColRef;
@@ -292,70 +366,65 @@ public final class InvestmentTypesPage implements Page {
             LocalDate date = c.getValue().investmentDate();
             return new javafx.beans.property.SimpleStringProperty(date == null ? "—" : DATE_FMT.format(date));
         });
-        dateCol.setPrefWidth(110);
+        dateCol.setPrefWidth(100);
+        dateCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> qtyCol = new TableColumn<>("Qtd.");
         qtyCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(
                 c.getValue().quantity() == null ? "—" : c.getValue().quantity().toString()));
         qtyCol.setPrefWidth(70);
+        qtyCol.getStyleClass().add("num-col");
 
-        TableColumn<InvestmentType, String> valueCol = new TableColumn<>("Custo / Valor investido");
+        TableColumn<InvestmentType, String> valueCol = new TableColumn<>("Custo");
         valueCol.setCellValueFactory(c -> {
             BigDecimal val = c.getValue().investedValue();
             if (val == null) return new javafx.beans.property.SimpleStringProperty("—");
             long cents = val.multiply(BigDecimal.valueOf(100)).longValue();
             return new javafx.beans.property.SimpleStringProperty(daily.brl(cents));
         });
-        valueCol.setPrefWidth(150);
+        valueCol.setPrefWidth(130);
+        valueCol.getStyleClass().add("num-col");
 
-        TableColumn<InvestmentType, String> ledgerCol = new TableColumn<>("Ledger");
-        ledgerCol.setCellFactory(col -> new TableCell<>() {
+        TableColumn<InvestmentType, String> statusCol = new TableColumn<>("Situação");
+        statusCol.setCellFactory(col -> new TableCell<>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty) { setGraphic(null); setText(null); return; }
                 InvestmentType inv = getTableView().getItems().get(getIndex());
                 setText(null);
-                setGraphic(ledgerBadge(statusById.get((long) inv.id())));
+                setGraphic(statusBadge(statusById.get((long) inv.id())));
             }
         });
-        ledgerCol.setPrefWidth(150);
+        statusCol.setPrefWidth(140);
 
-        TableColumn<InvestmentType, Void> actionsCol = new TableColumn<>("Ações");
-        actionsCol.setMinWidth(200);
-        actionsCol.setPrefWidth(260);
+        TableColumn<InvestmentType, Void> actionsCol = new TableColumn<>("");
+        actionsCol.getStyleClass().add("actions-col");
+        actionsCol.setMinWidth(48);
+        actionsCol.setPrefWidth(48);
+        actionsCol.setMaxWidth(56);
         actionsCol.setSortable(false);
+        actionsCol.setResizable(false);
         actionsCol.setCellFactory(col -> new TableCell<>() {
-            private final Button editBtn = new Button("Editar", Icons.edit());
-            private final Button buyBtn  = new Button("Comprar", Icons.trendingUp());
-            private final Button sellBtn = new Button("Vender", Icons.sell());
-            private final Button moreBtn = new Button("…");
-            private final FlowPane box = new FlowPane(4, 4);
+            private final MenuButton more = new MenuButton(null, Icons.of(Feather.MORE_HORIZONTAL, 14));
             {
-                editBtn.getStyleClass().add("icon-text-btn");
-                buyBtn.getStyleClass().add("icon-text-btn");
-                sellBtn.getStyleClass().addAll("icon-text-btn", "sell-action-btn");
-                moreBtn.getStyleClass().add("icon-text-btn");
-                Tooltip.install(editBtn, new Tooltip("Editar cadastro (metadados)"));
-                Tooltip.install(buyBtn, new Tooltip("Registrar compra/aplicação (usa caixa)"));
-                Tooltip.install(sellBtn, new Tooltip("Registrar venda/resgate (vai para o caixa)"));
-                Tooltip.install(moreBtn, new Tooltip("Ajuste, abertura, reconciliação, arquivar, excluir"));
-                box.setAlignment(Pos.CENTER_LEFT);
-                box.getChildren().addAll(editBtn, buyBtn, sellBtn, moreBtn);
-                editBtn.setOnAction(e -> { select(); onEdit(); });
-                buyBtn.setOnAction(e -> { select(); onBuy(); });
-                sellBtn.setOnAction(e -> { select(); onSell(); });
-                moreBtn.setOnAction(e -> { select(); moreMenu().show(moreBtn, javafx.geometry.Side.BOTTOM, 0, 0); });
+                more.getStyleClass().addAll("icon-btn", "row-more-btn");
+                more.setTooltip(new Tooltip("Ações do ativo"));
+                more.setAccessibleText("Ações do ativo");
+                more.setOnShowing(e -> {
+                    InvestmentType inv = getTableView().getItems().get(getIndex());
+                    table.getSelectionModel().select(inv);
+                    more.getItems().setAll(rowMenuItems(inv));
+                });
             }
-            private void select() { table.getSelectionModel().select(getTableRow().getItem()); }
             @Override protected void updateItem(Void item, boolean empty) {
                 super.updateItem(item, empty);
-                setGraphic(empty ? null : box);
+                setGraphic(empty ? null : more);
             }
         });
         actionsColRef = actionsCol;
 
         table.setPlaceholder(EmptyState.of("📂", "Nenhum investimento cadastrado",
-                "Cadastre seu primeiro investimento para acompanhar patrimônio, rentabilidade e distribuição."));
+                "Use \"Novo ativo\" para cadastrar o primeiro e acompanhar patrimônio e distribuição."));
 
         table.getColumns().add(nameCol);
         table.getColumns().add(catCol);
@@ -363,49 +432,68 @@ public final class InvestmentTypesPage implements Page {
         table.getColumns().add(dateCol);
         table.getColumns().add(qtyCol);
         table.getColumns().add(valueCol);
-        table.getColumns().add(ledgerCol);
+        table.getColumns().add(statusCol);
         table.getColumns().add(actionsCol);
     }
 
-    private ContextMenu moreMenu() {
-        InvestmentType sel = table.getSelectionModel().getSelectedItem();
-        InvestmentStatus st = sel == null ? null : statusById.get((long) sel.id());
-        ContextMenu menu = new ContextMenu();
-        if (st != null && !st.opened()) {
-            MenuItem open = new MenuItem("Reconhecer saldo de abertura…");
+    /** All row actions in one menu; the unavailable ones stay visible but disabled. */
+    private List<MenuItem> rowMenuItems(InvestmentType inv) {
+        InvestmentStatus st = statusById.get((long) inv.id());
+        List<MenuItem> items = new ArrayList<>();
+        MenuItem view = new MenuItem("Ver detalhes");
+        view.setOnAction(e -> { showDetails(inv); details.requestFocus(); });
+        MenuItem edit = new MenuItem("Editar cadastro…");
+        edit.setOnAction(e -> onEdit());
+        items.add(view);
+        items.add(edit);
+        items.add(new SeparatorMenuItem());
+
+        String blocked = movementBlockReason(st);
+        MenuItem buy = new MenuItem("Comprar…");
+        buy.setOnAction(e -> onBuy());
+        MenuItem sell = new MenuItem("Vender…");
+        sell.setOnAction(e -> onSell());
+        MenuItem adj = new MenuItem("Ajuste de posição…");
+        adj.setOnAction(e -> onAdjustPosition());
+        for (MenuItem m : List.of(buy, sell, adj)) m.setDisable(blocked != null);
+        items.add(buy);
+        items.add(sell);
+        items.add(adj);
+        items.add(new SeparatorMenuItem());
+
+        if (st == null || !st.opened()) {
+            MenuItem open = new MenuItem("Reconhecer saldo inicial…");
             open.setOnAction(e -> onRecognize(LedgerRecognitionDialog.Mode.OPENING));
-            menu.getItems().add(open);
-        }
-        if (st != null && st.opened()) {
-            MenuItem rec = new MenuItem(st.reconciliationPending() ? "Reconciliar (pendente)…" : "Reconciliar saldo…");
+            open.setDisable(st == null);
+            items.add(open);
+        } else {
+            MenuItem rec = new MenuItem(st.reconciliationPending() ? "Revisar saldo (pendente)…" : "Revisar saldo…");
             rec.setOnAction(e -> onRecognize(LedgerRecognitionDialog.Mode.RECONCILIATION));
-            MenuItem adj = new MenuItem("Ajuste de posição…");
-            adj.setOnAction(e -> onAdjustPosition());
-            menu.getItems().addAll(rec, adj);
+            items.add(rec);
         }
-        menu.getItems().add(new SeparatorMenuItem());
+        items.add(new SeparatorMenuItem());
         if (st != null && st.archived()) {
             MenuItem un = new MenuItem("Desarquivar");
             un.setOnAction(e -> onUnarchive());
-            menu.getItems().add(un);
+            items.add(un);
         } else {
             MenuItem ar = new MenuItem("Arquivar (preserva histórico)");
             ar.setOnAction(e -> onArchive());
-            menu.getItems().add(ar);
+            items.add(ar);
         }
         MenuItem del = new MenuItem("Excluir cadastro sem histórico");
         del.setOnAction(e -> onDelete());
-        menu.getItems().add(del);
-        return menu;
+        items.add(del);
+        return items;
     }
 
-    private HBox ledgerBadge(InvestmentStatus st) {
-        if (st == null) return createBadge("—", "#888888");
-        if (st.archived()) return createBadge("Arquivado", "#8a8a8a");
-        if (!st.opened()) return createBadge(st.hasLegacyData() ? "Legado: reconhecer" : "Sem abertura", "#d9a400");
-        if (st.reconciliationPending()) return createBadge("Reconciliação pendente", "#e07a00");
-        if (st.closed()) return createBadge("Posição zerada", "#6c8ebf");
-        return createBadge(st.mode() == PositionMode.VALUE ? "Ledger · valor" : "Ledger · qtd", "#2e9e5b");
+    private HBox statusBadge(InvestmentStatus st) {
+        if (st == null) return createBadge("—", "#8E99A8");
+        if (st.archived()) return createBadge("Arquivado", "#8E99A8");
+        if (!st.opened()) return createBadge(st.hasLegacyData() ? "Reconhecer saldo" : "Sem saldo inicial", "#E8B657");
+        if (st.reconciliationPending()) return createBadge("Revisão pendente", "#E8B657");
+        if (st.closed()) return createBadge("Posição zerada", "#7FB2F0");
+        return createBadge(st.mode() == PositionMode.VALUE ? "Por valor" : "Por quantidade", "#4ADE80");
     }
 
     private void updateClearFiltersVisibility(Button clearBtn) {
@@ -444,79 +532,40 @@ public final class InvestmentTypesPage implements Page {
         return ColorBadge.create(text, hexColor);
     }
 
-    private void applyColumnWidths(double width) {
-        if (liqColRef  != null) liqColRef.setVisible(width > 980);
-        if (dateColRef != null) dateColRef.setVisible(width > 980);
-        if (catColRef  != null) catColRef.setVisible(width > 860);
-        if (actionsColRef != null) {
-            actionsColRef.setMinWidth(200);
-            actionsColRef.setPrefWidth(260);
-        }
-    }
-
     // =====================================================================
-    // Cash card
+    // Cash
     // =====================================================================
-
-    private VBox buildCashCard() {
-        VBox card = new VBox(10);
-        card.getStyleClass().add("card");
-        Label title = new Label("CAIXA");
-        title.getStyleClass().add("card-title");
-        cashStateLabel.getStyleClass().add("text-helper");
-        cashStateLabel.setWrapText(true);
-
-        depositBtn.getStyleClass().add("button");
-        withdrawBtn.getStyleClass().add("ghost-btn");
-        adjustCashBtn.getStyleClass().add("ghost-btn");
-        cashRecognizeBtn.getStyleClass().add("primary-btn");
-        cashReconcileBtn.getStyleClass().add("ghost-btn");
-
-        depositBtn.setOnAction(e -> openMovement("Aporte externo", "Dinheiro que entra de fora da carteira. Aumenta o caixa; não é lucro.",
-                MovementForm.deposit()));
-        withdrawBtn.setOnAction(e -> openMovement("Retirada externa", "Dinheiro que sai da carteira. Reduz o caixa; não é prejuízo.",
-                MovementForm.withdrawal()));
-        adjustCashBtn.setOnAction(e -> openMovement("Ajuste de caixa", "Correção com classificação e motivo. Rendimento/Despesa afetam o ganho realizado; Correção/Outro não.",
-                MovementForm.adjustCash()));
-        cashRecognizeBtn.setOnAction(e -> LedgerRecognitionDialog.open(LedgerRecognitionDialog.Mode.OPENING, null, "Caixa", daily, this::refreshAndSnapshot));
-        cashReconcileBtn.setOnAction(e -> LedgerRecognitionDialog.open(LedgerRecognitionDialog.Mode.RECONCILIATION, null, "Caixa", daily, this::refreshAndSnapshot));
-
-        HBox actions = new HBox(8, depositBtn, withdrawBtn, adjustCashBtn, cashRecognizeBtn, cashReconcileBtn);
-        actions.setAlignment(Pos.CENTER_LEFT);
-        card.getChildren().addAll(title, cashStateLabel, actions);
-        return card;
-    }
 
     private void applyCashStatus(CashStatus cs) {
         cashStatus = cs;
         if (!daily.hasLedger() || cs == null) {
-            cashStateLabel.setText("Ledger indisponível nesta configuração.");
-            depositBtn.setDisable(true); withdrawBtn.setDisable(true); adjustCashBtn.setDisable(true);
-            cashRecognizeBtn.setVisible(false); cashRecognizeBtn.setManaged(false);
-            cashReconcileBtn.setVisible(false); cashReconcileBtn.setManaged(false);
-            Motion.animateLabelChange(kpiCashValue, "—");
+            cashStateLabel.setText("Histórico de movimentações indisponível nesta configuração.");
+            depositBtn.setDisable(true); withdrawBtn.setDisable(true); adjustCashItem.setDisable(true);
+            cashRecognizeItem.setVisible(false);
+            cashReconcileItem.setVisible(false);
+            strip.set(STAT_CASH, "—", "muted");
             return;
         }
         boolean legacyPending = !cs.opened() && cs.legacySnapshotsPresent();
         boolean recPending = cs.reconciliationPending();
         depositBtn.setDisable(cs.blocked());
         withdrawBtn.setDisable(cs.blocked());
-        adjustCashBtn.setDisable(cs.blocked());
-        cashRecognizeBtn.setVisible(legacyPending); cashRecognizeBtn.setManaged(legacyPending);
-        cashReconcileBtn.setVisible(cs.opened()); cashReconcileBtn.setManaged(cs.opened());
+        adjustCashItem.setDisable(cs.blocked());
+        cashRecognizeItem.setVisible(legacyPending);
+        cashReconcileItem.setVisible(cs.opened());
         if (legacyPending) {
-            cashStateLabel.setText("Saldo legado " + daily.brl(cs.cashCents()) + " (último snapshot manual) ainda não reconhecido pelo ledger. "
-                    + "Reconheça para liberar aportes, retiradas e compras.");
-            Motion.animateLabelChange(kpiCashValue, daily.brl(cs.cashCents()) + " (legado)");
+            cashStateLabel.setText("Saldo anterior de " + daily.brl(cs.cashCents()) + " (último registro manual) ainda não reconhecido. "
+                    + "Reconheça o saldo inicial do caixa (menu ⋯) para liberar aportes, retiradas e compras.");
+            strip.set(STAT_CASH, daily.brl(cs.cashCents()), "muted", "a reconhecer");
         } else if (recPending) {
-            cashStateLabel.setText("Caixa " + daily.brl(cs.cashCents()) + " com reconciliação pendente: confirme o saldo antes de movimentar.");
-            Motion.animateLabelChange(kpiCashValue, daily.brl(cs.cashCents()) + " (pendente)");
+            cashStateLabel.setText("Caixa " + daily.brl(cs.cashCents()) + " com revisão de saldo pendente: confirme o saldo antes de movimentar.");
+            strip.set(STAT_CASH, daily.brl(cs.cashCents()), "muted", "revisão pendente");
         } else if (!cs.opened()) {
             cashStateLabel.setText("Sem caixa registrado. O primeiro aporte abre o caixa em zero e soma o valor informado.");
-            Motion.animateLabelChange(kpiCashValue, daily.brl(0));
+            strip.set(STAT_CASH, daily.brl(0));
         } else {
-            cashStateLabel.setText("Caixa derivado do ledger (aportes, retiradas, compras, vendas e ajustes).");
-            Motion.animateLabelChange(kpiCashValue, daily.brl(cs.cashCents()));
+            cashStateLabel.setText("Caixa calculado pelo histórico: aportes, retiradas, compras, vendas e ajustes.");
+            strip.set(STAT_CASH, daily.brl(cs.cashCents()));
         }
     }
 
@@ -524,134 +573,151 @@ public final class InvestmentTypesPage implements Page {
     // Details
     // =====================================================================
 
-    private void buildDetailsPanel() {
-        detailsPanel.getStyleClass().add("details-card");
-        detailsPanel.setVisible(false);
-        detailsPanel.setManaged(false);
-
-        detailsName.getStyleClass().add("details-name");
-        detailsTicker.getStyleClass().add("details-ticker");
-        HBox nameRow = new HBox(10, detailsName, detailsTicker);
-        nameRow.setAlignment(Pos.CENTER_LEFT);
-
-        detailsValue.getStyleClass().add("details-value");
-        detailsDate.getStyleClass().add("text-helper");
-        detailsProf.getStyleClass().add("text-helper");
-        detailsNote.getStyleClass().add("text-helper");
-        detailsNote.setWrapText(true);
-        detailsLedger.getStyleClass().add("text-helper");
-        detailsLedger.setWrapText(true);
-
-        HBox valueRow = new HBox(16,
-                detailField("Custo da posição", detailsValue),
-                detailField("Quantidade",       detailsQty),
-                detailField("Data",             detailsDate),
-                detailField("Rentab. Anual",    detailsProf)
-        );
-
-        detailsActions.getStyleClass().add("details-actions");
-        detailsActions.setAlignment(Pos.CENTER_LEFT);
-
-        detailsPanel.getChildren().addAll(nameRow, detailsBadges, valueRow, detailsLedger, detailsNote, detailsActions);
-    }
-
-    private VBox detailField(String label, Label value) {
-        VBox box = new VBox(3);
-        Label lbl = new Label(label);
-        lbl.getStyleClass().add("kpi-mini-label");
-        value.getStyleClass().setAll("details-field-value");
-        box.getChildren().addAll(lbl, value);
-        return box;
-    }
-
-    private void populateDetails(InvestmentType inv) {
-        detailsName.setText(inv.name());
-        detailsTicker.setText(inv.ticker() != null ? inv.ticker() : "");
+    /** Fills and shows the details pane for {@code inv}; beside or below the table per breakpoint. */
+    void showDetails(InvestmentType inv) {
         InvestmentStatus st = statusById.get((long) inv.id());
+        details.setTitle(inv.name(), inv.ticker() != null && !inv.ticker().isBlank() ? inv.ticker() : null);
 
-        detailsBadges.getChildren().clear();
+        List<javafx.scene.Node> badges = new ArrayList<>();
         if (inv.category() != null) {
-            try { CategoryEnum cat = CategoryEnum.valueOf(inv.category()); detailsBadges.getChildren().add(createBadge(cat.getDisplayName(), cat.getColor())); } catch (Exception ignored) {}
+            try { CategoryEnum cat = CategoryEnum.valueOf(inv.category()); badges.add(createBadge(cat.getDisplayName(), cat.getColor())); } catch (Exception ignored) {}
         }
-        if (inv.liquidity() != null) {
-            try { LiquidityEnum liq = LiquidityEnum.valueOf(inv.liquidity()); detailsBadges.getChildren().add(createBadge(liq.getDisplayName(), liq.getColor())); } catch (Exception ignored) {}
-        }
-        detailsBadges.getChildren().add(ledgerBadge(st));
+        badges.add(statusBadge(st));
+        details.setBadges(badges.toArray(javafx.scene.Node[]::new));
 
-        if (inv.investedValue() != null) {
-            long cents = inv.investedValue().multiply(BigDecimal.valueOf(100)).longValue();
-            detailsValue.setText(daily.brl(cents));
+        long costCents = inv.investedValue() == null ? -1 : inv.investedValue().multiply(BigDecimal.valueOf(100)).longValue();
+        String hint;
+        if (inv.quantity() != null && inv.purchasePrice() != null) {
+            hint = inv.quantity() + " un. × preço médio R$ " + String.format("%.2f", inv.purchasePrice().doubleValue());
         } else {
-            detailsValue.setText("—");
+            hint = "Custo da posição";
         }
-        detailsQty.setText(inv.quantity() == null ? "—" : inv.quantity().toString());
-        detailsDate.setText(inv.investmentDate() != null ? DATE_FMT.format(inv.investmentDate()) : "—");
-        detailsProf.setText(inv.profitability() != null ? String.format("%.2f%%", inv.profitability()) : "—");
-        detailsNote.setText(st != null && st.note() != null ? "Observação: " + st.note() : "");
-        detailsNote.setVisible(!detailsNote.getText().isEmpty());
-        detailsNote.setManaged(!detailsNote.getText().isEmpty());
+        details.setHeadline(costCents < 0 ? "—" : daily.brl(costCents), hint);
 
-        if (st == null) {
-            detailsLedger.setText("");
-        } else if (st.archived()) {
-            detailsLedger.setText("Arquivado: histórico e snapshots preservados; desarquive para movimentar.");
-        } else if (!st.opened()) {
-            detailsLedger.setText(st.hasLegacyData()
-                    ? "Cadastro legado: quantidade/valor exibidos vêm do cadastro antigo" + (st.legacyTransactionCount() > 0
-                        ? " e há " + st.legacyTransactionCount() + " lançamento(s) antigo(s) no extrato (não reproduzidos)." : ".")
-                      + " Reconheça o saldo de abertura para passar a movimentar pelo ledger."
-                    : "Sem marco de abertura no ledger. Reconheça a abertura para movimentar.");
-        } else if (st.reconciliationPending()) {
-            detailsLedger.setText("Abertura marcada como incerta: reconcilie (com motivo) antes de comprar/vender.");
+        details.clearFields();
+        details.addField("Categoria", categoryText(inv));
+        details.addField("Liquidez", liquidityText(inv));
+        details.addField("Data", inv.investmentDate() != null ? DATE_FMT.format(inv.investmentDate()) : "—");
+        details.addField("Quantidade", inv.quantity() == null ? "—" : inv.quantity().toString());
+        if (inv.purchasePrice() != null) {
+            details.addField("Preço médio", "R$ " + String.format("%.2f", inv.purchasePrice().doubleValue()));
+        }
+        details.addField("Rentab. anual", inv.profitability() != null ? String.format("%.2f%%", inv.profitability()) : "—");
+        details.addField("Situação", statusBadge(st));
+        if (inv.typeOfInvestment() != null) details.addField("Tipo", typeText(inv.typeOfInvestment()));
+
+        StringBuilder note = new StringBuilder(statusExplanation(st));
+        if (st != null && st.note() != null && !st.note().isBlank()) {
+            if (note.length() > 0) note.append("\n");
+            note.append("Observação: ").append(st.note());
+        }
+        details.setNote(note.toString());
+
+        // Primary: Comprar, Vender, Editar — the first two disabled (with the reason) when blocked
+        String blocked = movementBlockReason(st);
+        Button edit = new Button("Editar", Icons.edit());
+        edit.getStyleClass().add("ghost-btn");
+        edit.setOnAction(e -> onEdit());
+        Button buy = new Button("Comprar", Icons.trendingUp());
+        buy.getStyleClass().add("button");
+        buy.setOnAction(e -> onBuy());
+        Button sell = new Button("Vender", Icons.sell());
+        sell.getStyleClass().add("sell-btn");
+        sell.setOnAction(e -> onSell());
+        for (Button b : List.of(buy, sell)) {
+            b.setDisable(blocked != null);
+            b.setTooltip(new Tooltip(blocked != null ? blocked : (b == buy
+                    ? "Registrar compra/aplicação (usa caixa)" : "Registrar venda/resgate (vai para o caixa)")));
+        }
+        details.setPrimaryActions(buy, sell, edit);
+
+        List<ButtonBase> advanced = new ArrayList<>();
+        Button adj = new Button("Ajuste de posição");
+        adj.getStyleClass().add("link-btn");
+        adj.setDisable(blocked != null);
+        adj.setOnAction(e -> onAdjustPosition());
+        advanced.add(adj);
+        if (st == null || !st.opened()) {
+            Button rec = new Button("Reconhecer saldo inicial", Icons.check());
+            rec.getStyleClass().add("link-btn");
+            rec.setDisable(st == null);
+            rec.setTooltip(new Tooltip(st == null ? "Histórico de movimentações indisponível" : "Informa a posição existente para passar a registrar movimentações"));
+            rec.setOnAction(e -> onRecognize(LedgerRecognitionDialog.Mode.OPENING));
+            advanced.add(rec);
         } else {
-            detailsLedger.setText(st.mode() == PositionMode.VALUE
-                    ? "Investimento por valor: resgates saem ao custo, sem ganho inferido; valor atual estimado pela taxa cadastrada."
-                    : "Posição e custo médio derivados do ledger.");
+            Button rec = new Button(st.reconciliationPending() ? "Reconciliar saldo (pendente)" : "Reconciliar saldo", Icons.check());
+            rec.getStyleClass().add(st.reconciliationPending() ? "link-btn-accent" : "link-btn");
+            rec.setTooltip(new Tooltip("Confere a posição real e registra a diferença com motivo"));
+            rec.setOnAction(e -> onRecognize(LedgerRecognitionDialog.Mode.RECONCILIATION));
+            advanced.add(rec);
         }
-
-        detailsActions.getChildren().clear();
-        Button editBtn2 = new Button("Editar", Icons.edit());
-        editBtn2.getStyleClass().add("button");
-        editBtn2.setOnAction(e -> onEdit());
-        detailsActions.getChildren().add(editBtn2);
-        if (st != null && !st.archived()) {
-            if (st.opened() && !st.reconciliationPending()) {
-                Button buy = new Button("Comprar", Icons.trendingUp());
-                buy.getStyleClass().add("button");
-                buy.setOnAction(e -> onBuy());
-                Button sell = new Button("Vender", Icons.sell());
-                sell.getStyleClass().addAll("sell-btn");
-                sell.setOnAction(e -> onSell());
-                Button adj = new Button("Ajuste", Icons.edit());
-                adj.getStyleClass().add("ghost-btn");
-                adj.setOnAction(e -> onAdjustPosition());
-                detailsActions.getChildren().addAll(buy, sell, adj);
-            }
-            if (!st.opened()) {
-                Button rec = new Button("Reconhecer abertura", Icons.check());
-                rec.getStyleClass().add("primary-btn");
-                rec.setOnAction(e -> onRecognize(LedgerRecognitionDialog.Mode.OPENING));
-                detailsActions.getChildren().add(rec);
-            } else {
-                Button rec = new Button(st.reconciliationPending() ? "Reconciliar (pendente)" : "Reconciliar", Icons.check());
-                rec.getStyleClass().add(st.reconciliationPending() ? "primary-btn" : "ghost-btn");
-                rec.setOnAction(e -> onRecognize(LedgerRecognitionDialog.Mode.RECONCILIATION));
-                detailsActions.getChildren().add(rec);
-            }
-            Button arch = new Button("Arquivar", Icons.layers());
-            arch.getStyleClass().add("ghost-btn");
-            arch.setOnAction(e -> onArchive());
-            detailsActions.getChildren().add(arch);
-        } else if (st != null) {
+        if (st != null && st.archived()) {
             Button un = new Button("Desarquivar", Icons.layers());
-            un.getStyleClass().add("button");
+            un.getStyleClass().add("link-btn");
             un.setOnAction(e -> onUnarchive());
-            detailsActions.getChildren().add(un);
+            advanced.add(un);
+        } else {
+            Button arch = new Button("Arquivar", Icons.layers());
+            arch.getStyleClass().add("link-btn");
+            arch.setTooltip(new Tooltip("Sai da lista ativa; histórico preservado"));
+            arch.setOnAction(e -> onArchive());
+            advanced.add(arch);
         }
-        Button delBtn2 = new Button("Excluir", Icons.trash());
-        delBtn2.getStyleClass().add("danger-btn");
-        delBtn2.setOnAction(e -> onDelete());
-        detailsActions.getChildren().add(delBtn2);
+        Button del = new Button("Excluir", Icons.trash());
+        del.getStyleClass().add("link-btn-danger");
+        del.setTooltip(new Tooltip("Só cadastros sem qualquer histórico"));
+        del.setOnAction(e -> onDelete());
+        advanced.add(del);
+        details.setAdvancedActions(advanced.toArray(ButtonBase[]::new));
+
+        placeDetails();
+        details.open(breakpoint == Breakpoint.WIDE);
+    }
+
+    private static String categoryText(InvestmentType inv) {
+        if (inv.category() == null) return "—";
+        try { return CategoryEnum.valueOf(inv.category()).getDisplayName(); } catch (Exception e) { return inv.category(); }
+    }
+
+    private static String liquidityText(InvestmentType inv) {
+        if (inv.liquidity() == null) return "—";
+        try { return LiquidityEnum.valueOf(inv.liquidity()).getDisplayName(); } catch (Exception e) { return inv.liquidity(); }
+    }
+
+    private static String typeText(String type) {
+        return switch (type) {
+            case "PREFIXADO" -> "Prefixado";
+            case "POS_FIXADO" -> "Pós-fixado";
+            case "HIBRIDO" -> "Híbrido";
+            case "ACAO" -> "Ação";
+            default -> type;
+        };
+    }
+
+    /** Why buy/sell/adjust are unavailable, in user vocabulary; null when allowed. */
+    private String movementBlockReason(InvestmentStatus st) {
+        if (st == null) return "Histórico de movimentações indisponível.";
+        if (st.archived()) return "Investimento arquivado: desarquive para movimentar.";
+        if (!st.opened()) return "Reconheça o saldo inicial antes de movimentar.";
+        if (st.reconciliationPending()) return "Revise o saldo pendente antes de movimentar.";
+        if (cashStatus != null && cashStatus.blocked()) return "O caixa aguarda reconhecimento ou revisão de saldo.";
+        return null;
+    }
+
+    private static String statusExplanation(InvestmentStatus st) {
+        if (st == null) return "";
+        if (st.archived()) return "Arquivado: histórico e registros preservados; desarquive para movimentar.";
+        if (!st.opened()) {
+            return st.hasLegacyData()
+                    ? "Cadastro anterior: quantidade e valor exibidos vêm do cadastro antigo" + (st.legacyTransactionCount() > 0
+                        ? " e há " + st.legacyTransactionCount() + " lançamento(s) antigo(s) no extrato (não recalculados)." : ".")
+                      + " Reconheça o saldo inicial para passar a registrar movimentações."
+                    : "Sem saldo inicial reconhecido. Reconheça-o para movimentar.";
+        }
+        if (st.reconciliationPending()) return "Saldo inicial marcado como incerto: revise-o (com motivo) antes de comprar ou vender.";
+        return st.mode() == PositionMode.VALUE
+                ? "Investimento por valor: resgates saem ao custo, sem ganho inferido; valor atual estimado pela taxa cadastrada."
+                : "Posição e custo médio calculados pelo histórico de movimentações.";
     }
 
     // =====================================================================
@@ -690,39 +756,44 @@ public final class InvestmentTypesPage implements Page {
                 ToastHost.showError("Falha ao carregar carteira: " + c.getMessage());
                 return;
             }
+            // keep the selection across a refresh when the same registration is still listed:
+            // the pane stays open and is only refilled (no hide + re-animation, no focus change)
+            InvestmentType previous = table.getSelectionModel().getSelectedItem();
             statusById.clear();
             statusById.putAll(data.statuses());
-            allItems.setAll(data.items());
-            applyFilter();
+            refreshingItems = true;
+            try {
+                allItems.setAll(data.items());
+                applyFilter();
+            } finally {
+                refreshingItems = false;
+            }
             table.refresh();
-            Motion.animateLabelChange(kpiCountValue, String.valueOf(data.items().size()));
-            Motion.animateLabelChange(kpiTotalValue, daily.brl(data.totalCostCents()));
+            strip.set(STAT_COUNT, String.valueOf(data.items().size()));
+            strip.set(STAT_COST, daily.brl(data.totalCostCents()));
             applyCashStatus(data.cash());
-            table.getSelectionModel().clearSelection();
+            if (previous != null) {
+                InvestmentType again = filteredItems.stream().filter(i -> i.id() == previous.id()).findFirst().orElse(null);
+                if (again != null) {
+                    refreshingItems = true;
+                    try { table.getSelectionModel().select(again); } finally { refreshingItems = false; }
+                    showDetails(again);
+                } else {
+                    refreshingItems = true;
+                    try { table.getSelectionModel().clearSelection(); } finally { refreshingItems = false; }
+                    details.hide();
+                }
+            }
 
             StringBuilder banner = new StringBuilder();
-            if (data.legacyCount() > 0) banner.append(data.legacyCount()).append(" cadastro(s) legado(s) ainda não reconhecido(s) pelo ledger — posição e valor mostrados vêm do cadastro antigo. ");
-            if (data.pendingCount() > 0) banner.append(data.pendingCount()).append(" investimento(s) com reconciliação pendente. ");
-            if (data.cash() != null && data.cash().blocked()) banner.append("Caixa aguarda reconhecimento/reconciliação.");
+            if (data.legacyCount() > 0) banner.append(data.legacyCount()).append(" cadastro(s) anterior(es) ainda sem saldo inicial reconhecido — posição e valor mostrados vêm do cadastro antigo. ");
+            if (data.pendingCount() > 0) banner.append(data.pendingCount()).append(" investimento(s) com revisão de saldo pendente. ");
+            if (data.cash() != null && data.cash().blocked()) banner.append("O caixa aguarda reconhecimento ou revisão de saldo.");
             boolean show = banner.length() > 0;
-            ledgerBanner.setText(banner.toString().trim());
-            ledgerBanner.setVisible(show);
-            ledgerBanner.setManaged(show);
+            warningBanner.setText(banner.toString().trim());
+            warningBanner.setVisible(show);
+            warningBanner.setManaged(show);
         }));
-    }
-
-    private HBox kpiMiniCard(String label, Label value) {
-        HBox card = new HBox(8);
-        card.getStyleClass().add("kpi-mini-card");
-        card.setAlignment(Pos.CENTER_LEFT);
-        VBox texts = new VBox(2);
-        Label lbl = new Label(label);
-        lbl.getStyleClass().add("kpi-mini-label");
-        value.getStyleClass().addAll("kpi-mini-value", "num");
-        texts.getChildren().addAll(lbl, value);
-        card.getChildren().add(texts);
-        Motion.hoverLift(card);
-        return card;
     }
 
     // =====================================================================
@@ -770,7 +841,7 @@ public final class InvestmentTypesPage implements Page {
                 spec = OpeningSpec.zero(key, openDate, mode);
             }
             runMutation(() -> daily.createInvestment(inv, spec),
-                    data.importBalance() ? "Investimento criado com saldo de abertura." : "Investimento criado (posição zero; registre aporte e compra).");
+                    data.importBalance() ? "Investimento criado com saldo inicial." : "Investimento criado (posição zero; registre aporte e compra).");
         });
     }
 
@@ -798,7 +869,7 @@ public final class InvestmentTypesPage implements Page {
                         ledgerOwned && raw != null ? raw.purchasePrice() : data.purchasePrice(),
                         ledgerOwned && raw != null ? raw.quantity() : data.quantity());
                 if (daily.hasLedger()) daily.attachNote(sel.id(), data.note());
-            }, ledgerOwned ? "Cadastro atualizado (posição/custo continuam no ledger)." : "Investimento atualizado!");
+            }, ledgerOwned ? "Cadastro atualizado (posição e custo continuam no histórico)." : "Investimento atualizado!");
         });
     }
 
@@ -819,12 +890,8 @@ public final class InvestmentTypesPage implements Page {
     }
 
     private boolean requireMovable(InvestmentType sel) {
-        InvestmentStatus st = statusById.get((long) sel.id());
-        if (st == null) { ToastHost.showWarn("Ledger indisponível."); return false; }
-        if (st.archived()) { ToastHost.showWarn("Investimento arquivado: desarquive para movimentar."); return false; }
-        if (!st.opened()) { ToastHost.showWarn("Reconheça o saldo de abertura antes de movimentar."); return false; }
-        if (st.reconciliationPending()) { ToastHost.showWarn("Reconcilie o saldo pendente antes de movimentar."); return false; }
-        if (cashStatus != null && cashStatus.blocked()) { ToastHost.showWarn("Caixa aguarda reconhecimento/reconciliação."); return false; }
+        String reason = movementBlockReason(statusById.get((long) sel.id()));
+        if (reason != null) { ToastHost.showWarn(reason); return false; }
         return true;
     }
 
@@ -872,7 +939,7 @@ public final class InvestmentTypesPage implements Page {
         InvestmentType sel = table.getSelectionModel().getSelectedItem();
         if (sel == null) { ToastHost.showWarn("Selecione um investimento."); return; }
         boolean ok = Dialogs.confirm("Arquivar", "Arquivar \"" + sel.name() + "\"?",
-                "O histórico, os lançamentos e os snapshots são preservados; o investimento sai da lista ativa.\n"
+                "O histórico, os lançamentos e os registros diários são preservados; o investimento sai da lista ativa.\n"
                 + "Posições com saldo não podem ser arquivadas (venda ou ajuste antes).");
         if (!ok) return;
         runMutation(() -> daily.archiveType(sel.id()), "Investimento arquivado (histórico preservado).");
@@ -888,7 +955,7 @@ public final class InvestmentTypesPage implements Page {
         InvestmentType sel = table.getSelectionModel().getSelectedItem();
         if (sel == null) { ToastHost.showWarn("Selecione um investimento para excluir."); return; }
         boolean ok = Dialogs.confirm("Excluir", "Excluir o cadastro \"" + sel.name() + "\"?",
-                "Só cadastros sem qualquer histórico podem ser excluídos. Se houver lançamentos ou snapshots, use Arquivar.");
+                "Só cadastros sem qualquer histórico podem ser excluídos. Se houver lançamentos ou registros diários, use Arquivar.");
         if (!ok) return;
         runMutation(() -> daily.deleteType(sel.id()), "Cadastro excluído.");
     }

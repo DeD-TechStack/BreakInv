@@ -13,8 +13,14 @@ import com.daniel.core.service.DiversificationCalculator.*;
 import com.daniel.infrastructure.api.BcbClient;
 import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.infrastructure.persistence.repository.AppSettingsRepository;
+import com.daniel.core.domain.ledger.PortfolioMetrics;
 import com.daniel.presentation.view.PageHeader;
-import com.daniel.presentation.view.components.KpiCard;
+import com.daniel.presentation.view.components.HeaderActions;
+import com.daniel.presentation.view.components.HeroValue;
+import com.daniel.presentation.view.components.Panel;
+import com.daniel.presentation.view.components.StatStrip;
+import com.daniel.presentation.view.layout.AdaptivePair;
+import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.ChartSeriesStyle;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiSpacer;
@@ -37,16 +43,28 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import com.daniel.presentation.view.util.UiExecutor;
 
-public final class DashboardPage implements Page {
+public final class DashboardPage implements ResponsivePage {
+
+    static final String STAT_CASH = "Caixa";
+    static final String STAT_POSITIONS = "Posições";
+    static final String STAT_REALIZED = "Ganho realizado";
+    static final String STAT_UNREALIZED = "Ganho não realizado";
 
     private final DailyTrackingUseCase daily;
     private final ScrollPane scrollPane = new ScrollPane();
     private final VBox root = new VBox(20);
 
-    private final Label dateLabel = new Label("—");
-    private final Label totalLabel = new Label("—");
-    private final Label profitLabel = new Label("—");
+    private final HeroValue hero = new HeroValue("Patrimônio");
+    private final StatStrip strip = new StatStrip(STAT_CASH, STAT_POSITIONS, STAT_REALIZED, STAT_UNREALIZED);
     private final Label cdiComparisonLabel = new Label("—");
+    private final Label cdiCaption = new Label("vs CDI atual (projeção)");
+    private Panel chartPanel;
+    private AdaptivePair chartPair;
+    private AdaptivePair supportPair;
+    private AdaptivePair secondPair;
+    private AdaptivePair rankPair;
+    private Breakpoint breakpoint = Breakpoint.WIDE;
+    private LocalDate referenceDate = LocalDate.now();
 
     private final ProgressBar healthBar = new ProgressBar(0);
     private final Label healthScoreLabel = new Label("—");
@@ -64,7 +82,6 @@ public final class DashboardPage implements Page {
     private final VBox investmentsByCategoryContainer = new VBox(16);
     private final VBox rankPanelAltas = new VBox(8);
     private final VBox rankPanelBaixas = new VBox(8);
-    private final HBox rankPanel = new HBox(12);
 
     private double rateCdi = 0.135;
     private double rateSelic = 0.1175;
@@ -118,79 +135,17 @@ public final class DashboardPage implements Page {
         ChartAxisUtils.installSmartAxis(waterfallXAxis, waterfallChart);
 
         comparisonChart.setTitle(null);
-        comparisonChart.setMinHeight(300);
+        comparisonChart.setMinHeight(280);
         comparisonChart.setCreateSymbols(false);
         comparisonChart.setAnimated(false);
 
         root.getStyleClass().add("page-root");
 
-        PageHeader header = new PageHeader("Dashboard", "Resumo do seu portfólio de investimentos");
-
+        // ── Header: title + data-origin chips ─────────────────────────────
+        PageHeader header = new PageHeader("Dashboard", "Resumo da carteira");
         freshnessChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
         connectionChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
-
-        VBox chipBox = new VBox(4, freshnessChip, connectionChip);
-        chipBox.setAlignment(javafx.geometry.Pos.TOP_RIGHT);
-
-        Region headerSpacer = UiSpacer.hGrow();
-        HBox.setHgrow(header, Priority.ALWAYS);
-
-        HBox headerRow = new HBox(8, header, headerSpacer, chipBox);
-        headerRow.setAlignment(javafx.geometry.Pos.TOP_LEFT);
-
-        HBox cards = new HBox(12,
-                KpiCard.hero(Icons.calendar(),    "Data",             dateLabel),
-                KpiCard.hero(Icons.dollar(),      "Patrimônio Total", totalLabel),
-                KpiCard.hero(Icons.trendingUp(),  "Ganho (realizado + não realizado)",  profitLabel),
-                KpiCard.hero(Icons.activity(),    "vs CDI atual (projeção)",   cdiComparisonLabel)
-        );
-        cards.getStyleClass().add("dashboard-kpi-row");
-
-        Label h2 = new Label("ANÁLISE DA CARTEIRA");
-        h2.getStyleClass().add("section-header");
-
-        HBox chartsRow = new HBox(12);
-
-        VBox pieBox = new VBox(8);
-        pieBox.getStyleClass().add("chart-card");
-        HBox.setHgrow(pieBox, Priority.ALWAYS);
-        Label pieTitle = new Label("DIVERSIFICAÇÃO");
-        pieTitle.getStyleClass().add("card-title");
-        pieChart.setMinHeight(300);
-        pieChart.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
-        pieChart.setLegendSide(Side.BOTTOM);
-        VBox.setVgrow(pieChart, Priority.ALWAYS);
-        pieBox.getChildren().addAll(pieTitle, pieChart);
-
-        VBox waterfallBox = new VBox(8);
-        waterfallBox.getStyleClass().add("chart-card");
-        HBox.setHgrow(waterfallBox, Priority.ALWAYS);
-        Label waterfallTitle = new Label("DISTRIBUIÇÃO DE VALORES");
-        waterfallTitle.getStyleClass().add("card-title");
-        waterfallChart.setMinHeight(280);
-        VBox.setVgrow(waterfallChart, Priority.ALWAYS);
-        waterfallBox.getChildren().addAll(waterfallTitle, waterfallChart);
-
-        rankPanel.getStyleClass().add("chart-card");
-        HBox.setHgrow(rankPanel, Priority.ALWAYS);
-
-        HBox.setHgrow(rankPanelAltas, Priority.ALWAYS);
-        HBox.setHgrow(rankPanelBaixas, Priority.ALWAYS);
-
-        Label altasTitle = new Label("MAIORES ALTAS");
-        altasTitle.getStyleClass().addAll("card-title", "pos");
-        rankPanelAltas.getChildren().add(altasTitle);
-
-        Label baixasTitle = new Label("MAIORES BAIXAS");
-        baixasTitle.getStyleClass().addAll("card-title", "neg");
-        rankPanelBaixas.getChildren().add(baixasTitle);
-
-        Separator vertSep = new Separator(javafx.geometry.Orientation.VERTICAL);
-        rankPanel.getChildren().addAll(rankPanelAltas, vertSep, rankPanelBaixas);
-
-        chartsRow.getChildren().addAll(pieBox, waterfallBox, rankPanel);
-
-        VBox comparisonBox = buildComparisonSection();
+        HeaderActions headerRow = new HeaderActions(header, connectionChip, freshnessChip);
 
         tokenWarningBanner.setGraphic(Icons.alertTriangle());
         tokenWarningBanner.setGraphicTextGap(8);
@@ -199,20 +154,87 @@ public final class DashboardPage implements Page {
         tokenWarningBanner.setVisible(false);
         tokenWarningBanner.setManaged(false);
 
-        HBox extraRow = new HBox(12, buildHealthCard(), buildRecentActivityCard());
-        HBox.setHgrow(extraRow.getChildren().get(0), Priority.ALWAYS);
-        HBox.setHgrow(extraRow.getChildren().get(1), Priority.ALWAYS);
+        // ── Hero: patrimony, with the gain beside it and the CDI projection as a chip ──
+        cdiCaption.getStyleClass().add("hero-chip-caption");
+        cdiComparisonLabel.getStyleClass().addAll("hero-chip-value", "num");
+        HBox cdiChip = new HBox(6, cdiCaption, cdiComparisonLabel);
+        cdiChip.getStyleClass().add("hero-chip");
+        cdiChip.setAlignment(Pos.CENTER_LEFT);
+        hero.setTrailing(cdiChip);
+        hero.setContext("Referência " + formatDate(referenceDate));
 
-        root.getChildren().addAll(headerRow, tokenWarningBanner, cards, extraRow, h2, chartsRow, comparisonBox, investmentsByCategoryContainer);
+        // ── Main chart block, period controls inside it ────────────────────
+        chartPanel = buildComparisonSection();
+
+        // ── Support: composition (+ health) beside recent activity ─────────
+        pieChart.setMinHeight(240);
+        pieChart.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        pieChart.setLegendSide(Side.BOTTOM);
+        VBox.setVgrow(pieChart, Priority.ALWAYS);
+        healthBar.setMaxWidth(Double.MAX_VALUE);
+        healthScoreLabel.getStyleClass().addAll("text-bold", "num");
+        healthDescLabel.getStyleClass().add("text-secondary");
+        healthDescLabel.setWrapText(true);
+        HBox healthRow = new HBox(10, new Label("Saúde da carteira"), UiSpacer.hGrow(), healthScoreLabel);
+        healthRow.setAlignment(Pos.CENTER_LEFT);
+        Panel compositionPanel = new Panel("Composição", pieChart, healthRow, healthBar, healthDescLabel)
+                .subtitle("Por categoria, sobre o valor das posições");
+        recentActivityList.setFillWidth(true);
+        Label emptyActivity = new Label("Nenhum lançamento este mês");
+        emptyActivity.getStyleClass().add("text-secondary");
+        recentActivityList.getChildren().add(emptyActivity);
+        Panel activityPanel = new Panel("Atividade recente", recentActivityList).subtitle("Lançamentos do mês atual");
+        supportPair = new AdaptivePair(compositionPanel, activityPanel, Breakpoint.NARROW, 0.5, 16);
+
+        // ── Ranking with its own block + value distribution ────────────────
+        Label altasTitle = new Label("Maiores altas");
+        altasTitle.getStyleClass().addAll("rank-title", "pos");
+        rankPanelAltas.getChildren().add(altasTitle);
+        Label baixasTitle = new Label("Maiores baixas");
+        baixasTitle.getStyleClass().addAll("rank-title", "neg");
+        rankPanelBaixas.getChildren().add(baixasTitle);
+        rankPair = new AdaptivePair(rankPanelAltas, rankPanelBaixas, Breakpoint.NARROW, 0.5, 16);
+        Panel rankBlock = new Panel("Variação do dia", rankPair)
+                .subtitle("Cotação do dia (BRAPI) por ativo; não é a rentabilidade da posição");
+        rankBlock.getStyleClass().add("rank-panel");
+        waterfallChart.setMinHeight(240);
+        VBox.setVgrow(waterfallChart, Priority.ALWAYS);
+        Panel waterfallPanel = new Panel("Valor por ativo", waterfallChart).subtitle("Posições ordenadas pelo valor atual");
+        secondPair = new AdaptivePair(rankBlock, waterfallPanel, Breakpoint.MEDIUM, 0.45, 16);
+
+        root.getChildren().addAll(headerRow, tokenWarningBanner, hero, strip, chartPanel,
+                supportPair, secondPair, investmentsByCategoryContainer);
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
         scrollPane.getStyleClass().add("page-scroll");
+        onBreakpoint(Breakpoint.WIDE);
     }
 
     @Override
     public Parent view() {
         return scrollPane;
+    }
+
+    @Override
+    public void onBreakpoint(Breakpoint bp) {
+        breakpoint = bp;
+        strip.setColumns(bp == Breakpoint.NARROW ? 2 : 4);
+        supportPair.onBreakpoint(bp);
+        secondPair.onBreakpoint(bp);
+        rankPair.onBreakpoint(bp);
+        chartPair.onBreakpoint(bp);
+        // period toggles sit in the panel header when there is room, under the title otherwise
+        boolean inHeader = bp != Breakpoint.NARROW;
+        chartPanel.body().getChildren().remove(filterBar);
+        if (inHeader) {
+            chartPanel.actions(filterBar);
+        } else {
+            chartPanel.actions();
+            chartPanel.body().getChildren().add(0, filterBar);
+        }
+        root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
+        root.getStyleClass().add(bp.styleClass());
     }
 
     @Override
@@ -295,7 +317,9 @@ public final class DashboardPage implements Page {
 
     private void refreshData() {
         LocalDate today = LocalDate.now();
-        dateLabel.setText(formatDate(today));
+        referenceDate = today;
+        hero.setContext("Referência " + formatDate(today) + " · "
+                + (BrapiClient.hasToken() ? "cotações BRAPI" : "preço de compra como referência"));
 
         final int filterMonths = selectedFilterMonths;
         final boolean useCustom = useCustomRange;
@@ -310,7 +334,7 @@ public final class DashboardPage implements Page {
             if (investments.isEmpty()) {
                 long cashPatrimony = daily.getTotalPatrimony(today);
                 List<StatementEntry> txs = daily.hasLedger() ? daily.statement(YearMonth.now()) : legacyRows(YearMonth.now());
-                return new DashData(investments, null, cashPatrimony, 0, 0, null, null, null, txs);
+                return new DashData(investments, null, cashPatrimony, 0, 0, null, null, null, txs, safeMetrics(today));
             }
 
             LocalDate dataFim = today;
@@ -337,11 +361,46 @@ public final class DashboardPage implements Page {
             List<StatementEntry> txs = daily.hasLedger() ? daily.statement(YearMonth.now()) : legacyRows(YearMonth.now());
 
             return new DashData(investments, currentValues, totalPatrimony, totalProfit,
-                    totalInvestmentValue, snaps, dataInicio, dataFim, txs);
+                    totalInvestmentValue, snaps, dataInicio, dataFim, txs, safeMetrics(today));
         }, UiExecutor.get()).thenAcceptAsync(data -> {
             if (refreshEpoch.get() != epoch) return;
-            Platform.runLater(() -> applyDashData(data, today));
+            Platform.runLater(() -> {
+                if (refreshEpoch.get() != epoch) return;
+                applyDashData(data, today);
+            });
         });
+    }
+
+    /** Ledger metrics for the stat strip; null without the ledger or when it cannot be read. */
+    private PortfolioMetrics safeMetrics(LocalDate today) {
+        if (!daily.hasLedger()) return null;
+        try {
+            return daily.metrics(today);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private void applyStrip(long totalPatrimony, long totalInvestmentValue, PortfolioMetrics m) {
+        // cash = patrimony − positions: the two numbers the page already shows, nothing new
+        strip.set(STAT_CASH, daily.brl(Math.max(0, totalPatrimony - totalInvestmentValue)));
+        strip.set(STAT_POSITIONS, daily.brl(totalInvestmentValue));
+        if (m == null) {
+            strip.set(STAT_REALIZED, "—", "muted");
+            strip.set(STAT_UNREALIZED, "—", "muted");
+            return;
+        }
+        strip.set(STAT_REALIZED, signed(m.realizedGainCents()), tone(m.realizedGainCents()));
+        strip.set(STAT_UNREALIZED, signed(m.unrealizedGainCents()), tone(m.unrealizedGainCents()));
+    }
+
+    private String signed(long cents) {
+        if (cents == 0) return daily.brl(0);
+        return (cents > 0 ? "+ " : "- ") + daily.brlAbs(Math.abs(cents));
+    }
+
+    private static String tone(long cents) {
+        return cents == 0 ? "muted" : (cents > 0 ? "pos" : "neg");
     }
 
     private void applyDashData(DashData data, LocalDate today) {
@@ -349,12 +408,9 @@ public final class DashboardPage implements Page {
 
         if (investments.isEmpty()) {
             long cashPatrimony = data.totalPatrimony();
-            if (cashPatrimony > 0) {
-                Motion.animateLabelChange(totalLabel, daily.brl(cashPatrimony));
-            } else {
-                totalLabel.setText("—");
-            }
-            profitLabel.setText("—");
+            hero.setValue(cashPatrimony > 0 ? daily.brl(cashPatrimony) : "—");
+            hero.setSecondary(null, null);
+            applyStrip(cashPatrimony, 0, data.metrics());
             cdiComparisonLabel.setText("—");
             pieChart.getData().clear();
             waterfallChart.getData().clear();
@@ -371,20 +427,15 @@ public final class DashboardPage implements Page {
         long totalPatrimony = data.totalPatrimony();
         long totalProfit = data.totalProfit();
 
-        Motion.animateLabelChange(totalLabel, daily.brl(totalPatrimony));
-
-        profitLabel.setText(totalProfit == 0 ? "—" :
-                ((totalProfit >= 0 ? "+ " : "- ") + daily.brlAbs(Math.abs(totalProfit))));
-        profitLabel.getStyleClass().removeAll("pos", "neg", "muted");
-        if (totalProfit == 0) {
-            profitLabel.getStyleClass().add("muted");
-        } else {
-            profitLabel.getStyleClass().add(totalProfit >= 0 ? "pos" : "neg");
-        }
+        hero.setValue(daily.brl(totalPatrimony));
+        hero.setSecondary(totalProfit == 0 ? "sem ganho registrado"
+                : ((totalProfit >= 0 ? "+ " : "- ") + daily.brlAbs(Math.abs(totalProfit)) + " de ganho"),
+                tone(totalProfit));
 
         // CDI comparison uses investment-only value: cash is not invested capital and should not
         // inflate the benchmark comparison as if it earned CDI returns.
         long totalInvestmentValue = data.totalInvestmentValue();
+        applyStrip(totalPatrimony, totalInvestmentValue, data.metrics());
         updateCDIComparison(today, investments, totalInvestmentValue);
         updatePieChart(investments, currentValues);
         updateWaterfallChart(investments, currentValues);
@@ -544,16 +595,10 @@ public final class DashboardPage implements Page {
         });
     }
 
-    private VBox buildComparisonSection() {
-        VBox box = new VBox(12);
-        box.getStyleClass().add("chart-card");
-
-        Label title = new Label("PERFORMANCE DA CARTEIRA");
-        title.getStyleClass().add("card-title");
-
+    private Panel buildComparisonSection() {
         // Botões de benchmark
         ToggleGroup benchTg = new ToggleGroup();
-        HBox benchBar = new HBox(8);
+        FlowPane benchBar = new FlowPane(8, 8);
         benchBar.setAlignment(Pos.CENTER_RIGHT);
 
         for (String bench : List.of("CDI", "SELIC", "IPCA", "IBOVESPA")) {
@@ -577,8 +622,8 @@ public final class DashboardPage implements Page {
 
         VBox metricsPanel = new VBox(14);
         metricsPanel.setAlignment(Pos.TOP_RIGHT);
-        metricsPanel.setMinWidth(160);
-        metricsPanel.setPadding(new Insets(4, 0, 0, 20));
+        metricsPanel.setMinWidth(150);
+        metricsPanel.setPadding(new Insets(4, 0, 0, 8));
         metricsPanel.getChildren().addAll(
                 benchBar,
                 buildMetricBox("Variação (R$, inclui aportes)", metricRendimentoLabel),
@@ -599,14 +644,12 @@ public final class DashboardPage implements Page {
 
         compWrapper = ChartCrosshair.install(comparisonChart,
                 y -> String.format("%s%.2f%%", y >= 0 ? "+" : "", y).replace('.', ','));
-        HBox chartRow = new HBox(0, compWrapper);
-        HBox.setHgrow(compWrapper, Priority.ALWAYS);
+        VBox chartRow = new VBox(0, compWrapper);
+        VBox.setVgrow(compWrapper, Priority.ALWAYS);
         chartRow.setAlignment(Pos.TOP_LEFT);
 
-        // metricsPanel fica fora do chartRow, em coluna separada à direita
-        HBox contentRow = new HBox(12, chartRow, metricsPanel);
-        HBox.setHgrow(chartRow, Priority.ALWAYS);
-        contentRow.setAlignment(Pos.TOP_LEFT);
+        // metrics beside the chart when wide, under it when the content is narrow
+        chartPair = new AdaptivePair(chartRow, metricsPanel, Breakpoint.MEDIUM, 0.78, 12);
 
         // Barra de filtro de período
         buildFilterBar();
@@ -621,11 +664,14 @@ public final class DashboardPage implements Page {
         sparseChartHint.setVisible(false);
         sparseChartHint.setManaged(false);
 
-        comparisonMethodHint.getStyleClass().add("text-helper");
+        comparisonMethodHint.getStyleClass().add("text-secondary");
         comparisonMethodHint.setWrapText(true);
 
-        box.getChildren().addAll(title, comparisonMethodHint, filterBar, datePickerBox, noComparisonHint, sparseChartHint, contentRow);
-        return box;
+        Panel panel = new Panel("Evolução da carteira", datePickerBox, noComparisonHint, sparseChartHint, chartPair, comparisonMethodHint)
+                .subtitle("Variação do valor das posições no período, comparada ao benchmark");
+        panel.getStyleClass().add("main-chart-panel");
+        panel.actions(filterBar);
+        return panel;
     }
 
     private VBox buildMetricBox(String label, Label valueLabel) {
@@ -893,8 +939,8 @@ public final class DashboardPage implements Page {
     private void updateRankPanel(List<InvestmentType> investments, Map<Long, Long> currentValues) {
         final long rankEpoch = refreshEpoch.get();
         // Keep the titles, show loading
-        rankPanelAltas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("card-title")));
-        rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("card-title")));
+        rankPanelAltas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
+        rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
         Label loading = new Label("Carregando...");
         loading.getStyleClass().add("muted");
         rankPanelAltas.getChildren().add(loading);
@@ -954,8 +1000,8 @@ public final class DashboardPage implements Page {
             return entries;
         }).thenAcceptAsync(entries -> Platform.runLater(() -> {
             if (refreshEpoch.get() != rankEpoch) return;
-            rankPanelAltas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("card-title")));
-            rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("card-title")));
+            rankPanelAltas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
+            rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
 
             if (entries.isEmpty()) {
                 Label empty = new Label("Nenhum ativo");
@@ -1044,7 +1090,7 @@ public final class DashboardPage implements Page {
                                              long totalPatrimony) {
         investmentsByCategoryContainer.getChildren().clear();
 
-        Label title = new Label("Investimentos por Categoria");
+        Label title = new Label("Investimentos por categoria");
         title.getStyleClass().add("category-section-title");
 
         investmentsByCategoryContainer.getChildren().add(title);
@@ -1490,7 +1536,7 @@ public final class DashboardPage implements Page {
         Collections.reverse(txs);             // newest first
         if (txs.isEmpty()) {
             Label empty = new Label("Nenhum lançamento este mês");
-            empty.getStyleClass().add("text-helper");
+            empty.getStyleClass().add("text-secondary");
             recentActivityList.getChildren().add(empty);
             return;
         }
@@ -1547,7 +1593,8 @@ public final class DashboardPage implements Page {
         java.util.TreeMap<LocalDate, Long> snapshotSeries,
         LocalDate snapshotFrom,
         LocalDate snapshotTo,
-        List<StatementEntry> recentTransactions
+        List<StatementEntry> recentTransactions,
+        PortfolioMetrics metrics
     ) {}
 
     /** Instala tooltip num nó XYChart, com fallback para nodeProperty se o nó ainda não existe. */
