@@ -1,34 +1,38 @@
 /* ═══════════════════════════════════════════════
-   ROOT — Design Tokens + JavaFX Overrides
-   System font stack: Segoe UI Variable (Win11) →
-   Segoe UI (Win10) → SF Pro Display (macOS) →
-   Roboto (Linux) → Helvetica Neue → Arial
+   ROOT — Design Tokens + JavaFX Overrides (V2)
+   Font: the JavaFX logical "System" family (Segoe UI on
+   Windows, SF on macOS, the platform default on Linux).
+   One family only — JavaFX ignores web-style fallback lists.
+   Body 14 px · metadata ≥ 12 px · every text colour ≥ 4.5:1
+   on the surface it sits on (text-3 on surface-3 = 4.8:1).
    ═══════════════════════════════════════════════ */
 .root {
-    -fx-font-family: "Poppins","Inter","Segoe UI Variable Text","Segoe UI","SF Pro Text","Roboto","Helvetica Neue","Arial",sans-serif;
+    -fx-font-family: "System";
+    -fx-font-size: 14px;
 
-    /* Backgrounds */
-    -color-bg-0: #0B1220;
-    -color-bg-1: #0F1923;
-    -color-bg-2: #131E2A;
+    /* Backgrounds — slightly warm neutrals, not blue */
+    -color-bg-0: #0F1216;
+    -color-bg-1: #12161B;
+    -color-bg-2: #161B21;
 
-    /* Surfaces */
-    -color-surface:   #162032;
-    -color-surface-2: #1A2538;
-    -color-surface-3: #1E2A3E;
+    /* Surfaces: window → block → active row/hover/chip */
+    -color-surface:   #1B212B;
+    -color-surface-2: #232B37;
+    -color-surface-3: #2A3340;
 
     /* Borders */
-    -color-border:        rgba(255,255,255,0.08);
-    -color-border-strong: rgba(255,255,255,0.15);
+    -color-border:        #2A3340;
+    -color-border-strong: #39434F;
 
-    /* Text */
-    -color-text-1: #E8ECF1;
-    -color-text-2: #B0BAC9;
-    -color-text-3: #7A8BA0;
+    /* Text (contrast on surface / surface-2): 13.5 · 7.4 · 6.1 */
+    -color-text-1: #E7EBF0;
+    -color-text-2: #A6B0BD;
+    -color-text-3: #95A0AE;
 
-    /* Accent */
+    /* Accent — fill for the primary action (ink text), active nav bar, main series */
     -color-accent:        #22C55E;
-    -color-accent-strong: #16A34A;
+    -color-accent-strong: #1FB457;
+    -color-accent-ink:    #06160C;
     -color-accent-soft:   rgba(34,197,94,0.12);
     -color-accent-a25:    rgba(34,197,94,0.25);
     -color-accent-glow:   rgba(34,197,94,0.30);
@@ -48,11 +52,11 @@
     -color-warning-a32:   rgba(245,158,11,0.32);
     -color-info-a12:      rgba(59,130,246,0.12);
 
-    /* State */
-    -color-success: #22C55E;
-    -color-warning: #F59E0B;
-    -color-danger:  #EF4444;
-    -color-info:    #3B82F6;
+    /* State — as text on surface: 9.3 · 8.7 · 5.7 · 7.3 */
+    -color-success: #4ADE80;
+    -color-warning: #E8B657;
+    -color-danger:  #F4716B;
+    -color-info:    #7FB2F0;
 
     /* Warning banner surface */
     -color-warning-bg:   derive(-color-warning, -65%);
@@ -82,14 +86,14 @@
 }
 
 /* Legacy .h1 alias */
-.h1 { -fx-font-size: 22px; -fx-font-weight: 800; -fx-text-fill: -color-text-1; }
-.h2 { -fx-font-family: "Segoe UI Variable Display","Segoe UI","SF Pro Display","Roboto","Helvetica Neue","Arial",sans-serif; -fx-font-size: 18px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
-.h3 { -fx-font-family: "Segoe UI Variable Display","Segoe UI","SF Pro Display","Roboto","Helvetica Neue","Arial",sans-serif; -fx-font-size: 15px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
+.h1 { -fx-font-size: 20px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.h2 { -fx-font-size: 18px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.h3 { -fx-font-size: 15px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
 
-/* Numeric typography — tabular-feel display font */
-.num    { -fx-font-family: "Bahnschrift","Segoe UI Variable Display","Segoe UI","Roboto","Arial",sans-serif; -fx-font-weight: 600; }
-.num-lg { -fx-font-family: "Bahnschrift","Segoe UI Variable Display","Segoe UI","Roboto","Arial",sans-serif; -fx-font-size: 24px; -fx-font-weight: 700; }
-.num-xl { -fx-font-family: "Bahnschrift","Segoe UI Variable Display","Segoe UI","Roboto","Arial",sans-serif; -fx-font-size: 32px; -fx-font-weight: 700; }
+/* Numeric typography — same System family; weight and right alignment carry the hierarchy */
+.num    { -fx-font-weight: 600; }
+.num-lg { -fx-font-size: 24px; -fx-font-weight: 700; }
+.num-xl { -fx-font-size: 32px; -fx-font-weight: 700; }
 
 .muted    { -fx-text-fill: -color-text-2; }
 
@@ -116,8 +120,8 @@
 .text-helper { -fx-font-size: 12px; -fx-font-weight: 400; -fx-text-fill: -color-text-3; -fx-opacity: 0.9; }
 .text-link   { -fx-text-fill: -color-accent; -fx-underline: false; -fx-cursor: hand; -fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent; }
 .text-link:hover { -fx-underline: true; -fx-opacity: 0.85; }
-.text-dim    { -fx-font-size: 12px; -fx-font-weight: 400; -fx-opacity: 0.65; }
-.text-dim-xs { -fx-font-size: 11px; -fx-font-weight: 400; -fx-opacity: 0.55; }
+.text-dim    { -fx-font-size: 12px; -fx-font-weight: 400; -fx-text-fill: -color-text-2; }
+.text-dim-xs { -fx-font-size: 12px; -fx-font-weight: 400; -fx-text-fill: -color-text-3; }
 
 /* State colors */
 .pos { -fx-text-fill: -color-success; }
@@ -219,11 +223,9 @@
 }
 
 /* ── Sidebar ── */
+/* Width (220 / rail 56) is owned by AppShell in code — never set it here, author CSS would win. */
 .sidebar {
-    -fx-background-color: linear-gradient(to bottom, -color-bg-1, derive(-color-bg-1, -6%));
-    -fx-pref-width: 240;
-    -fx-min-width: 240;
-    -fx-max-width: 240;
+    -fx-background-color: -color-bg-1;
     -fx-padding: 0 0 16 0;
     -fx-spacing: 0;
     -fx-border-color: -color-border-strong;
@@ -245,7 +247,7 @@
 }
 
 .sidebar-sub {
-    -fx-font-size: 10px;
+    -fx-font-size: 12px;
     -fx-text-fill: -color-text-3;
 }
 
@@ -256,8 +258,8 @@
 }
 
 .sidebar-nav-label {
-    -fx-font-size: 10px;
-    -fx-font-weight: 900;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
     -fx-text-fill: -color-text-3;
     -fx-padding: 12 8 4 8;
 }
@@ -281,27 +283,27 @@
 .sidebar .nav-btn:hover {
     -fx-background-color: -color-surface;
     -fx-text-fill: -color-text-1;
-    -fx-effect: dropshadow(gaussian, -color-accent-glow, 6, 0, 0, 0);
 }
 
+/* Active item: surface + 3 px green bar; green only on the icon, text stays text-1 */
 .sidebar .nav-btn.active {
-    -fx-background-color: -color-accent-soft;
-    -fx-text-fill: -color-accent;
-    -fx-font-weight: 800;
+    -fx-background-color: -color-surface-2;
+    -fx-text-fill: -color-text-1;
+    -fx-font-weight: 700;
     -fx-border-color: transparent transparent transparent -color-accent;
     -fx-border-width: 0 0 0 3;
     -fx-padding: 10 14 10 11;
     -fx-background-radius: 0 8 8 0;
     -fx-border-radius: 0 8 8 0;
 }
+.sidebar .nav-btn.active .ikonli-font-icon { -fx-icon-color: -color-accent; }
 .sidebar .nav-btn.active:hover {
-    -fx-background-color: derive(-color-accent-soft, 25%);
+    -fx-background-color: -color-surface-3;
 }
 .sidebar .nav-btn:focused {
-    -fx-border-color: transparent transparent transparent -color-accent-a45;
+    -fx-border-color: transparent transparent transparent -color-success;
     -fx-border-width: 0 0 0 3;
     -fx-background-color: -color-surface;
-    -fx-effect: dropshadow(gaussian, -color-accent-glow, 6, 0, 0, 0);
 }
 
 /* Footer */
@@ -313,7 +315,7 @@
 }
 
 .sidebar-footer-version {
-    -fx-font-size: 10px;
+    -fx-font-size: 12px;
     -fx-text-fill: -color-text-3;
 }
 
@@ -423,18 +425,17 @@
 /* ── Level 2: Section Card — general content ── */
 .card {
     -fx-background-color: -color-surface;
-    -fx-background-radius: 14;
-    -fx-border-radius: 14;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
     -fx-border-color: -color-border;
     -fx-padding: 16;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.42), 10, 0, 0, 3);
 }
 
-/* Small muted label above a card's primary content */
+/* Card title — 15 px semibold; hierarchy from size, not uppercase micro-type */
 .card-title {
-    -fx-font-size: 11px;
-    -fx-font-weight: 900;
-    -fx-text-fill: -color-text-2;
+    -fx-font-size: 15px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -color-text-1;
     -fx-padding: 0 0 6 0;
 }
 
@@ -463,12 +464,11 @@
 
 /* Chart container card */
 .chart-card {
-    -fx-background-color: derive(-color-surface, -2%);
-    -fx-background-radius: 14;
-    -fx-border-radius: 14;
+    -fx-background-color: -color-surface;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
     -fx-border-color: -color-border;
     -fx-padding: 16 16 8 16;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.42), 10, 0, 0, 3);
 }
 
 .chart-tooltip {
@@ -771,16 +771,19 @@
 
 /* Default button — green primary */
 .button {
-    -fx-background-color: -color-accent-strong;
-    -fx-text-fill: white;
+    -fx-background-color: -color-accent;
+    -fx-text-fill: -color-accent-ink;
     -fx-background-radius: 10;
-    -fx-padding: 9 16;
-    -fx-font-weight: 800;
+    -fx-padding: 8 14;
+    -fx-font-weight: 700;
     -fx-cursor: hand;
+    -fx-border-color: transparent;
+    -fx-border-width: 2;
+    -fx-border-radius: 10;
 }
-.button:hover    { -fx-background-color: -color-accent; }
-.button:pressed  { -fx-background-color: derive(-color-accent-strong, -25%); }
-.button:focused  { -fx-effect: dropshadow(gaussian, -color-accent-a45, 8, 0, 0, 0); }
+.button:hover    { -fx-background-color: derive(-color-accent, 8%); }
+.button:pressed  { -fx-background-color: derive(-color-accent, -10%); }
+.button:focused  { -fx-border-color: -color-success; }
 .button:disabled { -fx-opacity: 0.4; -fx-cursor: default; }
 .ghost-btn:disabled    { -fx-opacity: 0.4; -fx-cursor: default; }
 .danger-btn:disabled   { -fx-opacity: 0.4; -fx-cursor: default; }
@@ -982,7 +985,9 @@
     -fx-background-color: -color-surface-3;
 }
 .table-analytic .table-row-cell:filled:selected {
-    -fx-background-color: -color-accent-soft;
+    -fx-background-color: -color-surface-2;
+    -fx-border-color: transparent transparent transparent -color-accent;
+    -fx-border-width: 0 0 0 3;
 }
 .table-analytic .table-row-cell:filled:selected .table-cell {
     -fx-text-fill: -color-text-1;
@@ -1194,8 +1199,8 @@
 
 /* ── BRAPI status chips — Dashboard header top-right ── */
 .brapi-chip {
-    -fx-font-size: 10px;
-    -fx-font-weight: 700;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
     -fx-padding: 3 10;
     -fx-background-radius: 20;
 }
@@ -1548,7 +1553,6 @@
 
 /* Performance metric values (dashboard chart panel) */
 .metric-lg {
-    -fx-font-family: "Bahnschrift","Segoe UI Variable Display","Segoe UI","Roboto","Arial",sans-serif;
     -fx-font-size: 18px;
     -fx-font-weight: 700;
     -fx-text-fill: -color-text-1;
@@ -1629,7 +1633,7 @@
 /* Info box (value + label pair) */
 .info-box       { -fx-min-width: 90; }
 .info-box-value { -fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: -color-text-1; }
-.info-box-label { -fx-font-size: 10px; -fx-opacity: 0.5; }
+.info-box-label { -fx-font-size: 12px; -fx-text-fill: -color-text-2; }
 
 /* Rentability label states */
 .rent-value  { -fx-font-weight: bold; -fx-font-size: 12px; }
@@ -1651,22 +1655,21 @@
    ═══════════════════════════════════════════════ */
 .kpi-card {
     -fx-background-color: -color-surface;
-    -fx-background-radius: 14;
-    -fx-border-radius: 14;
-    -fx-border-color: -color-accent -color-border -color-border -color-border;
-    -fx-border-width: 2 1 1 1;
-    -fx-padding: 16 18;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-border-color: -color-border;
+    -fx-border-width: 1;
+    -fx-padding: 14 16;
     -fx-spacing: 6;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.28), 8, 0, 0, 2);
 }
 .kpi-card .kpi-label {
-    -fx-font-size: 11px;
-    -fx-font-weight: 800;
-    -fx-text-fill: -color-text-3;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+    -fx-text-fill: -color-text-2;
 }
 .kpi-card .kpi-value {
     -fx-font-size: 22px;
-    -fx-font-weight: 900;
+    -fx-font-weight: 700;
     -fx-text-fill: -color-text-1;
 }
 .kpi-card .kpi-value.pos { -fx-text-fill: -color-success; }
@@ -1717,8 +1720,8 @@
     -fx-padding: 6 14;
     -fx-min-width: 90;
 }
-.kpi-mini-label { -fx-font-size: 10px; -fx-font-weight: 700; -fx-text-fill: -color-text-3; }
-.kpi-mini-value { -fx-font-size: 14px; -fx-font-weight: 800; -fx-text-fill: -color-text-1; }
+.kpi-mini-label { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; }
+.kpi-mini-value { -fx-font-size: 14px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
 
 /* ═══════════════════════════════════════════════
    COMPACT — Narrow breakpoint (window < 1100px)
@@ -1731,7 +1734,7 @@
     -fx-max-width: 200;
 }
 .compact .sidebar-title { -fx-font-size: 14px; }
-.compact .sidebar-sub   { -fx-font-size: 10px; }
+.compact .sidebar-sub   { -fx-font-size: 12px; }
 .compact .sidebar .nav-btn {
     -fx-padding: 9 10;
     -fx-font-size: 12px;
@@ -1981,10 +1984,7 @@
     -fx-effect: dropshadow(gaussian, -color-accent-glow, 6, 0, 0, 0);
 }
 
-/* Sidebar active glow — slightly more visible accent shadow */
-.sidebar .nav-btn.active {
-    -fx-effect: dropshadow(gaussian, -color-accent-glow, 8, 0, 2, 0);
-}
+/* (sidebar active glow removed in V2: no shadows outside overlays) */
 
 /* Table — ensure empty placeholder takes full height nicely */
 .table-view .placeholder {
@@ -2054,3 +2054,155 @@
 
 /* Ensure dialog text-field prompt color is consistent */
 .dark-dialog .text-field { -fx-prompt-text-fill: -color-text-3; }
+
+/* ═══════════════════════════════════════════════
+   V2 — FOUNDATION (shell, breakpoints, components)
+   Breakpoint classes (bp-narrow / bp-medium / bp-wide) are
+   set by AppShell on the frame and by pages on their root,
+   from the CONTENT width — not the window width.
+   ═══════════════════════════════════════════════ */
+
+/* ── Text roles ── */
+.text-secondary { -fx-font-size: 13px; -fx-font-weight: 400; -fx-text-fill: -color-text-2; }
+.text-helper    { -fx-font-size: 12px; -fx-font-weight: 400; -fx-text-fill: -color-text-3; -fx-opacity: 1; }
+
+/* ── Shell / rail ── */
+.sidebar-toggle { -fx-padding: 4; }
+.sidebar.rail .sidebar-brand { -fx-padding: 16 0 12 0; -fx-alignment: CENTER; }
+/* Rail: the expand button is the only mouse way out, so it is a 40×32+ target centred in 56 px */
+.sidebar.rail .sidebar-toggle { -fx-padding: 9 13; }
+.sidebar.rail .sidebar-nav   { -fx-padding: 12 6 0 6; }
+.sidebar.rail .nav-btn       { -fx-padding: 10 0; -fx-graphic-text-gap: 0; -fx-alignment: CENTER; -fx-content-display: GRAPHIC_ONLY; }
+.sidebar.rail .nav-btn.active { -fx-padding: 10 0 10 0; -fx-background-radius: 8; -fx-border-radius: 8; }
+.sidebar.rail .sidebar-footer { -fx-padding: 12 6 0 6; -fx-alignment: CENTER; }
+
+/* ── Page density per breakpoint ── */
+.bp-medium .page-root { -fx-padding: 20 24 24 24; -fx-spacing: 16; }
+.bp-narrow .page-root { -fx-padding: 12 16 16 16; -fx-spacing: 12; }
+.bp-narrow .page-title { -fx-font-size: 18px; }
+.bp-narrow .card, .bp-narrow .panel-block { -fx-padding: 12; }
+.bp-narrow .table-analytic .table-cell { -fx-padding: 0 10; }
+
+/* ── Header with actions (PageHeader + buttons that wrap under it) ── */
+.header-actions { -fx-hgap: 10; -fx-vgap: 8; -fx-alignment: BOTTOM_LEFT; }
+
+/* ── Hero value ── */
+.hero-value      { -fx-padding: 4 0 0 0; }
+.hero-caption    { -fx-font-size: 13px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; }
+.hero-number     { -fx-font-size: 38px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.hero-secondary  { -fx-font-size: 18px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; -fx-padding: 0 0 6 0; }
+.hero-secondary.pos { -fx-text-fill: -color-success; }
+.hero-secondary.neg { -fx-text-fill: -color-danger; }
+.hero-secondary.muted { -fx-text-fill: -color-text-2; }
+.hero-context    { -fx-font-size: 12px; -fx-text-fill: -color-text-3; }
+.hero-chip       { -fx-background-color: -color-surface; -fx-background-radius: 6; -fx-padding: 4 10; -fx-border-color: -color-border; -fx-border-radius: 6; }
+.hero-chip-caption { -fx-font-size: 12px; -fx-text-fill: -color-text-2; }
+.hero-chip-value   { -fx-font-size: 13px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.hero-chip-value.pos { -fx-text-fill: -color-success; }
+.hero-chip-value.neg { -fx-text-fill: -color-danger; }
+.bp-narrow .hero-number { -fx-font-size: 30px; }
+.bp-narrow .hero-secondary { -fx-font-size: 15px; }
+
+/* ── Stat strip: one surface, cells separated by thin rules ── */
+.stat-strip {
+    -fx-background-color: -color-surface;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-border-color: -color-border;
+    -fx-padding: 4 0;
+}
+.stat-cell {
+    -fx-padding: 10 16;
+    -fx-border-color: transparent -color-border transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+.stat-label { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; }
+.stat-value { -fx-font-size: 18px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.stat-value.pos { -fx-text-fill: -color-success; }
+.stat-value.neg { -fx-text-fill: -color-danger; }
+.stat-value.muted { -fx-text-fill: -color-text-2; }
+.stat-qualifier { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; }
+.bp-narrow .stat-value { -fx-font-size: 16px; }
+
+/* ── Panel block (replaces card-with-shadow + uppercase title) ── */
+.panel-block {
+    -fx-background-color: -color-surface;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-border-color: -color-border;
+    -fx-padding: 16;
+}
+.panel-title    { -fx-font-size: 15px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
+.panel-subtitle { -fx-font-size: 12px; -fx-text-fill: -color-text-3; }
+.main-chart-panel { -fx-min-height: 360; }
+.rank-panel .rank-title { -fx-font-size: 13px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.rank-panel .rank-title.pos { -fx-text-fill: -color-success; }
+.rank-panel .rank-title.neg { -fx-text-fill: -color-danger; }
+
+/* ── Dense table (Carteira) ── */
+.table-card { -fx-background-color: transparent; }
+.table-dense .column-header { -fx-padding: 8 12; }
+.table-dense .column-header .label { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; -fx-text-transform: none; }
+.table-dense .table-cell { -fx-padding: 0 12; -fx-alignment: CENTER_LEFT; -fx-font-size: 13px; }
+.table-dense .num-col  { -fx-alignment: CENTER_RIGHT; }
+.table-dense .num-col .label { -fx-alignment: CENTER_RIGHT; }
+.table-dense .actions-col { -fx-alignment: CENTER; -fx-padding: 0 4; }
+.cell-primary { -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
+.ticker-badge {
+    -fx-font-size: 11px; -fx-font-weight: 700; -fx-text-fill: -color-text-2;
+    -fx-background-color: -color-surface-3; -fx-background-radius: 5; -fx-padding: 1 6;
+}
+.row-more-btn, .more-btn { -fx-padding: 4 6; -fx-background-radius: 7; }
+.row-more-btn > .arrow-button, .more-btn > .arrow-button { -fx-padding: 0; }
+.row-more-btn > .arrow-button > .arrow, .more-btn > .arrow-button > .arrow { -fx-padding: 0; -fx-shape: null; -fx-background-color: transparent; }
+.more-btn { -fx-background-color: -color-surface; -fx-border-color: -color-border-strong; -fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 7 10; }
+.row-more-btn:hover, .more-btn:hover { -fx-background-color: -color-surface-2; }
+.row-more-btn:showing, .more-btn:showing { -fx-background-color: -color-surface-3; }
+
+/* ── Details pane (beside or below the table) ── */
+.details-pane {
+    -fx-background-color: -color-surface;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-border-color: -color-border;
+    -fx-padding: 16 18;
+}
+.details-pane .details-name   { -fx-font-size: 16px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.details-pane .details-ticker { -fx-font-size: 11px; -fx-font-weight: 700; -fx-text-fill: -color-text-2; -fx-background-color: -color-surface-3; -fx-background-radius: 5; -fx-padding: 1 6; }
+.details-value  { -fx-font-size: 24px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.details-hint   { -fx-font-size: 12px; -fx-text-fill: -color-text-3; }
+.details-actions { -fx-padding: 2 0 0 0; }
+.details-fields { -fx-padding: 6 0 0 0; }
+.details-field-label { -fx-font-size: 12px; -fx-text-fill: -color-text-2; }
+.details-pane .details-field-value { -fx-font-size: 13px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
+.details-note   { -fx-font-size: 12px; -fx-text-fill: -color-text-2; -fx-padding: 4 0 0 0; }
+.details-section { -fx-font-size: 11px; -fx-font-weight: 700; -fx-text-fill: -color-text-3; }
+.details-advanced { -fx-border-color: -color-border transparent transparent transparent; -fx-border-width: 1 0 0 0; -fx-padding: 8 0 0 0; }
+
+/* Link-style tertiary actions used in the details pane */
+.link-btn, .link-btn-accent, .link-btn-danger {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 4 6;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+    -fx-cursor: hand;
+    -fx-text-fill: -color-text-2;
+    -fx-background-radius: 6;
+}
+.link-btn-accent { -fx-text-fill: -color-success; }
+.link-btn-danger { -fx-text-fill: -color-danger; }
+.link-btn:hover, .link-btn-accent:hover, .link-btn-danger:hover { -fx-background-color: -color-surface-2; -fx-text-fill: -color-text-1; }
+.link-btn:focused, .link-btn-accent:focused, .link-btn-danger:focused { -fx-border-color: -color-success; -fx-border-width: 1; -fx-border-radius: 6; }
+.link-btn:disabled, .link-btn-accent:disabled, .link-btn-danger:disabled { -fx-opacity: 0.45; -fx-cursor: default; }
+
+/* Legacy details-card (other pages): same surface rules, no green border/shadow */
+.details-card { -fx-border-color: -color-border; -fx-effect: null; -fx-background-radius: 10; -fx-border-radius: 10; }
+.hero-card, .hero-card:hover { -fx-effect: null; -fx-border-color: -color-border; -fx-border-width: 1; }
+.kpi-card:hover, .kpi-mini-card:hover { -fx-effect: null; -fx-border-color: -color-border-strong; }
+
+/* Focus rings via border, not glow */
+.ghost-btn:focused { -fx-effect: null; -fx-border-color: -color-success; }
+.primary-btn { -fx-background-color: -color-accent; -fx-text-fill: -color-accent-ink; }
+.primary-btn:focused { -fx-effect: null; -fx-border-color: -color-success; }
+.danger-btn:focused, .sell-btn:focused, .secondary-btn:focused { -fx-effect: null; -fx-border-color: -color-border-strong; }

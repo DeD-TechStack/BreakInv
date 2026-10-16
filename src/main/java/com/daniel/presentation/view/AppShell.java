@@ -4,74 +4,123 @@ import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.components.WelcomeOverlay;
 import com.daniel.presentation.view.pages.*;
+import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.Icons;
-import javafx.animation.FadeTransition;
-import javafx.animation.Interpolator;
-import javafx.animation.TranslateTransition;
+import com.daniel.presentation.view.util.Motion;
+import com.daniel.presentation.view.util.UiPreferences;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tooltip;
-import javafx.scene.layout.*;
-import javafx.scene.Scene;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.*;
+import org.kordamp.ikonli.feather.Feather;
 import org.kordamp.ikonli.javafx.FontIcon;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+/**
+ * Application frame: sidebar (220 px, collapsible to a 56 px rail) + content host.
+ *
+ * <ul>
+ *   <li>Breakpoints are computed on the usable content width ({@link Breakpoint}) and exposed as
+ *       style classes on the frame; pages reflow themselves through {@link ResponsivePage}.</li>
+ *   <li>The sidebar collapses automatically below 900 px of scene width; the toggle button
+ *       (also reachable by keyboard) overrides that and the choice persists.</li>
+ *   <li>Navigation goes through {@link Motion#swap}: the last {@code go()} always wins, with
+ *       exactly one page node in the host and no opacity left at zero.</li>
+ * </ul>
+ */
 public final class AppShell {
 
+    public static final double SIDEBAR_WIDTH = 220;
+    public static final double RAIL_WIDTH = 56;
+
+    public static final List<String> PAGE_KEYS = List.of(
+            "Dashboard", "Cadastrar Investimento", "Diversificação", "Análise de Ativo",
+            "Ranking", "Simulação", "Extrato de Investimentos", "Configurações");
+
     private final DailyTrackingUseCase daily;
+    private final UiPreferences prefs;
     private final StackPane content = new StackPane();
     private final Map<String, Page> pages = new LinkedHashMap<>();
     private final Map<String, Button> nav = new LinkedHashMap<>();
+    private final List<Label> sidebarTexts = new ArrayList<>();
+    private final List<Node> sidebarGraphics = new ArrayList<>();
+    private final VBox sidebar = new VBox();
+    private final BorderPane frame = new BorderPane();
+    private final Button toggleBtn = new Button();
     private Consumer<String> pageChangeListener;
+    private String currentKey;
+    private Breakpoint breakpoint;
+    private boolean collapsed;
+    private double lastSceneWidth = Double.NaN;
 
     public AppShell(DailyTrackingUseCase dailyTrackingUseCase) {
+        this(dailyTrackingUseCase, UiPreferences.forUser());
+    }
+
+    /** Production composition: the SAME preferences instance the app gave Motion reaches every page. */
+    public AppShell(DailyTrackingUseCase dailyTrackingUseCase, UiPreferences prefs) {
+        this(dailyTrackingUseCase, defaultPages(dailyTrackingUseCase, prefs), prefs);
+    }
+
+    /** Test seam: pages and preferences are injected so no database or registry is touched. */
+    AppShell(DailyTrackingUseCase dailyTrackingUseCase, Map<String, Page> pages, UiPreferences prefs) {
         this.daily = dailyTrackingUseCase;
-        pages.put("Dashboard",                 new DashboardPage(dailyTrackingUseCase));
-        pages.put("Cadastrar Investimento",    new InvestmentTypesPage(dailyTrackingUseCase));
-        pages.put("Diversificação",            new DiversificationPage(dailyTrackingUseCase));
-        pages.put("Análise de Ativo",          new AssetAnalysisPage());
-        pages.put("Ranking",                   new RankingPage(dailyTrackingUseCase));
-        pages.put("Simulação",                 new SimulationPage());
-        pages.put("Extrato de Investimentos",  new ReportsPage(dailyTrackingUseCase));
-        pages.put("Configurações",             new ConfiguracoesPage());
+        this.prefs = prefs;
+        this.pages.putAll(pages);
+    }
+
+    private static Map<String, Page> defaultPages(DailyTrackingUseCase daily, UiPreferences prefs) {
+        Map<String, Page> p = new LinkedHashMap<>();
+        p.put("Dashboard",                 new DashboardPage(daily));
+        p.put("Cadastrar Investimento",    new InvestmentTypesPage(daily));
+        p.put("Diversificação",            new DiversificationPage(daily));
+        p.put("Análise de Ativo",          new AssetAnalysisPage());
+        p.put("Ranking",                   new RankingPage(daily));
+        p.put("Simulação",                 new SimulationPage());
+        p.put("Extrato de Investimentos",  new ReportsPage(daily));
+        p.put("Configurações",             new ConfiguracoesPage(prefs));
+        return p;
     }
 
     public Parent build() {
-        BorderPane root = new BorderPane();
-        root.getStyleClass().add("app-root");
+        frame.getStyleClass().add("app-root");
         content.getStyleClass().add("content-host");
         content.setAlignment(Pos.TOP_LEFT);
-        root.setLeft(sidebar());
-        root.setCenter(content);
+        frame.setLeft(buildSidebar());
+        frame.setCenter(content);
 
-        StackPane shell = new StackPane(root);
+        StackPane shell = new StackPane(frame);
         shell.getStyleClass().add("app-shell");
         ToastHost.install(shell);
 
-        // Register callback so Settings can force-show the overlay at any time
         WelcomeOverlay.registerShowCallback(() -> showOverlay(shell));
-
-        // Show welcome on first run, but only if portfolio is empty
         if (isPortfolioEmpty() && WelcomeOverlay.shouldShow()) {
             showOverlay(shell);
         } else if (!isPortfolioEmpty() && WelcomeOverlay.shouldShow()) {
             ToastHost.showInfo("Abra Configurações para ver a tela de boas-vindas novamente.");
         }
 
-        root.sceneProperty().addListener((obs, oldScene, newScene) -> {
+        // Scene width drives the automatic collapse; content width drives the breakpoint.
+        shell.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
-                applyBreakpoints(root, newScene.getWidth());
-                newScene.widthProperty().addListener((o, old, w) ->
-                        applyBreakpoints(root, w.doubleValue()));
+                onSceneWidth(newScene.getWidth());
+                newScene.widthProperty().addListener((o, a, w) -> onSceneWidth(w.doubleValue()));
             }
+        });
+        content.widthProperty().addListener((o, a, w) -> applyBreakpoint(w.doubleValue()));
+        shell.layoutBoundsProperty().addListener((o, a, b) -> {
+            if (shell.getScene() != null) onSceneWidth(shell.getScene().getWidth());
         });
 
         go("Dashboard");
@@ -79,120 +128,171 @@ public final class AppShell {
     }
 
     private boolean isPortfolioEmpty() {
-        return daily.listTypes().isEmpty();
+        try {
+            return daily.listTypes().isEmpty();
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     private void showOverlay(StackPane shell) {
-        // Guard: prevent stacking duplicate overlays
         boolean alreadyShowing = shell.getChildren().stream()
                 .anyMatch(n -> n.getStyleClass().contains("welcome-overlay"));
         if (alreadyShowing) return;
-
         WelcomeOverlay welcome = new WelcomeOverlay(
                 () -> go("Cadastrar Investimento"),
-                () -> go("Configurações")
-        );
+                () -> go("Configurações"));
         shell.getChildren().add(welcome.getNode());
         welcome.getNode().toFront();
         welcome.animateIn();
     }
 
-    private static void applyBreakpoints(BorderPane root, double width) {
-        root.getStyleClass().removeAll("compact", "bp-md", "bp-sm", "bp-xs", "icon-compact");
-        if (width < 850) {
-            root.getStyleClass().addAll("compact", "bp-xs", "icon-compact");
-        } else if (width < 1100) {
-            root.getStyleClass().addAll("compact", "bp-sm");
-        } else if (width < 1200) {
-            root.getStyleClass().add("bp-md");
+    // ── Breakpoints / sidebar ──────────────────────────────────────────────
+
+    private void onSceneWidth(double sceneWidth) {
+        if (!Double.isFinite(sceneWidth) || sceneWidth <= 0) return;
+        boolean widthChanged = sceneWidth != lastSceneWidth;
+        lastSceneWidth = sceneWidth;
+        boolean shouldCollapse = Breakpoint.sidebarCollapsed(sceneWidth, prefs.sidebarCollapsedChoice());
+        if (shouldCollapse != collapsed) setCollapsed(shouldCollapse, widthChanged);
+        // content width may not have been laid out yet: derive it from the scene
+        double navWidth = collapsed ? RAIL_WIDTH : SIDEBAR_WIDTH;
+        double measured = content.getWidth();
+        applyBreakpoint(measured > 0 ? Math.min(measured, sceneWidth - navWidth) : sceneWidth - navWidth);
+    }
+
+    private void applyBreakpoint(double contentWidth) {
+        Breakpoint bp = Breakpoint.of(contentWidth);
+        if (bp == breakpoint) return;
+        breakpoint = bp;
+        frame.getStyleClass().removeAll(Breakpoint.allStyleClasses());
+        frame.getStyleClass().add(bp.styleClass());
+        for (Page p : pages.values()) {
+            if (p instanceof ResponsivePage rp) rp.onBreakpoint(bp);
         }
     }
 
-    private Parent sidebar() {
-        VBox box = new VBox();
-        box.getStyleClass().add("sidebar");
+    public Breakpoint currentBreakpoint() {
+        return breakpoint == null ? Breakpoint.WIDE : breakpoint;
+    }
 
-        // ── Brand block ──────────────────────────────
-        VBox brand = new VBox(4);
-        brand.getStyleClass().add("sidebar-brand");
+    private void setCollapsed(boolean value, boolean animate) {
+        collapsed = value;
+        double target = value ? RAIL_WIDTH : SIDEBAR_WIDTH;
+        // While the width animates, min/max must span both sizes or BorderPane clamps pref to the
+        // target at once and the transition is invisible; they are pinned again at the end state.
+        sidebar.setMinWidth(RAIL_WIDTH);
+        sidebar.setMaxWidth(SIDEBAR_WIDTH);
+        if (value) { if (!sidebar.getStyleClass().contains("rail")) sidebar.getStyleClass().add("rail"); }
+        else sidebar.getStyleClass().remove("rail");
+        for (Label l : sidebarTexts) { l.setVisible(!value); l.setManaged(!value); }
+        for (Node n : sidebarGraphics) { n.setVisible(!value); n.setManaged(!value); }
+        for (Button b : nav.values()) {
+            b.setContentDisplay(value ? ContentDisplay.GRAPHIC_ONLY : ContentDisplay.LEFT);
+            b.setAlignment(value ? Pos.CENTER : Pos.CENTER_LEFT);
+        }
+        toggleBtn.setGraphic(Icons.of(value ? Feather.CHEVRONS_RIGHT : Feather.CHEVRONS_LEFT, 14));
+        toggleBtn.setTooltip(new Tooltip(value ? "Expandir navegação" : "Recolher navegação"));
+        toggleBtn.setAccessibleText(value ? "Expandir navegação" : "Recolher navegação");
+        Runnable pin = () -> { sidebar.setMinWidth(target); sidebar.setMaxWidth(target); };
+        if (animate) Motion.animatePrefWidth(sidebar, target, Motion.NAV_MS, pin);
+        else { Motion.settle(sidebar); sidebar.setPrefWidth(target); pin.run(); }
+    }
+
+    private void onToggleSidebar() {
+        boolean next = !collapsed;
+        prefs.setSidebarCollapsedChoice(next);
+        setCollapsed(next, true);
+        if (Double.isFinite(lastSceneWidth)) {
+            applyBreakpoint(lastSceneWidth - (next ? RAIL_WIDTH : SIDEBAR_WIDTH));
+        }
+    }
+
+    // ── Sidebar ────────────────────────────────────────────────────────────
+
+    private Parent buildSidebar() {
+        sidebar.getStyleClass().add("sidebar");
+        sidebar.setPrefWidth(SIDEBAR_WIDTH);
+        sidebar.setMinWidth(SIDEBAR_WIDTH);
+        sidebar.setMaxWidth(SIDEBAR_WIDTH);
 
         HBox brandRow = new HBox(8);
+        brandRow.getStyleClass().add("sidebar-brand");
         brandRow.setAlignment(Pos.CENTER_LEFT);
         var iconStream = getClass().getResourceAsStream("/app/icon.png");
         if (iconStream != null) {
             ImageView logo = new ImageView(new Image(iconStream));
-            logo.setFitWidth(28);
-            logo.setFitHeight(28);
+            logo.setFitWidth(24);
+            logo.setFitHeight(24);
             logo.setPreserveRatio(true);
             logo.setSmooth(true);
             brandRow.getChildren().add(logo);
+            // On the 56 px rail the expand button is the only mouse way out: logo 24 + gaps + a
+            // 40 px target do not fit, so the logo yields to the button (the title is hidden too).
+            sidebarGraphics.add(logo);
         }
         Label title = new Label("BreakInv");
         title.getStyleClass().add("sidebar-title");
-        brandRow.getChildren().add(title);
+        sidebarTexts.add(title);
+        Region brandSpacer = new Region();
+        HBox.setHgrow(brandSpacer, Priority.ALWAYS);
+        toggleBtn.getStyleClass().addAll("icon-btn", "sidebar-toggle");
+        toggleBtn.setOnAction(e -> onToggleSidebar());
+        brandRow.getChildren().addAll(title, brandSpacer, toggleBtn);
 
-        Label sub = new Label("Controle de investimentos");
-        sub.getStyleClass().add("sidebar-sub");
-
-        brand.getChildren().addAll(brandRow, sub);
-
-        // ── Nav section ──────────────────────────────
         VBox navBox = new VBox(2);
         navBox.getStyleClass().add("sidebar-nav");
-
-        navBox.getChildren().add(navSectionLabel("PRINCIPAL"));
-        addNavItem(navBox, "Dashboard",              "Dashboard",    Icons.home());
-        addNavItem(navBox, "Cadastrar Investimento", "Carteira",     Icons.briefcase());
-
-        navBox.getChildren().add(navSectionLabel("ANÁLISE"));
+        navBox.getChildren().add(navSectionLabel("Principal"));
+        addNavItem(navBox, "Dashboard",              "Dashboard",      Icons.home());
+        addNavItem(navBox, "Cadastrar Investimento", "Carteira",       Icons.briefcase());
+        navBox.getChildren().add(navSectionLabel("Análise"));
         addNavItem(navBox, "Diversificação",           "Diversificação", Icons.pieChart());
         addNavItem(navBox, "Análise de Ativo",         "Análise",        Icons.activity());
         addNavItem(navBox, "Ranking",                  "Ranking",        Icons.award());
         addNavItem(navBox, "Simulação",                "Simulação",      Icons.trendingUp());
         addNavItem(navBox, "Extrato de Investimentos", "Extrato",        Icons.fileText());
 
-        // ── Spacer ───────────────────────────────────
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
 
-        // ── Footer ───────────────────────────────────
         VBox footer = new VBox(4);
         footer.getStyleClass().add("sidebar-footer");
-
-        footer.getChildren().add(navSectionLabel("SISTEMA"));
-
-        Button configBtn = new Button("Configurações", Icons.settings());
-        configBtn.getStyleClass().add("nav-btn");
-        configBtn.setMaxWidth(Double.MAX_VALUE);
-        configBtn.setOnAction(e -> go("Configurações"));
-        Tooltip.install(configBtn, new Tooltip("Configurações"));
-        nav.put("Configurações", configBtn);
-
+        addNavItem(footer, "Configurações", "Configurações", Icons.settings());
         Label version = new Label("v0.5.0");
         version.getStyleClass().add("sidebar-footer-version");
+        sidebarTexts.add(version);
+        footer.getChildren().add(version);
 
-        footer.getChildren().addAll(configBtn, version);
+        sidebar.getChildren().addAll(brandRow, navBox, spacer, footer);
 
-        box.getChildren().addAll(brand, navBox, spacer, footer);
-        return box;
+        // apply the persisted user choice before the first layout, without animation
+        Boolean choice = prefs.sidebarCollapsedChoice();
+        setCollapsed(choice != null && choice, false);
+        return sidebar;
     }
 
     private Label navSectionLabel(String text) {
         Label lbl = new Label(text);
         lbl.getStyleClass().add("sidebar-nav-label");
         lbl.setMaxWidth(Double.MAX_VALUE);
+        sidebarTexts.add(lbl);
         return lbl;
     }
 
-    private void addNavItem(VBox box, String key, String label, FontIcon icon) {
+    private void addNavItem(Pane box, String key, String label, FontIcon icon) {
         Button b = new Button(label, icon);
         b.getStyleClass().add("nav-btn");
         b.setMaxWidth(Double.MAX_VALUE);
+        b.setUserData(key);
+        b.setId("nav-" + key.replace(' ', '-').toLowerCase());
         b.setOnAction(e -> go(key));
-        Tooltip.install(b, new Tooltip(label));
+        b.setTooltip(new Tooltip(label));
+        b.setAccessibleText(label);
         nav.put(key, b);
         box.getChildren().add(b);
     }
+
+    // ── Navigation ─────────────────────────────────────────────────────────
 
     public void setPageChangeListener(Consumer<String> listener) {
         this.pageChangeListener = listener;
@@ -206,45 +306,16 @@ public final class AppShell {
         if (nav.get(key) != null) nav.get(key).getStyleClass().add("active");
         if (pageChangeListener != null) pageChangeListener.accept(key);
 
-        Parent view = p.view();
-        swapWithAnimation(view);
-
-        p.onShow();
-    }
-
-    private void swapWithAnimation(Node newNode) {
-        if (content.getChildren().isEmpty()) {
-            content.getChildren().setAll(newNode);
-            return;
+        int direction = 0;
+        if (currentKey != null && !currentKey.equals(key)) {
+            direction = Integer.compare(PAGE_KEYS.indexOf(key), PAGE_KEYS.indexOf(currentKey));
         }
+        boolean samePage = key.equals(currentKey);
+        currentKey = key;
 
-        Node old = content.getChildren().get(0);
-
-        FadeTransition fadeOut = new FadeTransition(javafx.util.Duration.millis(100), old);
-        fadeOut.setFromValue(1.0);
-        fadeOut.setToValue(0.0);
-        fadeOut.setInterpolator(Interpolator.EASE_BOTH);
-
-        fadeOut.setOnFinished(ev -> {
-            content.getChildren().setAll(newNode);
-
-            newNode.setOpacity(0.0);
-            newNode.setTranslateY(8);
-
-            FadeTransition fadeIn = new FadeTransition(javafx.util.Duration.millis(160), newNode);
-            fadeIn.setFromValue(0.0);
-            fadeIn.setToValue(1.0);
-            fadeIn.setInterpolator(Interpolator.EASE_OUT);
-
-            TranslateTransition slide = new TranslateTransition(javafx.util.Duration.millis(160), newNode);
-            slide.setFromY(8);
-            slide.setToY(0);
-            slide.setInterpolator(Interpolator.EASE_OUT);
-
-            fadeIn.play();
-            slide.play();
-        });
-
-        fadeOut.play();
+        Parent view = p.view();
+        if (!samePage) Motion.swap(content, view, direction);
+        if (p instanceof ResponsivePage rp && breakpoint != null) rp.onBreakpoint(breakpoint);
+        p.onShow();
     }
 }

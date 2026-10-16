@@ -7,6 +7,7 @@ import com.daniel.presentation.view.PageHeader;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.components.WelcomeOverlay;
 import com.daniel.presentation.view.util.Motion;
+import com.daniel.presentation.view.util.UiPreferences;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -51,13 +52,23 @@ public final class ConfiguracoesPage implements Page {
     private final Label ipcaValueLabel = new Label("—");
     private final Label bcbLastUpdateLabel = new Label("Nunca atualizado");
 
+    // Appearance / behaviour
+    private final UiPreferences uiPrefs;
+    private final CheckBox reduceMotionCheck = new CheckBox("Reduzir animações");
+
     public ConfiguracoesPage() {
+        this(UiPreferences.forUser());
+    }
+
+    /** The shell injects the app-wide preferences; tests inject an in-memory node. */
+    public ConfiguracoesPage(UiPreferences uiPrefs) {
+        this.uiPrefs = uiPrefs;
         root.getStyleClass().add("page-root");
 
         PageHeader header = new PageHeader("Configurações",
-                "Gerencie tokens de API e preferências do app");
+                "Aparência, integrações e dados do aplicativo");
 
-        root.getChildren().addAll(header, buildBrapiSection(), buildBcbSection(), buildAboutSection());
+        root.getChildren().addAll(header, buildAppearanceSection(), buildBrapiSection(), buildBcbSection(), buildAboutSection());
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
@@ -71,6 +82,7 @@ public final class ConfiguracoesPage implements Page {
 
     @Override
     public void onShow() {
+        reduceMotionCheck.setSelected(uiPrefs.reduceMotion());
         loadSavedSettings();
     }
 
@@ -133,6 +145,29 @@ public final class ConfiguracoesPage implements Page {
         selicValueLabel.setText(selic != null ? String.format("%.2f%%", Double.parseDouble(selic) * 100) : "—");
         ipcaValueLabel.setText(ipca != null ? String.format("%.2f%%", Double.parseDouble(ipca) * 100) : "—");
         bcbLastUpdateLabel.setText(lastUpdate != null ? "Atualizado em: " + lastUpdate : "Nunca atualizado");
+    }
+
+    private VBox buildAppearanceSection() {
+        VBox card = new VBox(14);
+        card.getStyleClass().add("card");
+
+        Label title = new Label("Aparência e comportamento");
+        title.getStyleClass().add("card-title");
+
+        reduceMotionCheck.setSelected(uiPrefs.reduceMotion());
+        reduceMotionCheck.setOnAction(e -> {
+            uiPrefs.setReduceMotion(reduceMotionCheck.isSelected());
+            ToastHost.showInfo(reduceMotionCheck.isSelected()
+                    ? "Animações reduzidas: transições passam a ser imediatas."
+                    : "Animações ativadas.");
+        });
+        Label hint = new Label("Troca de página, painéis e gráficos passam a mudar sem transição. "
+                + "Valores e feedback continuam iguais. A preferência fica salva neste computador.");
+        hint.getStyleClass().add("text-secondary");
+        hint.setWrapText(true);
+
+        card.getChildren().addAll(title, reduceMotionCheck, hint);
+        return card;
     }
 
     private VBox buildBrapiSection() {

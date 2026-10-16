@@ -4,25 +4,24 @@ import com.daniel.infrastructure.config.AppConfig;
 import com.daniel.infrastructure.persistence.config.Database;
 import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.AppShell;
-import com.daniel.presentation.view.components.TitleBar;
+import com.daniel.presentation.view.util.Motion;
 import com.daniel.presentation.view.util.UiExecutor;
-import com.daniel.presentation.view.util.WindowResize;
+import com.daniel.presentation.view.util.UiPreferences;
+import com.daniel.presentation.view.window.WindowChrome;
 import javafx.application.Application;
-import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.image.Image;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.StackPane;
-import javafx.scene.layout.VBox;
-import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
 import java.sql.Connection;
 
+/**
+ * Entry point. The window uses the native (DECORATED) title bar: resizing, snapping, moving and
+ * minimize/maximize/close are the operating system's. The remembered size/position is restored
+ * inside the monitors that exist now ({@link WindowChrome}); the interior is fully custom.
+ */
 public class App extends Application {
-
-    private static final boolean USE_CUSTOM_CHROME = true;
 
     private Connection conn;
     private AppConfig appConfig;
@@ -37,46 +36,25 @@ public class App extends Application {
     public void start(Stage stage) {
         conn = Database.open();
 
+        UiPreferences uiPrefs = UiPreferences.forUser();
+        Motion.configure(uiPrefs);
+
         DailyTrackingUseCase dailyTrackingUseCase = appConfig.getDailyTrackingUseCase();
-        AppShell shell = new AppShell(dailyTrackingUseCase);
+        AppShell shell = new AppShell(dailyTrackingUseCase, uiPrefs);
+        shell.setPageChangeListener(key -> stage.setTitle("BreakInv — " + key));
 
-        final Scene scene;
-
-        if (USE_CUSTOM_CHROME) {
-            stage.initStyle(StageStyle.TRANSPARENT);
-
-            Parent appRoot = shell.build();
-
-            VBox windowBody = new VBox();
-            windowBody.getStyleClass().add("window-body");
-            TitleBar titleBar = new TitleBar(stage, windowBody);
-            shell.setPageChangeListener(titleBar::setPageTitle);
-            titleBar.setPageTitle("Dashboard"); // set initial title before first go()
-            VBox.setVgrow(appRoot, Priority.ALWAYS);
-            windowBody.getChildren().addAll(titleBar, appRoot);
-
-            StackPane windowShell = new StackPane(windowBody);
-            windowShell.getStyleClass().add("window-shell");
-
-            scene = new Scene(windowShell, 1280, 760);
-            scene.setFill(Color.TRANSPARENT);
-
-            WindowResize.install(stage, windowShell);
-        } else {
-            scene = new Scene(shell.build(), 1280, 760);
-        }
-
+        stage.initStyle(StageStyle.DECORATED);
+        Scene scene = new Scene(shell.build(), WindowChrome.DEFAULT_WIDTH, WindowChrome.DEFAULT_HEIGHT);
         var css = getClass().getResource("/styles/app.css");
         if (css != null) scene.getStylesheets().add(css.toExternalForm());
 
-        stage.setMinWidth(900);
-        stage.setMinHeight(600);
-        stage.setTitle("BreakInv");
         stage.setScene(scene);
         try {
             var icon = getClass().getResourceAsStream("/app/icon.png");
             if (icon != null) stage.getIcons().add(new Image(icon));
         } catch (Exception ignored) {}
+
+        WindowChrome.install(stage, uiPrefs.windowNode());
         stage.show();
 
         UiExecutor.get().execute(
