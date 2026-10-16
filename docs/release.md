@@ -51,7 +51,7 @@ sha256sum -c BreakInv-X.Y.Z-linux-amd64.deb.sha256
 ### Uninstalling
 
 Open **Settings → Apps → Installed apps**, search for *BreakInv*, and choose **Uninstall**.
-Your data file (`breakinv.db`) is kept in the installation directory; delete it manually if you want a clean removal.
+The database is kept under `${user.home}/BreakInv/breakinv.db`, outside the installation directory. Uninstalling the application is not a database backup. Keep a verified backup before any deliberate removal; see [data integrity and recovery](data-integrity.md). Welcome-screen preferences are also stored by Java Preferences (the Windows user registry on Windows).
 
 ---
 
@@ -124,14 +124,17 @@ After installation the app appears in your application launcher under the **Fina
 
 ## Application Data
 
-BreakInv stores all data locally in a single SQLite file:
+BreakInv stores portfolio records, movements, snapshots, saved analyses and application settings in SQLite:
 
 ```
-breakinv.db
+${user.home}/BreakInv/breakinv.db
 ```
 
-The file is created automatically in the application's working directory on first launch.
-No data is sent to external servers. All investment records remain on your machine.
+The directory and database are created automatically under the Java user home, not the working or installation directory. Opening the app may apply versioned migrations. Back up the closed database before upgrading; never test a migration on the only copy of personal data.
+
+The portfolio is local, but BRAPI requests send tickers/searches and the configured token to the provider. BCB/SGS requests retrieve reference rates. These integrations are not a full-portfolio sync. Some welcome-screen state uses Java Preferences rather than SQLite. Settings and backups may contain the BRAPI token: do not publish them or include them in diagnostics.
+
+See [data integrity and recovery](data-integrity.md) for ledger semantics, legacy recognition, migration and backup/restore precautions.
 
 ---
 
@@ -142,7 +145,10 @@ See the project README for instructions on running and packaging from source wit
 ```bash
 mvn clean package          # build fat JAR
 mvn javafx:run             # run in development mode
+java -jar target/breakinv-0.5.0.jar
 ```
+
+The fat JAR uses `com.daniel.main.Launcher`, a plain Java entry point which delegates to the JavaFX application. The repository launchers `iniciar.bat` and `iniciar.sh` resolve this artifact relative to their own directory and forward their arguments as JVM options. They are source-checkout launchers, not installed-app shortcuts. Build a platform-appropriate JAR; JavaFX native dependencies are platform-specific.
 
 To produce a local installer manually (requires JDK 21 with jpackage):
 ```bash

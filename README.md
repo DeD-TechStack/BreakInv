@@ -104,10 +104,10 @@ Utilizado para consulta de indicadores econômicos e benchmarks que ajudam na le
 
 A aplicação utiliza **SQLite** como banco local e cria automaticamente a base de dados ao iniciar o sistema.
 
-Arquivo gerado localmente:
+Arquivo gerado no diretório home da JVM (não no diretório de instalação):
 
 ```text
-breakinv.db
+${user.home}/BreakInv/breakinv.db
 ```
 
 Entre os dados persistidos pela aplicação, estão:
@@ -116,6 +116,10 @@ Entre os dados persistidos pela aplicação, estão:
 * movimentações
 * snapshots patrimoniais
 * configurações da aplicação
+
+O ledger `portfolio_movement` registra movimentos e marcos explícitos de abertura; posição, custo e caixa são derivados dele. Registros legados são preservados e não são reproduzidos cegamente como novas compras. O schema é versionado e as conexões habilitam chaves estrangeiras. Consulte [integridade, limites e backup/restauração](docs/data-integrity.md) antes de abrir uma base antiga em nova versão.
+
+BRAPI/BCB realizam consultas externas; tickers, termos de pesquisa e token BRAPI configurado podem ser enviados ao provedor. O token também pode constar no banco/backups. Preferências de boas-vindas usam Java Preferences, separadamente do SQLite.
 
 Isso torna o projeto adequado para uso local, estudo de arquitetura desktop e construção de portfólio técnico com persistência embarcada.
 
@@ -162,6 +166,8 @@ Os artefatos gerados ficarão em:
 ```text
 target/
 ```
+
+O fat JAR é `target/breakinv-0.5.0.jar`. Execute com `java -jar target/breakinv-0.5.0.jar` ou, no checkout, `iniciar.bat` (Windows) / `bash iniciar.sh` (Linux). Os launchers resolvem o JAR relativo ao próprio script e aceitam opções da JVM antes de `-jar`. Não aponte testes ou demonstrações para seu banco pessoal. A distribuição JavaFX contém bibliotecas nativas da plataforma usada no build.
 
 ---
 
