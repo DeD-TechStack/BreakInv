@@ -8,12 +8,16 @@ import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.infrastructure.api.BrapiClient.StockData;
 import com.daniel.infrastructure.api.BrapiClient.TickerSuggestion;
 import com.daniel.presentation.view.PageHeader;
-import com.daniel.presentation.view.components.ToastHost;
+import com.daniel.presentation.view.components.EmptyState;
+import com.daniel.presentation.view.components.HeroValue;
+import com.daniel.presentation.view.components.Panel;
+import com.daniel.presentation.view.components.StatStrip;
+import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.ChartAxisUtils;
 import com.daniel.presentation.view.util.ChartCrosshair;
-import com.daniel.presentation.view.components.EmptyState;
-import com.daniel.presentation.view.components.KpiCard;
 import com.daniel.presentation.view.util.Icons;
+import com.daniel.presentation.view.util.Motion;
+import com.daniel.presentation.view.util.UiExecutor;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Parent;
@@ -33,88 +37,154 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
 /**
- * Página de análise de ativos: busca cotação atual e histórico de preços.
+ * Análise de ativo (direction A): the search is the first thing on the page; every query state
+ * (idle, loading, error, no result, result) has its own presentation on the page itself; the
+ * price is the hero with its change and provenance; day figures and 52-week figures are two
+ * value strips; the price history is one panel with its period controls.
  *
- * <p>O eixo X usa {@link NumberAxis} com epoch seconds como valores, garantindo
- * escala temporal proporcional ao intervalo real entre os dados.</p>
+ * <p>The X axis uses {@link NumberAxis} with epoch seconds, so the time scale is proportional to
+ * the real interval between points. Chart data is assigned first; {@link Motion#chartRefresh}
+ * only makes the change visible. Late responses for a ticker that is no longer the one being
+ * searched are discarded (epoch guard).
  */
-public final class AssetAnalysisPage implements Page {
+public final class AssetAnalysisPage implements ResponsivePage {
 
     private static final Logger LOG = Logger.getLogger(AssetAnalysisPage.class.getName());
 
-    // Formatter do período atual — lido pelo eixo e pelo crosshair via lambda
+    /** Quote source (BRAPI in production); never throws by contract, but the page must survive it if it does. */
+    @FunctionalInterface
+    interface QuoteSource {
+        BrapiClient.FetchResult<StockData> fetch(String ticker);
+    }
+
+    /** Price history source (BRAPI in production). */
+    @FunctionalInterface
+    interface HistorySource {
+        HistoryResult fetch(String ticker, Period period) throws IOException;
+    }
+
+    private final QuoteSource quotes;
+    private final HistorySource histories;
+    private final Executor worker;
+    private final Executor ui;
+
+    static final String STAT_OPEN = "Abertura";
+    static final String STAT_HIGH = "Máx. do dia";
+    static final String STAT_LOW = "Mín. do dia";
+    static final String STAT_VOLUME = "Volume";
+    static final String STAT_WEEK_HIGH = "Máx. 52 sem.";
+    static final String STAT_WEEK_LOW = "Mín. 52 sem.";
+    static final String STAT_AVG200 = "Média 200 dias";
+    static final String STAT_YEAR_CHANGE = "Var. 52 sem.";
+    static final String STAT_DY = "Dividend yield";
+
+    // Formatter of the current period — read by the axis and the crosshair through a lambda
     private DateTimeFormatter currentDateFmt = DateTimeFormatter.ofPattern("dd/MM");
 
     private final ScrollPane scrollPane = new ScrollPane();
-    private final VBox root = new VBox(20);
+    private final VBox root = new VBox(16);
 
-    // ── Search bar ──
+    // ── Search ──
     private final ComboBox<TickerSuggestion> tickerCombo = new ComboBox<>();
     private final Button searchBtn = new Button("Buscar", Icons.search());
     private String currentTicker = "";
+    private final AtomicLong searchEpoch = new AtomicLong();
+    /** One epoch per chart request (ticker × period): the last REQUEST wins, not the last answer. */
+    private final AtomicLong chartEpoch = new AtomicLong();
 
-    // ── KPI cards ──
-    private final Label lblPrice      = new Label("—");
-    private final Label lblChange     = new Label("—");
-    private final Label lblChangePct  = new Label("—");
-    private final Label lblHigh       = new Label("—");
-    private final Label lblLow        = new Label("—");
-    private final Label lblOpen       = new Label("—");
-    private final Label lblDY         = new Label("—");
-    private final Label lblWeekHigh   = new Label("—");
-    private final Label lblWeekLow    = new Label("—");
-    private final Label lblAvg200     = new Label("—");
-    private final Label lblYearChange = new Label("—");
-    private final Label lblVolume     = new Label("—");
-    private final Label lblName       = new Label();
+    // ── States ──
+    private final VBox emptyState = EmptyState.of("🔍", "Pesquise um ativo",
+            "Digite um ticker, como PETR4, ITUB4 ou VALE3, para consultar cotação e histórico.");
+    private final HBox loadingBox = new HBox(10);
+    private final Label loadingLabel = new Label();
+    private final Label errorBanner = new Label();
+    private final Label noResultLabel = new Label();
 
-    // ── Chart — NumberAxis para escala temporal proporcional ──
+    // ── Result ──
+    private final VBox resultBox = new VBox(16);
+    private final HeroValue hero = new HeroValue("Cotação");
+    private final StatStrip dayStrip = new StatStrip(STAT_OPEN, STAT_HIGH, STAT_LOW, STAT_VOLUME);
+    private final StatStrip yearStrip = new StatStrip(STAT_WEEK_HIGH, STAT_WEEK_LOW, STAT_AVG200, STAT_YEAR_CHANGE, STAT_DY);
+
+    // ── Chart — NumberAxis for a proportional time scale ──
     private final NumberAxis xAxis   = new NumberAxis();
     private final NumberAxis yAxis   = new NumberAxis();
     private final AreaChart<Number, Number> areaChart = new AreaChart<>(xAxis, yAxis);
-
-    // ── Period selector ──
+    private final Panel chartPanel;
+    private final FlowPane periodBar = new FlowPane(6, 6);
     private final ToggleGroup periodGroup = new ToggleGroup();
-
-    // ── Estado do último render ──
-    private List<HistoryPoint> lastRenderedPoints = List.of();
-    /** Epoch seconds (ZoneOffset.UTC) dos pontos do último render, para refresh do eixo. */
+    private final Label chartEmptyLabel = new Label("Sem dados para este período");
+    private final Label chartLoadingLabel = new Label("Carregando histórico…");
+    /** Epoch seconds (ZoneOffset.UTC) of the last render, for the axis refresh. */
     private List<Long> lastEpochSecs = List.of();
-    private Timeline resizeDebounce;
-
-    // ── Chart empty/error state ──
-    private Label chartEmptyLabel;
-
-    /** Impede que o listener do ToggleGroup dispare reloadChart durante ajustes programáticos. */
+    private final Timeline resizeDebounce;
+    /** Keeps the ToggleGroup listener from reloading the chart during programmatic adjustments. */
     private boolean suppressPeriodReload = false;
 
-    // ── Sections shown/hidden ──
-    private VBox kpiSection;
-    private VBox chartSection;
-    private VBox emptyState;
-
     public AssetAnalysisPage() {
+        this(BrapiClient::fetchStockDataSafe, AssetHistoryClient::fetchHistory, UiExecutor.get(), Platform::runLater);
+    }
+
+    /** Test seam: the sources the page queries and the executors it queries on (worker) and answers on (ui). */
+    AssetAnalysisPage(QuoteSource quotes, HistorySource histories, Executor worker, Executor ui) {
+        this.quotes = quotes;
+        this.histories = histories;
+        this.worker = worker;
+        this.ui = ui;
         root.getStyleClass().add("page-root");
 
-        PageHeader header = new PageHeader("Análise de Ativos",
-                "Pesquise um ticker para ver cotação e histórico");
+        PageHeader header = new PageHeader("Análise de ativo",
+                "Cotação e histórico de preço de um ticker da B3 (BRAPI)");
 
-        HBox searchBar = buildSearchBar();
-        emptyState     = EmptyState.of("🔍", "Pesquise um ativo",
-                "Digite um ticker, como PETR4, ITUB4 ou VALE3, para consultar cotação e histórico.");
-        kpiSection     = buildKpiSection();
-        chartSection   = buildChartSection();
+        HBox searchRow = buildSearchRow();
 
-        setResultVisible(false);
+        errorBanner.setGraphic(Icons.alertTriangle());
+        errorBanner.setGraphicTextGap(8);
+        errorBanner.setWrapText(true);
+        errorBanner.getStyleClass().add("warning-banner");
+        hide(errorBanner);
 
-        root.getChildren().addAll(header, searchBar, emptyState, kpiSection, chartSection);
+        ProgressIndicator spinner = new ProgressIndicator();
+        spinner.setMaxSize(18, 18);
+        loadingLabel.getStyleClass().add("text-secondary");
+        loadingBox.setAlignment(Pos.CENTER_LEFT);
+        loadingBox.getChildren().addAll(spinner, loadingLabel);
+        hide(loadingBox);
+
+        noResultLabel.getStyleClass().addAll("empty-state", "empty-title");
+        noResultLabel.setWrapText(true);
+        noResultLabel.setMaxWidth(Double.MAX_VALUE);
+        hide(noResultLabel);
+
+        chartPanel = buildChartPanel();
+        resultBox.getChildren().addAll(hero, dayStrip, yearStrip, chartPanel);
+        hide(resultBox);
+
+        root.getChildren().addAll(header, searchRow, errorBanner, loadingBox, noResultLabel, emptyState, resultBox);
+
+        // Resize debounce: recomputes the tick density when the width changes by more than 50 px
+        resizeDebounce = new Timeline(new KeyFrame(javafx.util.Duration.millis(150), ev -> {
+            if (!lastEpochSecs.isEmpty()) {
+                ChartAxisUtils.refreshTemporalAxis(xAxis, lastEpochSecs, areaChart.getWidth());
+            }
+        }));
+        resizeDebounce.setCycleCount(1);
+        areaChart.widthProperty().addListener((obs, oldW, newW) -> {
+            if (Math.abs(newW.doubleValue() - oldW.doubleValue()) > 50) {
+                resizeDebounce.stop();
+                resizeDebounce.playFromStart();
+            }
+        });
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
         scrollPane.getStyleClass().add("page-scroll");
+        onBreakpoint(Breakpoint.WIDE);
     }
 
     @Override
@@ -124,15 +194,38 @@ public final class AssetAnalysisPage implements Page {
 
     @Override
     public void onShow() {
-        // Nothing to refresh automatically; user drives search
+        // Nothing to refresh automatically; the user drives the search.
     }
+
+    @Override
+    public void onBreakpoint(Breakpoint bp) {
+        boolean narrow = bp == Breakpoint.NARROW;
+        dayStrip.setColumns(narrow ? 2 : 4);
+        yearStrip.setColumns(narrow ? 2 : bp == Breakpoint.MEDIUM ? 3 : 5);
+        // period toggles sit in the panel header when there is room, under the title otherwise
+        chartPanel.body().getChildren().remove(periodBar);
+        if (narrow) {
+            chartPanel.actions();
+            chartPanel.body().getChildren().add(0, periodBar);
+        } else {
+            chartPanel.actions(periodBar);
+        }
+        root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
+        root.getStyleClass().add(bp.styleClass());
+    }
+
+    private static void hide(javafx.scene.Node n) { n.setVisible(false); n.setManaged(false); }
+    private static void show(javafx.scene.Node n) { n.setVisible(true); n.setManaged(true); }
 
     // ── Build helpers ──────────────────────────────────────────────────────
 
-    private HBox buildSearchBar() {
+    private HBox buildSearchRow() {
         tickerCombo.setEditable(true);
-        tickerCombo.setPromptText("Digite ticker ou nome (ex: PETR4 ou Petrobras)");
-        tickerCombo.setPrefWidth(340);
+        tickerCombo.setPromptText("Ticker ou nome (ex.: PETR4 ou Petrobras)");
+        tickerCombo.setAccessibleText("Ticker ou nome do ativo");
+        tickerCombo.setMinWidth(180);
+        tickerCombo.setPrefWidth(360);
+        tickerCombo.setMaxWidth(Double.MAX_VALUE);
         tickerCombo.getStyleClass().add("search-field");
         HBox.setHgrow(tickerCombo, Priority.ALWAYS);
 
@@ -206,241 +299,231 @@ public final class AssetAnalysisPage implements Page {
 
         tickerCombo.getEditor().setOnAction(e -> doSearch());
 
-        searchBtn.getStyleClass().addAll("btn-primary", "btn-sm");
+        searchBtn.getStyleClass().add("button");
+        searchBtn.setTooltip(new Tooltip("Buscar cotação e histórico (Enter)"));
+        searchBtn.setAccessibleText("Buscar cotação");
         searchBtn.setOnAction(e -> doSearch());
 
-        HBox bar = new HBox(8, tickerCombo, searchBtn);
-        bar.setAlignment(Pos.CENTER_LEFT);
-        bar.getStyleClass().add("toolbar");
-        return bar;
+        HBox row = new HBox(8, tickerCombo, searchBtn);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.getStyleClass().add("search-row");
+        return row;
     }
 
-    private VBox buildKpiSection() {
-        lblName.getStyleClass().add("section-subtitle");
-
-        GridPane grid = new GridPane();
-        grid.setHgap(12);
-        grid.setVgap(12);
-
-        grid.add(KpiCard.analysis("Preço Atual",   lblPrice),     0, 0);
-        grid.add(KpiCard.analysis("Variação (R$)", lblChange),    1, 0);
-        grid.add(KpiCard.analysis("Variação (%)",  lblChangePct), 2, 0);
-        grid.add(KpiCard.analysis("Abertura",      lblOpen),      0, 1);
-        grid.add(KpiCard.analysis("Máx. Dia",      lblHigh),      1, 1);
-        grid.add(KpiCard.analysis("Mín. Dia",      lblLow),       2, 1);
-        grid.add(KpiCard.analysis("Máx. 52 Sem.", lblWeekHigh),   0, 2);
-        grid.add(KpiCard.analysis("Mín. 52 Sem.", lblWeekLow),    1, 2);
-        grid.add(KpiCard.analysis("Méd. 200 dias", lblAvg200),    2, 2);
-        grid.add(KpiCard.analysis("Div. Yield",    lblDY),        0, 3);
-        grid.add(KpiCard.analysis("Var. 52 Sem.",  lblYearChange),1, 3);
-        grid.add(KpiCard.analysis("Volume",        lblVolume),    2, 3);
-
-        for (int i = 0; i < 3; i++) {
-            ColumnConstraints cc = new ColumnConstraints();
-            cc.setPercentWidth(33.33);
-            cc.setHgrow(Priority.ALWAYS);
-            grid.getColumnConstraints().add(cc);
-        }
-
-        VBox section = new VBox(8, lblName, grid);
-        section.getStyleClass().add("card");
-        return section;
-    }
-
-    private VBox buildChartSection() {
-        // ── Period toggle buttons ──
-        HBox periodBar = new HBox(6);
+    private Panel buildChartPanel() {
         periodBar.setAlignment(Pos.CENTER_LEFT);
-
         for (Period p : Period.values()) {
-            if (p == Period.ONE_DAY) continue; // intraday não suportado no plano free Brapi
+            if (p == Period.ONE_DAY) continue; // intraday is not available on the free plan
             ToggleButton tb = new ToggleButton(p.label);
             tb.setToggleGroup(periodGroup);
             tb.setUserData(p);
-            tb.getStyleClass().add("period-btn");
+            tb.getStyleClass().add("filter-toggle");
             periodBar.getChildren().add(tb);
             if (p == Period.ONE_MONTH) tb.setSelected(true);
         }
-
         periodGroup.selectedToggleProperty().addListener((obs, old, now) -> {
-            if (now != null && !suppressPeriodReload) reloadChart();
+            if (now == null) { if (old != null && !suppressPeriodReload) periodGroup.selectToggle(old); return; }
+            if (!suppressPeriodReload) reloadChart();
         });
 
-        // ── Area chart com eixo temporal ──
         areaChart.setAnimated(false);
         areaChart.setLegendVisible(false);
         areaChart.setCreateSymbols(false);
-        areaChart.setMinHeight(320);
+        areaChart.setMinHeight(280);
         areaChart.getStyleClass().add("area-chart");
         yAxis.setAutoRanging(false);
-
         VBox.setVgrow(areaChart, Priority.ALWAYS);
 
-        // Instala eixo temporal: distribuição proporcional ao intervalo real entre datas
-        ChartAxisUtils.installTemporalAxis(xAxis, areaChart,
-                () -> currentDateFmt,
-                () -> lastEpochSecs);
+        // Temporal axis: distribution proportional to the real interval between dates
+        ChartAxisUtils.installTemporalAxis(xAxis, areaChart, () -> currentDateFmt, () -> lastEpochSecs);
+        ChartAxisUtils.hideTemporalAxisLabels(xAxis); // the crosshair is the reading mechanism
 
-        // Oculta labels e marcas do eixo X — o crosshair é o mecanismo principal de leitura
-        ChartAxisUtils.hideTemporalAxisLabels(xAxis);
-
-        // Debounce de resize: recalcula tick density quando largura muda > 50px
-        resizeDebounce = new Timeline(new KeyFrame(
-                javafx.util.Duration.millis(150),
-                ev -> {
-                    if (!lastEpochSecs.isEmpty()) {
-                        ChartAxisUtils.refreshTemporalAxis(xAxis, lastEpochSecs, areaChart.getWidth());
-                    }
-                }
-        ));
-        resizeDebounce.setCycleCount(1);
-        areaChart.widthProperty().addListener((obs, oldW, newW) -> {
-            if (Math.abs(newW.doubleValue() - oldW.doubleValue()) > 50) {
-                resizeDebounce.stop();
-                resizeDebounce.playFromStart();
-            }
-        });
-
-        // Crosshair temporal: nearest-neighbor por epoch second
         StackPane chartWrapper = ChartCrosshair.installTemporal(areaChart,
-                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC)
-                        .format(currentDateFmt),
+                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(currentDateFmt),
                 y -> "R$ " + String.format("%.2f", y).replace('.', ','));
         VBox.setVgrow(chartWrapper, Priority.ALWAYS);
 
-        // Empty/error state sobreposto ao gráfico
-        chartEmptyLabel = new Label("Sem dados para este período");
-        chartEmptyLabel.getStyleClass().addAll("empty-hint", "chart-empty-label");
-        chartEmptyLabel.setVisible(false);
-        chartEmptyLabel.setManaged(false);
+        chartEmptyLabel.getStyleClass().add("text-secondary");
+        chartEmptyLabel.setWrapText(true);
+        hide(chartEmptyLabel);
+        chartLoadingLabel.getStyleClass().add("text-helper");
+        hide(chartLoadingLabel);
 
-        VBox section = new VBox(10, periodBar, chartWrapper, chartEmptyLabel);
-        section.getStyleClass().add("chart-card");
-        return section;
+        Panel panel = new Panel("Histórico de preço", chartLoadingLabel, chartEmptyLabel, chartWrapper)
+                .subtitle("Fechamento diário (BRAPI); passe o mouse sobre o gráfico para ler data e preço");
+        panel.getStyleClass().add("main-chart-panel");
+        return panel;
+    }
+
+    // ── Query states ──────────────────────────────────────────────────────
+
+    /** Loading state: spinner + which ticker; the search button is locked until the answer. */
+    void showLoading(String ticker) {
+        loadingLabel.setText("Consultando " + ticker + "…");
+        hide(emptyState); hide(errorBanner); hide(noResultLabel);
+        show(loadingBox);
+        searchBtn.setDisable(true);
+    }
+
+    /** Failure state: the message stays on the page; no stale result is left under it. */
+    void showFailure(String message) {
+        errorBanner.setText(message == null ? "Não foi possível consultar." : message);
+        hide(loadingBox); hide(resultBox); hide(noResultLabel); hide(emptyState);
+        show(errorBanner);
+        searchBtn.setDisable(false);
+    }
+
+    /** No-result state: names the ticker that was not found. */
+    void showNoResult(String ticker) {
+        noResultLabel.setText("Nenhum ativo encontrado para \"" + ticker + "\". Confira o ticker (ex.: PETR4) ou tente pelo nome.");
+        hide(loadingBox); hide(resultBox); hide(errorBanner); hide(emptyState);
+        show(noResultLabel);
+        searchBtn.setDisable(false);
     }
 
     // ── Search logic ───────────────────────────────────────────────────────
 
     private void doSearch() {
-        String ticker = tickerCombo.getEditor().getText().trim().toUpperCase();
+        String ticker = tickerCombo.getEditor().getText() == null ? "" : tickerCombo.getEditor().getText().trim().toUpperCase();
         if (ticker.isBlank()) return;
         currentTicker = ticker;
+        final long epoch = searchEpoch.incrementAndGet();
+        showLoading(ticker);
 
-        searchBtn.setDisable(true);
-        searchBtn.setText("Buscando...");
-
-        CompletableFuture.supplyAsync(() -> BrapiClient.fetchStockDataSafe(ticker))
-                .thenAccept(result -> Platform.runLater(() -> {
-                    searchBtn.setDisable(false);
-                    searchBtn.setText("Buscar");
+        CompletableFuture.supplyAsync(() -> quotes.fetch(ticker), worker)
+                .thenAccept(result -> ui.execute(() -> {
+                    if (searchEpoch.get() != epoch) return; // a newer search replaced this one
                     if (!result.isSuccess()) {
-                        String msg = switch (result.getReason()) {
-                            case NO_TOKEN      -> "Configure um token BRAPI em Configurações para buscar cotações.";
-                            case HTTP_ERROR    -> "Serviço BRAPI indisponível (HTTP " + result.getDetail() + ").";
-                            case NETWORK_ERROR -> "Sem conexão. Verifique sua internet.";
-                            case NOT_FOUND     -> "Ticker " + ticker + " não encontrado na BRAPI.";
-                            case PARSE_ERROR   -> "Erro ao processar dados. Tente novamente.";
-                        };
-                        ToastHost.showError(msg);
-                        setResultVisible(false);
+                        switch (result.getReason()) {
+                            case NO_TOKEN      -> showFailure("Configure um token BRAPI em Configurações para buscar cotações.");
+                            case HTTP_ERROR    -> showFailure("Serviço BRAPI indisponível (HTTP " + result.getDetail() + "). Tente de novo em instantes.");
+                            case NETWORK_ERROR -> showFailure("Sem conexão. Verifique sua internet e tente novamente.");
+                            case NOT_FOUND     -> showNoResult(ticker);
+                            case PARSE_ERROR   -> showFailure("Resposta inesperada da BRAPI. Tente novamente.");
+                        }
                         return;
                     }
-                    onStockDataLoaded(result.getData());
-                }));
+                    StockData data = result.getData();
+                    if (!data.isValid()) {
+                        if (data.hasError()) showFailure("Não foi possível carregar " + data.ticker() + ": " + data.error());
+                        else showNoResult(ticker);
+                        return;
+                    }
+                    renderQuote(data);
+                    resetPeriodVisibility(); // new ticker → rediscover the limits from scratch
+                    reloadChart();
+                    probeCapabilities();     // discover the real permitted ranges in parallel
+                }))
+                .exceptionally(ex -> {
+                    // The source promises not to throw; if it does anyway (parser, settings, null body)
+                    // the page must still reach a terminal state: never "loading" with Buscar locked.
+                    Throwable root = ex;
+                    while (root.getCause() != null) root = root.getCause();
+                    final String msg = root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
+                    LOG.warning("[Quote] " + ticker + " → " + root.getClass().getSimpleName() + ": " + msg);
+                    ui.execute(() -> {
+                        if (searchEpoch.get() != epoch) return;
+                        showFailure("Falha inesperada ao consultar " + ticker + ": " + msg + ". Tente novamente.");
+                    });
+                    return null;
+                });
     }
 
-    private void onStockDataLoaded(StockData data) {
-        if (!data.isValid()) {
-            String msg = data.hasError() ? data.error() : "Ticker não encontrado";
-            ToastHost.showError("Não foi possível carregar " + data.ticker() + ": " + msg);
-            setResultVisible(false);
-            return;
-        }
-
+    /** Result state: assigns every figure at once (the pulse only highlights the change). */
+    void renderQuote(StockData data) {
         String name = data.longName() != null ? data.longName() : data.ticker();
-        lblName.setText(name + " (" + data.ticker() + ")");
-
-        lblPrice.setText(String.format("R$ %.2f", data.regularMarketPrice()).replace('.', ','));
-
+        hero.setValue(money(data.regularMarketPrice()));
         double chg = data.regularMarketChange();
         double chgPct = data.regularMarketChangePercent();
-        lblChange.setText(String.format("%s%.2f", chg >= 0 ? "+" : "", chg).replace('.', ','));
-        lblChangePct.setText(String.format("%s%.2f%%", chgPct >= 0 ? "+" : "", chgPct).replace('.', ','));
+        String tone = chgPct > 0 ? "pos" : chgPct < 0 ? "neg" : "muted";
+        hero.setSecondary((chg >= 0 ? "+ " : "- ") + money(Math.abs(chg)) + " · " + signedPct(chgPct) + " hoje", tone);
+        hero.setContext(name + " (" + data.ticker() + ") · cotação BRAPI, atraso típico de 15–30 min no plano gratuito");
 
-        String changeStyle = chgPct >= 0 ? "pos" : "neg";
-        lblChange.getStyleClass().removeAll("pos", "neg");
-        lblChangePct.getStyleClass().removeAll("pos", "neg");
-        lblChange.getStyleClass().add(changeStyle);
-        lblChangePct.getStyleClass().add(changeStyle);
+        dayStrip.set(STAT_OPEN, money(data.regularMarketOpen()));
+        dayStrip.set(STAT_HIGH, money(data.regularMarketDayHigh()));
+        dayStrip.set(STAT_LOW, money(data.regularMarketDayLow()));
+        dayStrip.set(STAT_VOLUME, volume(data.regularMarketVolume()));
 
-        lblOpen.setText(String.format("R$ %.2f", data.regularMarketOpen()).replace('.', ','));
-        lblHigh.setText(String.format("R$ %.2f", data.regularMarketDayHigh()).replace('.', ','));
-        lblLow.setText(String.format("R$ %.2f", data.regularMarketDayLow()).replace('.', ','));
-
-        lblDY.setText(data.dividendYield() > 0
-                ? String.format("%.2f%%", data.dividendYield()).replace('.', ',') : "—");
-
-        lblWeekHigh.setText(data.fiftyTwoWeekHigh() > 0
-                ? String.format("R$ %.2f", data.fiftyTwoWeekHigh()).replace('.', ',') : "—");
-        lblWeekLow.setText(data.fiftyTwoWeekLow() > 0
-                ? String.format("R$ %.2f", data.fiftyTwoWeekLow()).replace('.', ',') : "—");
-        lblAvg200.setText(data.twoHundredDayAverage() > 0
-                ? String.format("R$ %.2f", data.twoHundredDayAverage()).replace('.', ',') : "—");
-        long vol = data.regularMarketVolume();
-        if (vol >= 1_000_000) {
-            lblVolume.setText(String.format("%.1fM", vol / 1_000_000.0).replace('.', ','));
-        } else if (vol >= 1_000) {
-            lblVolume.setText(String.format("%.1fK", vol / 1_000.0).replace('.', ','));
-        } else {
-            lblVolume.setText(vol > 0 ? String.valueOf(vol) : "—");
-        }
-
+        setOptional(yearStrip, STAT_WEEK_HIGH, data.fiftyTwoWeekHigh() > 0, money(data.fiftyTwoWeekHigh()));
+        setOptional(yearStrip, STAT_WEEK_LOW, data.fiftyTwoWeekLow() > 0, money(data.fiftyTwoWeekLow()));
+        setOptional(yearStrip, STAT_AVG200, data.twoHundredDayAverage() > 0, money(data.twoHundredDayAverage()));
         double yearChg = data.fiftyTwoWeekChange();
-        if (yearChg != 0) {
-            String sign = yearChg >= 0 ? "+" : "";
-            lblYearChange.setText(String.format("%s%.2f%%", sign, yearChg * 100).replace('.', ','));
-            lblYearChange.getStyleClass().removeAll("pos", "neg");
-            lblYearChange.getStyleClass().add(yearChg >= 0 ? "pos" : "neg");
-        } else {
-            lblYearChange.setText("—");
-            lblYearChange.getStyleClass().removeAll("pos", "neg");
-        }
+        if (yearChg != 0) yearStrip.set(STAT_YEAR_CHANGE, signedPct(yearChg * 100), yearChg > 0 ? "pos" : "neg");
+        else yearStrip.set(STAT_YEAR_CHANGE, "—", "muted");
+        setOptional(yearStrip, STAT_DY, data.dividendYield() > 0, pct(data.dividendYield()));
 
-        setResultVisible(true);
-        resetPeriodVisibility(); // novo ticker → redescobre limites a partir do zero
-        reloadChart();
-        probeCapabilities();    // descobre limites reais em paralelo com o fetch inicial
+        hide(loadingBox); hide(errorBanner); hide(noResultLabel); hide(emptyState);
+        boolean wasVisible = resultBox.isVisible();
+        show(resultBox);
+        if (!wasVisible) Motion.fadeSlideIn(resultBox, Motion.PANEL_MS, 12);
+        searchBtn.setDisable(false);
     }
+
+    private static void setOptional(StatStrip strip, String label, boolean present, String text) {
+        if (present) strip.set(label, text);
+        else strip.set(label, "—", "muted");
+    }
+
+    private static String money(double v) {
+        return String.format("R$ %.2f", v).replace('.', ',');
+    }
+
+    private static String pct(double v) {
+        return String.format("%.2f%%", v).replace('.', ',');
+    }
+
+    private static String signedPct(double v) {
+        return String.format("%s%.2f%%", v >= 0 ? "+" : "", v).replace('.', ',');
+    }
+
+    private static String volume(long vol) {
+        if (vol >= 1_000_000) return String.format("%.1fM", vol / 1_000_000.0).replace('.', ',');
+        if (vol >= 1_000) return String.format("%.1fK", vol / 1_000.0).replace('.', ',');
+        return vol > 0 ? String.valueOf(vol) : "—";
+    }
+
+    // ── Chart ──────────────────────────────────────────────────────────────
 
     private void reloadChart() {
         if (currentTicker.isBlank()) return;
+        final String ticker = currentTicker;
+        final long epoch = searchEpoch.get();
+        final long requestEpoch = chartEpoch.incrementAndGet();
 
         Toggle selected = periodGroup.getSelectedToggle();
         Period period = selected != null ? (Period) selected.getUserData() : Period.ONE_MONTH;
         currentDateFmt = DateTimeFormatter.ofPattern(period.datePattern);
 
         areaChart.getData().clear();
-        setChartEmpty(null); // limpa estado anterior
+        setChartEmpty(null);
+        show(chartLoadingLabel);
 
         CompletableFuture
                 .supplyAsync(() -> {
                     try {
-                        return AssetHistoryClient.fetchHistory(currentTicker, period);
+                        return histories.fetch(ticker, period);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
-                })
-                .thenAccept(result -> Platform.runLater(() -> {
-                    applyPermittedRanges(result.permittedRanges(), result.effectiveRange(), period);
+                }, worker)
+                .thenAccept(result -> ui.execute(() -> {
+                    // stale if the ticker changed OR a newer period request was issued meanwhile
+                    if (searchEpoch.get() != epoch || !ticker.equals(currentTicker) || chartEpoch.get() != requestEpoch) return;
+                    hide(chartLoadingLabel);
+                    applyPermittedRanges(result.permittedRanges(), result.effectiveRange());
                     renderChart(result.points());
                 }))
                 .exceptionally(ex -> {
                     Throwable root = ex;
                     while (root.getCause() != null) root = root.getCause();
                     String msg = root.getMessage();
-                    LOG.warning("[Chart] " + currentTicker + " " + period.range
+                    LOG.warning("[Chart] " + ticker + " " + period.range
                             + "/" + period.interval + " → " + root.getClass().getSimpleName() + ": " + msg);
-                    Platform.runLater(() -> setChartEmpty(msg != null ? msg : "Erro ao carregar dados"));
+                    ui.execute(() -> {
+                        if (searchEpoch.get() != epoch || chartEpoch.get() != requestEpoch) return;
+                        hide(chartLoadingLabel);
+                        setChartEmpty(msg != null ? "Histórico indisponível: " + msg : "Histórico indisponível para este período");
+                    });
                     return null;
                 });
     }
@@ -465,8 +548,7 @@ public final class AssetAnalysisPage implements Page {
             setChartEmpty("Sem dados válidos para este período");
             return;
         }
-        setChartEmpty(null); // dados OK — esconde label de erro
-        lastRenderedPoints = valid;
+        setChartEmpty(null); // data OK — hide the error label
 
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
         double minPrice = Double.MAX_VALUE;
@@ -491,9 +573,10 @@ public final class AssetAnalysisPage implements Page {
         yAxis.setUpperBound(maxPrice + padding);
         yAxis.setTickUnit((range + 2 * padding) / 6.0);
 
-        areaChart.getData().add(series);
+        areaChart.getData().add(series);          // data first
+        Motion.chartRefresh(areaChart);           // then the pulse that shows it changed
 
-        // Recalcula escala temporal do eixo X com base na largura atual
+        // Recompute the X axis time scale for the current width
         Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(xAxis, lastEpochSecs, areaChart.getWidth()));
     }
 
@@ -515,10 +598,8 @@ public final class AssetAnalysisPage implements Page {
      *
      * @param permitted      ranges confirmados pela Brapi (vazio = sem info, não altera nada)
      * @param effectiveRange range que foi efetivamente buscado (usado para corrigir a seleção)
-     * @param requested      período que o usuário solicitou
      */
-    private void applyPermittedRanges(Set<String> permitted, String effectiveRange,
-                                       Period requested) {
+    private void applyPermittedRanges(Set<String> permitted, String effectiveRange) {
         if (permitted.isEmpty()) return; // sem informação de limite — mantém visibilidade atual
 
         suppressPeriodReload = true;
@@ -588,27 +669,16 @@ public final class AssetAnalysisPage implements Page {
         String ticker = currentTicker;
         CompletableFuture.supplyAsync(() -> {
             try {
-                return AssetHistoryClient.fetchHistory(ticker, Period.MAX);
+                return histories.fetch(ticker, Period.MAX);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
-        }).thenAccept(result -> Platform.runLater(() -> {
+        }, worker).thenAccept(result -> ui.execute(() -> {
             if (!ticker.equals(currentTicker)) return; // ticker mudou enquanto probe rodava
             if (!result.permittedRanges().isEmpty()) {
-                Toggle sel = periodGroup.getSelectedToggle();
-                Period current = sel != null ? (Period) sel.getUserData() : Period.ONE_MONTH;
-                applyPermittedRanges(result.permittedRanges(), result.effectiveRange(), current);
+                applyPermittedRanges(result.permittedRanges(), result.effectiveRange());
             }
             // permittedRanges vazio = MAX teve sucesso → plano sem restrição, mantém tudo visível
         })).exceptionally(ex -> null); // falha do probe é não-crítica
-    }
-
-    private void setResultVisible(boolean visible) {
-        emptyState.setVisible(!visible);
-        emptyState.setManaged(!visible);
-        kpiSection.setVisible(visible);
-        kpiSection.setManaged(visible);
-        chartSection.setVisible(visible);
-        chartSection.setManaged(visible);
     }
 }

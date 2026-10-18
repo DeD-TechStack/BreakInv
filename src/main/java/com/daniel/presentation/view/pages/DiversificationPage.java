@@ -12,7 +12,11 @@ import com.daniel.core.util.Money;
 import com.daniel.infrastructure.persistence.repository.SavedAnalysisRepository;
 import com.daniel.presentation.view.PageHeader;
 import com.daniel.presentation.view.components.EmptyState;
+import com.daniel.presentation.view.components.HeroValue;
+import com.daniel.presentation.view.components.Panel;
 import com.daniel.presentation.view.components.ToastHost;
+import com.daniel.presentation.view.layout.AdaptivePair;
+import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.Dialogs;
 import com.daniel.presentation.viewmodel.AllocationPlanCardController;
 import com.daniel.presentation.viewmodel.AllocationPlanForm;
@@ -20,7 +24,6 @@ import com.daniel.presentation.viewmodel.AllocationPlanForm;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
@@ -32,13 +35,20 @@ import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
-import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
-import org.kordamp.ikonli.javafx.FontIcon;
 
-public final class DiversificationPage implements Page {
+/**
+ * Diversificação (direction A): the wealth is the hero with the computed target beside it;
+ * calculation type and plan are one row of two small panels that stacks only when narrow;
+ * the current/target comparison is two panels side by side only when wide; the plan editor
+ * opens inside the plan panel; suggestions have their own panel. Figures and plan rules are
+ * unchanged — the controller and the calculators are the same.
+ */
+public final class DiversificationPage implements ResponsivePage {
 
     private final DailyTrackingUseCase daily;
+    private final java.util.concurrent.Executor worker;
+    private final java.util.concurrent.Executor ui;
     /**
      * Owns plan persistence rules: save+select in one transaction, ARCA fallback with an
      * explicit warning for an invalid selected plan, partial listing of invalid plans.
@@ -46,7 +56,7 @@ public final class DiversificationPage implements Page {
     private final AllocationPlanCardController planCtrl;
     /** Profile delivered by the controller from the persisted selection (null = ARCA). */
     private Map<CategoryEnum, Double> activeProfile = ARCADiversificationStrategy.getARCAProfile();
-    private final VBox root = new VBox(20);
+    private final VBox root = new VBox(16);
     private final ScrollPane scrollPane = new ScrollPane();
 
     /** Combo entry: {@code plan == null} means the built-in ARCA strategy. */
@@ -64,8 +74,8 @@ public final class DiversificationPage implements Page {
     private boolean suppressSelectionEvents = false;
 
     private final ToggleGroup calculationTypeGroup = new ToggleGroup();
-    private final ToggleButton rebalanceByContributionRadio = new ToggleButton("Rebalancear por Aporte");
-    private final ToggleButton rebalanceByTargetRadio = new ToggleButton("Patrimônio Alvo");
+    private final ToggleButton rebalanceByContributionRadio = new ToggleButton("Rebalancear por aporte");
+    private final ToggleButton rebalanceByTargetRadio = new ToggleButton("Patrimônio alvo");
 
     private final TextField targetPatrimonyField = new TextField();
     // Plan editor (shown for "Novo plano" / "Editar"); gets .panel class in buildPlanEditor()
@@ -82,10 +92,18 @@ public final class DiversificationPage implements Page {
     private final TableView<AllocationRow> idealTable = new TableView<>();
     private final TableView<SuggestionRow> suggestionsTable = new TableView<>();
 
-    private final Label totalPatrimonyLabel = new Label("—");
+    private final HeroValue hero = new HeroValue("Patrimônio atual");
+    /** Distinguishes current positions, the strategy's ideal base, and contribution suggestions. */
+    private final Label distributionBasisLabel = new Label();
     private final Label totalAporteLabel    = new Label();
     private final Label impliedTargetLabel  = new Label("—");
     private VBox impliedTargetBox;
+
+    private Panel planPanel;
+    private Panel idealPanel;
+    private Panel suggestionsPanel;
+    private AdaptivePair controlsPair;
+    private AdaptivePair comparisonPair;
 
     // Empty state — shown when no investments are registered
     private final VBox noInvestmentsPanel = buildNoInvestmentsPanel();
@@ -102,44 +120,38 @@ public final class DiversificationPage implements Page {
     DiversificationPage(DailyTrackingUseCase dailyTrackingUseCase, SavedAnalysisRepository plans,
                         java.util.concurrent.Executor worker, java.util.concurrent.Executor ui) {
         this.daily = dailyTrackingUseCase;
+        this.worker = worker;
+        this.ui = ui;
         this.planCtrl = new AllocationPlanCardController(plans, worker, ui, new PlanCardView());
 
         root.getStyleClass().add("page-root");
 
         PageHeader header = new PageHeader("Diversificação",
-                "Analise e otimize a distribuição dos seus investimentos");
+                "Como a carteira se distribui hoje e quanto aportar para chegar ao plano");
 
-        VBox patrimonyBox = buildPatrimonyCard();
+        buildPatrimonyHero();
 
-        // Controls row: method + calculation type side by side
-        VBox methodBox = buildMethodSelector();
-        VBox calculationBox = buildCalculationType();
-        HBox.setHgrow(methodBox, Priority.ALWAYS);
-        HBox.setHgrow(calculationBox, Priority.ALWAYS);
-        HBox controlsRow = new HBox(12, calculationBox, methodBox);
+        Panel currentPanel = buildCurrentAllocationTable();
+        idealPanel = buildIdealAllocationTable();
+        Panel calculationPanel = buildCalculationType();
+        planPanel = buildMethodSelector();
+        suggestionsPanel = buildSuggestionsTable();
 
-        HBox tablesRow = new HBox(12);
-        tablesRow.setAlignment(Pos.CENTER);
-        VBox currentBox = buildCurrentAllocationTable();
-        VBox idealBox = buildIdealAllocationTable();
-        HBox.setHgrow(currentBox, Priority.ALWAYS);
-        HBox.setHgrow(idealBox, Priority.ALWAYS);
+        // two small control panels fit from medium width on; two tables only when wide
+        controlsPair = new AdaptivePair(calculationPanel, planPanel, Breakpoint.NARROW, 0.42, 16);
+        comparisonPair = new AdaptivePair(currentPanel, idealPanel, Breakpoint.MEDIUM, 0.5, 16);
 
-        FontIcon arrowLabel = Icons.arrowRight();
-        arrowLabel.getStyleClass().add("comparison-arrow");
-        VBox arrowBox = new VBox(arrowLabel);
-        arrowBox.setAlignment(Pos.CENTER);
-        arrowBox.setMinWidth(32);
+        distributionBasisLabel.getStyleClass().add("text-secondary");
+        distributionBasisLabel.setWrapText(true);
+        distributionBasisLabel.setVisible(false);
+        distributionBasisLabel.setManaged(false);
 
-        tablesRow.getChildren().addAll(currentBox, arrowBox, idealBox);
-
-        VBox suggestionsBox = buildSuggestionsTable();
-
-        root.getChildren().addAll(header, patrimonyBox, noInvestmentsPanel, controlsRow, tablesRow, suggestionsBox);
+        root.getChildren().addAll(header, hero, noInvestmentsPanel, controlsPair, distributionBasisLabel, comparisonPair, suggestionsPanel);
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
         scrollPane.getStyleClass().add("page-scroll");
+        onBreakpoint(Breakpoint.WIDE);
     }
 
     @Override
@@ -152,19 +164,23 @@ public final class DiversificationPage implements Page {
         planCtrl.reload(true);
     }
 
+    @Override
+    public void onBreakpoint(Breakpoint bp) {
+        controlsPair.onBreakpoint(bp);
+        comparisonPair.onBreakpoint(bp);
+        root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
+        root.getStyleClass().add(bp.styleClass());
+    }
+
     // Seletor de tipo de cálculo
-    private VBox buildCalculationType() {
-        VBox box = new VBox(12);
-        box.getStyleClass().add("card");
-
-        Label title = new Label("TIPO DE CÁLCULO");
-        title.getStyleClass().add("card-title");
-
+    private Panel buildCalculationType() {
         rebalanceByContributionRadio.setToggleGroup(calculationTypeGroup);
         rebalanceByTargetRadio.setToggleGroup(calculationTypeGroup);
         rebalanceByContributionRadio.getStyleClass().add("seg-btn");
         rebalanceByTargetRadio.getStyleClass().add("seg-btn");
         rebalanceByContributionRadio.setSelected(true);
+        rebalanceByContributionRadio.setTooltip(new Tooltip("Sugere aportes para equilibrar a carteira sem vender nada"));
+        rebalanceByTargetRadio.setTooltip(new Tooltip("Sugere quanto aportar em cada categoria para chegar a um valor total"));
 
         HBox segCalc = new HBox(2, rebalanceByContributionRadio, rebalanceByTargetRadio);
         segCalc.getStyleClass().add("segmented");
@@ -174,13 +190,15 @@ public final class DiversificationPage implements Page {
         hint.setWrapText(true);
 
         // Target patrimony field (shown in target mode)
-        Label targetLabel = new Label("Patrimônio Alvo:");
-        targetLabel.getStyleClass().addAll("text-bold", "text-sm");
+        Label targetLabel = new Label("Patrimônio alvo");
+        targetLabel.getStyleClass().add("form-label");
+        targetLabel.setLabelFor(targetPatrimonyField);
         targetPatrimonyField.setPromptText("R$ 100.000,00");
+        targetPatrimonyField.setAccessibleText("Patrimônio alvo");
         targetPatrimonyField.setTextFormatter(Money.currencyFormatterEditable());
         Money.applyFormatOnBlur(targetPatrimonyField);
 
-        VBox targetBox = new VBox(8, targetLabel, targetPatrimonyField);
+        VBox targetBox = new VBox(6, targetLabel, targetPatrimonyField);
         targetBox.setVisible(false);
         targetBox.setManaged(false);
 
@@ -197,20 +215,19 @@ public final class DiversificationPage implements Page {
 
         Button recalculateBtn = new Button("Recalcular");
         recalculateBtn.getStyleClass().add("button");
+        recalculateBtn.setTooltip(new Tooltip("Refaz a análise com os valores de hoje"));
         recalculateBtn.setOnAction(e -> planCtrl.refresh());
 
-        box.getChildren().addAll(title, segCalc, hint, targetBox, recalculateBtn);
-        return box;
+        return new Panel("Tipo de cálculo", segCalc, hint, targetBox, recalculateBtn);
     }
 
-    private VBox buildMethodSelector() {
-        VBox box = new VBox(12);
-        box.getStyleClass().add("card");
-
-        Label title = new Label("PLANO DE ALOCAÇÃO");
-        title.getStyleClass().add("card-title");
-
+    private Panel buildMethodSelector() {
         planCombo.setMaxWidth(Double.MAX_VALUE);
+        planCombo.setAccessibleText("Plano de alocação");
+        // Explicit cells: the selected plan's name is rendered by our own ListCell (the skin's default
+        // button cell is what the 150 % capture showed blank although the value was correct).
+        planCombo.setButtonCell(planCell());
+        planCombo.setCellFactory(lv -> planCell());
         planCombo.getItems().add(new PlanChoice(null));
         planCombo.getSelectionModel().selectFirst();
         planCombo.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
@@ -222,6 +239,9 @@ public final class DiversificationPage implements Page {
         newPlanBtn.getStyleClass().add("secondary-btn");
         editPlanBtn.getStyleClass().add("ghost-btn");
         deletePlanBtn.getStyleClass().add("danger-btn");
+        newPlanBtn.setTooltip(new Tooltip("Cria um plano com seus próprios pesos por categoria"));
+        editPlanBtn.setTooltip(new Tooltip("Altera os pesos do plano selecionado"));
+        deletePlanBtn.setTooltip(new Tooltip("Exclui o plano selecionado; a análise volta ao ARCA"));
         newPlanBtn.setOnAction(e -> openPlanEditor(null));
         editPlanBtn.setOnAction(e -> {
             PlanChoice sel = planCombo.getValue();
@@ -229,8 +249,9 @@ public final class DiversificationPage implements Page {
         });
         deletePlanBtn.setOnAction(e -> deleteSelectedPlan());
 
-        HBox row = new HBox(8, planCombo, newPlanBtn, editPlanBtn, deletePlanBtn);
-        row.setAlignment(Pos.CENTER_LEFT);
+        FlowPane planActions = new FlowPane(8, 8, newPlanBtn, editPlanBtn, deletePlanBtn);
+        planActions.setAlignment(Pos.CENTER_LEFT);
+        VBox row = new VBox(8, planCombo, planActions);
 
         planHint.getStyleClass().add("text-helper");
         planHint.setWrapText(true);
@@ -241,20 +262,31 @@ public final class DiversificationPage implements Page {
         planEditorBox.setVisible(false);
         planEditorBox.setManaged(false);
 
-        box.getChildren().addAll(title, row, planHint, planEmptyHint, planEditorBox);
+        Panel panel = new Panel("Plano de alocação", row, planHint, planEmptyHint, planEditorBox);
         updatePlanHint();
-        return box;
+        return panel;
+    }
+
+    private static ListCell<PlanChoice> planCell() {
+        return new ListCell<>() {
+            @Override protected void updateItem(PlanChoice item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? "" : item.toString());
+            }
+        };
     }
 
     private void buildPlanEditor() {
         planEditorBox.getStyleClass().add("panel");
 
-        Label nameLabel = new Label("Nome do plano:");
-        nameLabel.getStyleClass().addAll("text-bold", "text-sm");
+        Label nameLabel = new Label("Nome do plano");
+        nameLabel.getStyleClass().add("form-label");
+        nameLabel.setLabelFor(planNameField);
         planNameField.setPromptText("Ex.: Conservador");
+        planNameField.setAccessibleText("Nome do plano");
 
-        Label customTitle = new Label("Pesos por categoria (duas casas decimais; soma 100,00%):");
-        customTitle.getStyleClass().addAll("text-bold", "text-sm");
+        Label customTitle = new Label("Pesos por categoria (a soma precisa dar 100,00%)");
+        customTitle.getStyleClass().add("form-label");
 
         GridPane grid = new GridPane();
         grid.getStyleClass().add("rate-grid");
@@ -269,6 +301,7 @@ public final class DiversificationPage implements Page {
             TextField field = new TextField("0,00");
             field.setPrefWidth(90);
             field.setPromptText("0,00");
+            field.setAccessibleText("Peso de " + cat.getDisplayName() + " em porcentagem");
             field.textProperty().addListener((obs, o, n) -> updatePlanTotal());
 
             Label percent = new Label("%");
@@ -291,6 +324,8 @@ public final class DiversificationPage implements Page {
 
         savePlanBtn.getStyleClass().add("button");
         cancelPlanBtn.getStyleClass().add("ghost-btn");
+        savePlanBtn.setTooltip(new Tooltip("Grava o plano e passa a usá-lo na análise"));
+        cancelPlanBtn.setTooltip(new Tooltip("Fecha o editor sem gravar (Esc)"));
         savePlanBtn.setOnAction(e -> savePlanFromEditor());
         cancelPlanBtn.setOnAction(e -> { if (!planCtrl.isBusy()) closePlanEditor(); });
         planEditorBox.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, ev -> {
@@ -330,6 +365,7 @@ public final class DiversificationPage implements Page {
             planHint.setText("Renda Fixa 40% \u2022 A\u00e7\u00f5es 30% \u2022 Outros 25% \u2022 Cripto 5% \u2014 estrat\u00e9gia padr\u00e3o, n\u00e3o edit\u00e1vel");
             editPlanBtn.setDisable(true);
             deletePlanBtn.setDisable(true);
+            if (idealPanel != null) idealPanel.setTitle("Distribuição alvo — ARCA (padrão)");
         } else {
             StringBuilder sb = new StringBuilder();
             sel.plan().weightsBps().forEach((cat, bps) -> {
@@ -341,6 +377,7 @@ public final class DiversificationPage implements Page {
             planHint.setText(sb.toString());
             editPlanBtn.setDisable(false);
             deletePlanBtn.setDisable(false);
+            if (idealPanel != null) idealPanel.setTitle("Distribuição alvo — " + sel.plan().name());
         }
     }
 
@@ -401,7 +438,7 @@ public final class DiversificationPage implements Page {
         if (sel == null || sel.plan() == null) return;
         AllocationPlan plan = sel.plan();
         if (!Dialogs.confirm("Excluir plano", "Excluir o plano \"" + plan.name() + "\"?",
-                "A an\u00e1lise voltar\u00e1 para a estrat\u00e9gia ARCA padr\u00e3o. Nenhum investimento \u00e9 alterado.")) return;
+                "A an\u00e1lise voltar\u00e1 para a estrat\u00e9gia ARCA padr\u00e3o. Nenhum investimento \u00e9 alterado.", "Excluir")) return;
         planCtrl.delete(plan);
     }
 
@@ -415,13 +452,17 @@ public final class DiversificationPage implements Page {
         @Override public void renderPlans(List<AllocationPlan> all, Long selectedId) {
             suppressSelectionEvents = true;
             try {
-                planCombo.getItems().setAll(new PlanChoice(null));
-                PlanChoice toSelect = planCombo.getItems().get(0);
+                List<PlanChoice> choices = new ArrayList<>();
+                choices.add(new PlanChoice(null));
+                PlanChoice toSelect = choices.get(0);
                 for (AllocationPlan p : all) {
                     PlanChoice c = new PlanChoice(p);
-                    planCombo.getItems().add(c);
+                    choices.add(c);
                     if (selectedId != null && selectedId.equals(p.id())) toSelect = c;
                 }
+                // Publish a complete list: an ARCA-only intermediate empties the skin's selected
+                // cell, while reselecting an equal persisted record need not invalidate its value.
+                planCombo.getItems().setAll(choices);
                 planCombo.getSelectionModel().select(toSelect);
             } finally {
                 suppressSelectionEvents = false;
@@ -454,38 +495,22 @@ public final class DiversificationPage implements Page {
         return c.getMessage() == null ? c.getClass().getSimpleName() : c.getMessage();
     }
 
-    private VBox buildPatrimonyCard() {
-        VBox box = new VBox(6);
-        box.getStyleClass().add("hero-card");
-
-        Label title = new Label("PATRIMÔNIO ATUAL");
-        title.getStyleClass().add("kpi-label");
-        totalPatrimonyLabel.getStyleClass().addAll("kpi-value", "num");
-        Label sub = new Label("baseado em valores de hoje");
-        sub.getStyleClass().add("kpi-sub");
-        VBox currentBox = new VBox(4, title, totalPatrimonyLabel, sub);
-
-        Label impliedTitle = new Label("PATRIMÔNIO ALVO CALCULADO");
-        impliedTitle.getStyleClass().add("kpi-label");
-        impliedTargetLabel.getStyleClass().addAll("kpi-value", "num");
-        impliedTargetBox = new VBox(4, impliedTitle, impliedTargetLabel);
+    /** Wealth as the hero; the computed target is a trailing value of the same block, not a second card. */
+    private void buildPatrimonyHero() {
+        hero.setContext("com os valores de hoje");
+        Label impliedTitle = new Label("Alvo calculado");
+        impliedTitle.getStyleClass().add("hero-caption");
+        impliedTargetLabel.getStyleClass().addAll("hero-secondary", "num");
+        impliedTargetBox = new VBox(2, impliedTitle, impliedTargetLabel);
         impliedTargetBox.setVisible(false);
         impliedTargetBox.setManaged(false);
-
-        HBox row = new HBox(40, currentBox, impliedTargetBox);
-        box.getChildren().add(row);
-        return box;
+        hero.setTrailing(impliedTargetBox);
     }
 
-    private VBox buildCurrentAllocationTable() {
-        VBox box = new VBox(10);
-        box.getStyleClass().add("card");
-
-        Label title = new Label("DISTRIBUIÇÃO ATUAL");
-        title.getStyleClass().add("card-title");
-
+    private Panel buildCurrentAllocationTable() {
         currentTable.getStyleClass().add("table-analytic");
         currentTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        currentTable.setPrefHeight(220);
 
         TableColumn<AllocationRow, String> catCol = new TableColumn<>("Categoria");
         catCol.setCellValueFactory(c -> c.getValue().categoryProperty());
@@ -533,24 +558,17 @@ public final class DiversificationPage implements Page {
         currentTable.getColumns().add(catCol);
         currentTable.getColumns().add(valueCol);
         currentTable.getColumns().add(percentCol);
-        Label currentPh = new Label("Nenhum dado disponível");
+        Label currentPh = new Label("Sem investimentos para distribuir");
         currentPh.getStyleClass().add("text-helper");
         currentTable.setPlaceholder(currentPh);
 
-        box.getChildren().addAll(title, currentTable);
-        VBox.setVgrow(currentTable, Priority.ALWAYS);
-        return box;
+        return new Panel("Distribuição atual", currentTable);
     }
 
-    private VBox buildIdealAllocationTable() {
-        VBox box = new VBox(10);
-        box.getStyleClass().add("card");
-
-        Label title = new Label("DISTRIBUIÇÃO IDEAL");
-        title.getStyleClass().add("card-title");
-
+    private Panel buildIdealAllocationTable() {
         idealTable.getStyleClass().add("table-analytic");
         idealTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        idealTable.setPrefHeight(220);
 
         TableColumn<AllocationRow, String> catCol = new TableColumn<>("Categoria");
         catCol.setCellValueFactory(c -> c.getValue().categoryProperty());
@@ -598,24 +616,17 @@ public final class DiversificationPage implements Page {
         idealTable.getColumns().add(catCol);
         idealTable.getColumns().add(valueCol);
         idealTable.getColumns().add(percentCol);
-        Label idealPh = new Label("Selecione um método");
+        Label idealPh = new Label("A distribuição alvo aparece quando houver investimentos");
         idealPh.getStyleClass().add("text-helper");
         idealTable.setPlaceholder(idealPh);
 
-        box.getChildren().addAll(title, idealTable);
-        VBox.setVgrow(idealTable, Priority.ALWAYS);
-        return box;
+        return new Panel("Distribuição alvo — ARCA (padrão)", idealTable);
     }
 
-    private VBox buildSuggestionsTable() {
-        VBox box = new VBox(10);
-        box.getStyleClass().add("card");
-
-        Label title = new Label("SUGESTÕES DE APORTE");
-        title.getStyleClass().add("card-title");
-
+    private Panel buildSuggestionsTable() {
         suggestionsTable.getStyleClass().add("table-analytic");
         suggestionsTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        suggestionsTable.setPrefHeight(200);
 
         TableColumn<SuggestionRow, String> catCol = new TableColumn<>("Categoria");
         catCol.setCellValueFactory(c -> c.getValue().categoryProperty());
@@ -639,7 +650,7 @@ public final class DiversificationPage implements Page {
             }
         });
 
-        TableColumn<SuggestionRow, String> actionCol = new TableColumn<>("Aporte Sugerido");
+        TableColumn<SuggestionRow, String> actionCol = new TableColumn<>("Aporte sugerido");
         actionCol.setCellValueFactory(c -> c.getValue().actionProperty());
         actionCol.setCellFactory(col -> new TableCell<>() {
             @Override
@@ -667,9 +678,8 @@ public final class DiversificationPage implements Page {
         suggestionsTable.setPlaceholder(suggPh);
 
         totalAporteLabel.getStyleClass().addAll("text-helper", "text-bold");
-        VBox.setVgrow(suggestionsTable, Priority.ALWAYS);
-        box.getChildren().addAll(title, suggestionsTable, totalAporteLabel);
-        return box;
+        return new Panel("Sugestões de aporte", suggestionsTable, totalAporteLabel)
+                .subtitle("Só sugere aportes; nunca vende nem movimenta nada.");
     }
 
     private VBox buildNoInvestmentsPanel() {
@@ -701,15 +711,18 @@ public final class DiversificationPage implements Page {
             Map<Long, Long> currentValues = daily.getAllCurrentValues(today);
             long totalPatrimony = daily.getTotalPatrimony(today);
             return new DivData(investments, currentValues, totalPatrimony);
-        }, UiExecutor.get()).whenComplete((data, err) -> {
+        }, worker).whenComplete((data, err) -> {
             if (refreshEpoch.get() != epoch) return;
-            Platform.runLater(() -> {
+            ui.execute(() -> {
                 if (err != null) {
                     ToastHost.showError("N\u00e3o foi poss\u00edvel calcular a diversifica\u00e7\u00e3o: " + rootMessage(err));
                     return;
                 }
                 if (data.investments().isEmpty()) {
-                    totalPatrimonyLabel.setText("\u2014");
+                    hero.setValue("\u2014");
+                    hero.setContext("cadastre investimentos para analisar a distribuição");
+                    distributionBasisLabel.setVisible(false);
+                    distributionBasisLabel.setManaged(false);
                     currentTable.getItems().clear();
                     idealTable.getItems().clear();
                     suggestionsTable.getItems().clear();
@@ -719,12 +732,22 @@ public final class DiversificationPage implements Page {
                 }
                 noInvestmentsPanel.setVisible(false);
                 noInvestmentsPanel.setManaged(false);
-                totalPatrimonyLabel.setText(daily.brl(data.totalPatrimony()));
 
                 DiversificationData currentData = DiversificationCalculator.calculateCurrent(
                         data.investments(),
                         data.currentValues()
                 );
+
+                // These valuations are separate reads. Their difference alone does not confirm cash.
+                long positions = currentData.totalCents();
+                hero.setValue(daily.brl(data.totalPatrimony()));
+                String difference;
+                try { difference = daily.brl(Math.subtractExact(data.totalPatrimony(), positions)); }
+                catch (ArithmeticException ex) { difference = "indisponível"; }
+                hero.setContext("Posições " + daily.brl(positions) + " · diferença para o patrimônio " + difference
+                        + " (não confirma saldo de caixa)");
+                distributionBasisLabel.setVisible(true);
+                distributionBasisLabel.setManaged(true);
 
                 updateCurrentTable(currentData);
 
@@ -750,12 +773,19 @@ public final class DiversificationPage implements Page {
     /** Ideal distribution and informative contribution suggestions for the given profile (RN10: never trades). */
     private void updateIdeal(long currentPatrimony, DiversificationData currentData, Map<CategoryEnum, Double> profile) {
         List<DiversificationSuggestion> suggestions;
+        long idealBase;
+        String basisMode;
 
         if (rebalanceByTargetRadio.isSelected()) {
             long targetPatrimony = getTargetPatrimony(currentPatrimony);
             suggestions = ARCADiversificationStrategy.calculateSuggestionsByTarget(
                     currentPatrimony, targetPatrimony, currentData.valuesCents(), profile
             );
+            boolean aboveCurrent = targetPatrimony > currentPatrimony;
+            idealBase = aboveCurrent ? targetPatrimony : ARCADiversificationStrategy.calculateImpliedTarget(
+                    currentPatrimony, currentData.valuesCents(), profile);
+            basisMode = aboveCurrent ? "alvo informado"
+                    : "o alvo informado não supera o patrimônio; usa-se o alvo calculado por aporte";
             impliedTargetBox.setVisible(false);
             impliedTargetBox.setManaged(false);
         } else {
@@ -764,10 +794,16 @@ public final class DiversificationPage implements Page {
             );
             long implied = ARCADiversificationStrategy.calculateImpliedTarget(
                     currentPatrimony, currentData.valuesCents(), profile);
+            idealBase = implied;
+            basisMode = "alvo calculado pelas posições, no mínimo o patrimônio total";
             impliedTargetLabel.setText(daily.brl(implied));
             impliedTargetBox.setVisible(true);
             impliedTargetBox.setManaged(true);
         }
+
+        distributionBasisLabel.setText("Atual: posições " + daily.brl(currentData.totalCents()) + " (sem caixa). "
+                + "Ideal: " + daily.brl(idealBase) + " — " + basisMode + ". Patrimônio total: " + daily.brl(currentPatrimony)
+                + ". Sugestões: diferenças positivas entre ideal e posições, sem descontar o caixa à parte.");
 
         var idealRows = FXCollections.<AllocationRow>observableArrayList();
         for (var sug : suggestions) {
@@ -819,6 +855,7 @@ public final class DiversificationPage implements Page {
         circle.setFill(Color.web(category.getColor()));
 
         Label label = new Label(text);
+        label.setTooltip(new Tooltip(text)); // a long name that still gets cut is one hover away in full
 
         box.getChildren().addAll(circle, label);
         return box;

@@ -1,5 +1,6 @@
 package com.daniel.presentation.view.pages;
 
+import com.daniel.infrastructure.persistence.config.Database;
 import com.daniel.presentation.view.FxStubs;
 import com.daniel.presentation.view.FxTestSupport;
 import com.daniel.presentation.view.components.HeroValue;
@@ -16,9 +17,12 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -31,15 +35,28 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class DashboardPageLayoutTest {
 
+    @TempDir
+    Path tempDir;
+
     DashboardPage page;
     Parent view;
 
     @BeforeEach
     void setUp() {
+        // onShow() reads app settings (BRAPI token, auto-update) through the Database singleton; in
+        // the full suite another test may have left it pointing at a deleted @TempDir, so this test
+        // owns its own empty database instead of depending on the order of execution.
+        Database.configure("jdbc:sqlite:" + tempDir.resolve("dashboard.db").toString().replace("\\", "/"));
+        Database.open();
         FxTestSupport.runAndWait(() -> {
             page = new DashboardPage(FxStubs.emptyDaily());
             view = page.view();
         });
+    }
+
+    @AfterEach
+    void tearDown() {
+        Database.close();
     }
 
     static List<Node> flatten(Node n) {
@@ -95,6 +112,51 @@ class DashboardPageLayoutTest {
             Node periodToggle = flatten(root.getChildren().get(chartIdx)).stream()
                     .filter(n -> n.getStyleClass().contains("filter-toggle")).findFirst().orElse(null);
             assertNotNull(periodToggle, "period filter lives inside the main chart block");
+        });
+    }
+
+    /** The dashboard refresh runs on the UiExecutor and answers through the FX queue; wait for the hero to settle. */
+    void awaitRefresh() throws Exception {
+        HeroValue hero = first(HeroValue.class);
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < deadline) {
+            com.daniel.presentation.view.util.UiExecutor.get().submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS);
+            FxTestSupport.runAndWait(() -> {});
+            final boolean[] done = {false};
+            FxTestSupport.runAndWait(() -> done[0] = !hero.valueLabel().getText().equals("—")
+                    || first(StatStrip.class).qualifierLabel("Caixa").isVisible());
+            if (done[0]) return;
+            Thread.sleep(50);
+        }
+    }
+
+    @Test
+    void emptyPortfolio_showsZeroWealthHonestly_notADash_andQualifiesTheManualCash() throws Exception {
+        FxTestSupport.runAndWait(() -> page.onShow());
+        awaitRefresh();
+        FxTestSupport.runAndWait(() -> {
+            HeroValue hero = first(HeroValue.class);
+            StatStrip strip = first(StatStrip.class);
+            String zero = com.daniel.core.util.MoneyFormat.brl(0);
+            assertEquals(zero, hero.valueLabel().getText(), "zero is a value; '—' would mean unknown while the strip says R$ 0,00");
+            assertEquals(zero, strip.valueLabel("Caixa").getText());
+            Label q = strip.qualifierLabel("Caixa");
+            assertTrue(q.isVisible() && q.isManaged(), "cash without a movement history is qualified, like Carteira does");
+            assertFalse(q.getText().isBlank());
+            assertTrue(strip.valueLabel("Ganho realizado").getText().equals("—"), "unknown gain stays unknown");
+            Label gq = strip.qualifierLabel("Ganho realizado");
+            assertTrue(gq.isVisible() && !gq.getText().isBlank(), "and says why");
+        });
+    }
+
+    @Test
+    void tokenBanner_doesNotPromiseRealReturn() {
+        FxTestSupport.runAndWait(() -> {
+            List<String> texts = flatten(view).stream().filter(Label.class::isInstance)
+                    .map(n -> ((Label) n).getText()).filter(t -> t != null).toList();
+            assertTrue(texts.stream().noneMatch(t -> t.toLowerCase().contains("rentabilidade real")),
+                    "the chart method is value variation; the banner must not promise 'rentabilidade real'");
+            assertTrue(texts.stream().anyMatch(t -> t.contains("Token Brapi não configurado")), "the warning itself is kept");
         });
     }
 

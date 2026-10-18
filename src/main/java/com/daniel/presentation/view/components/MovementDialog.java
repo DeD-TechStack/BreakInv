@@ -6,6 +6,7 @@ import com.daniel.core.domain.ledger.Movement;
 import com.daniel.core.domain.ledger.MovementRequest;
 import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.util.DialogChrome;
+import com.daniel.presentation.view.util.UiDates;
 import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.viewmodel.MovementForm;
 
@@ -14,7 +15,6 @@ import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
@@ -84,28 +84,18 @@ public final class MovementDialog extends Dialog<Movement> {
         confirmType = new ButtonType("Confirmar", ButtonBar.ButtonData.OK_DONE);
         getDialogPane().getButtonTypes().addAll(confirmType, ButtonType.CANCEL);
 
-        Label titleLabel = new Label(title);
-        titleLabel.getStyleClass().add("dialog-title-label");
-        Button closeBtn = new Button("✕");
-        closeBtn.getStyleClass().add("icon-btn");
-        closeBtn.setOnAction(e -> { if (!form.submitting()) close(); });
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox headerRow = new HBox(titleLabel, spacer, closeBtn);
-        headerRow.getStyleClass().add("dialog-header-row");
-        DialogChrome.apply(this, headerRow);
-
         VBox content = new VBox(10);
         content.setPadding(new Insets(16));
         if (subtitle != null) {
             Label sub = new Label(subtitle);
-            sub.getStyleClass().add("text-helper");
+            sub.getStyleClass().add("text-secondary");
             sub.setWrapText(true);
             content.getChildren().add(sub);
         }
 
         content.getChildren().add(field("Data", datePicker, "date"));
         datePicker.setMaxWidth(Double.MAX_VALUE);
+        UiDates.applyBrFormat(datePicker);
         datePicker.valueProperty().addListener((o, a, v) -> form.setDate(v));
         form.setDate(datePicker.getValue());
 
@@ -167,14 +157,17 @@ public final class MovementDialog extends Dialog<Movement> {
         errorLabel.setManaged(false);
         helperLabel.getStyleClass().add("text-helper");
         helperLabel.setWrapText(true);
-        helperLabel.setText("Intenção " + shortKey() + " — um clique, um lançamento.");
+        helperLabel.setText("Um clique, um lançamento: confirmar de novo com o mesmo conteúdo não duplica.");
         busy.setMaxSize(18, 18);
         busy.setVisible(false);
         busy.setManaged(false);
         HBox footer = new HBox(8, busy, helperLabel);
+        footer.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         content.getChildren().addAll(errorLabel, footer);
 
-        getDialogPane().setContent(new VBox(0, headerRow, content));
+        // Shared frame: header (title + close, draggable) and a body that scrolls on its own, so the
+        // Confirmar/Cancelar bar stays reachable in a short window.
+        DialogChrome.frame(this, title, content, () -> !form.submitting());
 
         showingProperty().addListener((obs, was, is) -> {
             if (is) ToastHost.showDim(); else ToastHost.hideDim();
@@ -236,11 +229,6 @@ public final class MovementDialog extends Dialog<Movement> {
         return box;
     }
 
-    private String shortKey() {
-        String k = form.intentKey();
-        return k.length() > 8 ? k.substring(0, 8) : k;
-    }
-
     private void setBusy(boolean on) {
         busy.setVisible(on);
         busy.setManaged(on);
@@ -266,6 +254,16 @@ public final class MovementDialog extends Dialog<Movement> {
         errorLabel.setVisible(false);
         errorLabel.setManaged(false);
         MovementRequest req;
+        LocalDate date = UiDates.commitEditor(datePicker);
+        if (date == null) {
+            errorLabel.setText("Informe uma data válida (dd/mm/aaaa ou aaaa-mm-dd).");
+            errorLabel.setVisible(true);
+            errorLabel.setManaged(true);
+            datePicker.requestFocus();
+            DialogChrome.resizeToContent(this);
+            return;
+        }
+        form.setDate(date);
         try {
             req = form.build();
         } catch (LedgerException ex) {
@@ -274,7 +272,7 @@ public final class MovementDialog extends Dialog<Movement> {
         }
         form.markSubmitting();
         setBusy(true);
-        helperLabel.setText("Gravando intenção " + shortKey() + "…");
+        helperLabel.setText("Gravando…");
         CompletableFuture.supplyAsync(() -> daily.movement(req), worker)
                 .whenComplete((saved, err) -> ui.execute(() -> {
                     if (err == null) {
@@ -286,7 +284,7 @@ public final class MovementDialog extends Dialog<Movement> {
                     }
                     form.markFailed();
                     setBusy(false);
-                    helperLabel.setText("Intenção " + shortKey() + " — corrija e confirme novamente; o mesmo conteúdo não duplica.");
+                    helperLabel.setText("Corrija e confirme novamente; o mesmo conteúdo não duplica o lançamento.");
                     Throwable cause = err instanceof java.util.concurrent.CompletionException && err.getCause() != null ? err.getCause() : err;
                     if (cause instanceof LedgerException le) {
                         showError(le);

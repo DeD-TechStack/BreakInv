@@ -4,6 +4,7 @@ import com.daniel.infrastructure.config.AppConfig;
 import com.daniel.infrastructure.persistence.config.Database;
 import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.AppShell;
+import com.daniel.presentation.view.util.DialogChrome;
 import com.daniel.presentation.view.util.Motion;
 import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.view.util.UiPreferences;
@@ -38,6 +39,8 @@ public class App extends Application {
 
         UiPreferences uiPrefs = UiPreferences.forUser();
         Motion.configure(uiPrefs);
+        // Dialogs open over this window and are capped by the screen IT is on, not always the primary one.
+        DialogChrome.ownerSupplier(() -> stage);
 
         DailyTrackingUseCase dailyTrackingUseCase = appConfig.getDailyTrackingUseCase();
         AppShell shell = new AppShell(dailyTrackingUseCase, uiPrefs);

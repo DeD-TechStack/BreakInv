@@ -7,15 +7,13 @@ import com.daniel.core.domain.ledger.ReconciliationRequest;
 import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.core.util.MoneyFormat;
 import com.daniel.presentation.view.util.DialogChrome;
+import com.daniel.presentation.view.util.UiDates;
 import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.viewmodel.MovementForm;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import java.math.BigDecimal;
@@ -118,38 +116,28 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
         this.ui = ui;
         this.onDone = onDone;
 
-        String title = (mode == Mode.OPENING ? "Reconhecer saldo de abertura" : "Reconciliar saldo") + " — " + displayName;
+        String title = (mode == Mode.OPENING ? "Reconhecer saldo inicial" : "Revisar saldo") + " — " + displayName;
         setTitle(title);
         setHeaderText(null);
         getDialogPane().getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
         getDialogPane().getStyleClass().add("dark-dialog");
-        getDialogPane().setMinWidth(560);
+        getDialogPane().setMinWidth(520);
         getDialogPane().getButtonTypes().addAll(confirmType, ButtonType.CANCEL);
-
-        Label titleLabel = new Label(title);
-        titleLabel.getStyleClass().add("dialog-title-label");
-        Button closeBtn = new Button("✕");
-        closeBtn.getStyleClass().add("icon-btn");
-        closeBtn.setOnAction(e -> { if (!submitting) close(); });
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox headerRow = new HBox(titleLabel, spacer, closeBtn);
-        headerRow.getStyleClass().add("dialog-header-row");
-        DialogChrome.apply(this, headerRow);
 
         VBox content = new VBox(10);
         content.setPadding(new Insets(16));
 
         Label intro = new Label(mode == Mode.OPENING
-                ? "O ledger passa a ser a fonte de verdade a partir deste marco. Os lançamentos antigos NÃO são reproduzidos; "
-                  + "confira a proposta derivada do cadastro e confirme ou corrija. Abertura não é aporte nem lucro."
-                : "Informe o saldo correto. A reconciliação fica registrada com motivo e substitui a posição anterior sem apagar histórico.");
-        intro.getStyleClass().add("text-helper");
+                ? "A partir deste marco, posição e caixa passam a ser calculados pelo histórico de movimentações. "
+                  + "Os lançamentos antigos NÃO são recalculados; confira o saldo proposto a partir do cadastro e confirme ou corrija. "
+                  + "Saldo inicial não é aporte nem lucro."
+                : "Informe o saldo correto. A revisão fica registrada com motivo e substitui a posição anterior sem apagar o histórico.");
+        intro.getStyleClass().add("text-secondary");
         intro.setWrapText(true);
         content.getChildren().add(intro);
 
         if (proposal != null && proposal.reconciliationFlag()) {
-            Label flag = new Label("Atenção: " + proposal.note() + ". O saldo ficará marcado como pendente até você reconciliar.");
+            Label flag = new Label("Atenção: " + proposal.note() + ". O saldo ficará marcado como pendente de revisão até você confirmá-lo.");
             flag.getStyleClass().add("warning-banner");
             flag.setWrapText(true);
             content.getChildren().add(flag);
@@ -162,6 +150,7 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
 
         datePicker.setMaxWidth(Double.MAX_VALUE);
         if (proposal != null) datePicker.setValue(proposal.date());
+        UiDates.applyBrFormat(datePicker);
         content.getChildren().add(field("Data do marco", datePicker));
 
         if (investmentTypeId != null && positionMode == PositionMode.QUANTITY) {
@@ -186,7 +175,7 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
         busy.setManaged(false);
         content.getChildren().addAll(errorLabel, busy);
 
-        getDialogPane().setContent(new VBox(0, headerRow, content));
+        DialogChrome.frame(this, title, content, () -> !submitting);
         showingProperty().addListener((obs, was, is) -> { if (is) ToastHost.showDim(); else ToastHost.hideDim(); });
 
         setResultConverter(bt -> null);
@@ -234,8 +223,8 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
         if (submitting) return;
         errorLabel.setVisible(false);
         errorLabel.setManaged(false);
-        LocalDate date = datePicker.getValue();
-        if (date == null) { fail("informe a data", datePicker); return; }
+        LocalDate date = UiDates.commitEditor(datePicker);
+        if (date == null) { fail("Informe uma data válida (dd/mm/aaaa ou aaaa-mm-dd).", datePicker); return; }
         Long qty = null;
         if (investmentTypeId != null && positionMode == PositionMode.QUANTITY) {
             String q = quantityField.getText() == null ? "" : quantityField.getText().trim();
@@ -252,7 +241,7 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
         }
         if (cents < 0) { fail("valor não pode ser negativo", costField); return; }
         String reason = reasonField.getText() == null ? "" : reasonField.getText().trim();
-        if (mode == Mode.RECONCILIATION && reason.isBlank()) { fail("informe o motivo da reconciliação", reasonField); return; }
+        if (mode == Mode.RECONCILIATION && reason.isBlank()) { fail("informe o motivo da revisão de saldo", reasonField); return; }
 
         final Long fqty = qty;
         final long fcents = cents;

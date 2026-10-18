@@ -2,8 +2,13 @@ package com.daniel.presentation.view.util;
 
 import com.daniel.presentation.view.components.ToastHost;
 import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Label;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.stage.StageStyle;
 
@@ -13,33 +18,50 @@ public final class Dialogs {
     private Dialogs() {}
 
     private static void applyTheme(Alert a) {
-        try {
-            a.getDialogPane().getStylesheets().add(
-                    Dialogs.class.getResource("/styles/app.css").toExternalForm());
-            a.getDialogPane().getStyleClass().addAll("dark-dialog", "dark-dialog-simple");
-            a.initStyle(StageStyle.TRANSPARENT);
-            a.setOnShowing(e -> {
-                javafx.scene.Scene sc = a.getDialogPane().getScene();
-                if (sc != null) sc.setFill(Color.TRANSPARENT);
-                ToastHost.showDim();
-            });
-            a.setOnHidden(e -> ToastHost.hideDim());
-        } catch (Exception ignored) {}
+        Label message = new Label(a.getContentText());
+        message.setWrapText(true);
+        message.setMinWidth(0);
+        applySimpleFrame(a, message);
     }
 
     private static void applyTheme(TextInputDialog d) {
-        try {
-            d.getDialogPane().getStylesheets().add(
-                    Dialogs.class.getResource("/styles/app.css").toExternalForm());
-            d.getDialogPane().getStyleClass().addAll("dark-dialog", "dark-dialog-simple");
-            d.initStyle(StageStyle.TRANSPARENT);
-            d.setOnShowing(e -> {
-                javafx.scene.Scene sc = d.getDialogPane().getScene();
-                if (sc != null) sc.setFill(Color.TRANSPARENT);
-                ToastHost.showDim();
-            });
-            d.setOnHidden(e -> ToastHost.hideDim());
-        } catch (Exception ignored) {}
+        // Keep the original editor and its result converter; only move its containing grid.
+        javafx.scene.Node content = d.getDialogPane().getContent();
+        d.getDialogPane().setContent(null);
+        applySimpleFrame(d, content);
+    }
+
+    private static void applySimpleFrame(Dialog<?> d, javafx.scene.Node content) {
+        VBox body = new VBox(8);
+        body.getStyleClass().add("dialog-confirm-body");
+        if (d.getHeaderText() != null && !d.getHeaderText().isBlank()) {
+            Label question = new Label(d.getHeaderText());
+            question.setWrapText(true);
+            question.getStyleClass().add("dialog-question");
+            body.getChildren().add(question);
+        }
+        if (content != null) body.getChildren().add(content);
+        d.setHeaderText(null);
+        d.setGraphic(null);
+        d.getDialogPane().getStylesheets().add(Dialogs.class.getResource("/styles/app.css").toExternalForm());
+        d.getDialogPane().getStyleClass().add("dark-dialog");
+        DialogChrome.frame(d, d.getTitle(), body, () -> true);
+        d.getDialogPane().setPrefWidth(440);
+        for (ButtonType type : d.getDialogPane().getButtonTypes()) {
+            d.getDialogPane().lookupButton(type).getStyleClass().add(type.getButtonData().isCancelButton() ? "ghost-btn" : "primary-btn");
+        }
+        d.addEventHandler(javafx.scene.control.DialogEvent.DIALOG_SHOWING, e -> ToastHost.showDim());
+        d.addEventHandler(javafx.scene.control.DialogEvent.DIALOG_HIDDEN, e -> ToastHost.hideDim());
+    }
+
+    public static Alert buildAlert(Alert.AlertType type, String title, String header, String message, javafx.stage.Window owner) {
+        Alert alert = new Alert(type);
+        alert.setTitle(title);
+        alert.setHeaderText(header);
+        alert.setContentText(message);
+        if (owner != null) alert.initOwner(owner);
+        applyTheme(alert);
+        return alert;
     }
 
     public static void info(String title, String message) {
@@ -65,17 +87,65 @@ public final class Dialogs {
     }
 
     public static boolean confirm(String title, String header, String message) {
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION);
-        a.setTitle(title == null ? "Confirmar" : title);
-        a.setHeaderText(header);
-        a.setContentText(message == null ? "" : message);
-        applyTheme(a);
-        Optional<ButtonType> r = a.showAndWait();
-        return r.isPresent() && r.get() == ButtonType.OK;
+        return confirm(title, header, message, null);
+    }
+
+    /**
+     * Confirmation in the shared dialog frame. {@code actionLabel} names what the primary button
+     * does ("Excluir", "Arquivar"); null falls back to "Confirmar". Cancel is always offered.
+     */
+    public static boolean confirm(String title, String header, String message, String actionLabel) {
+        Optional<ButtonType> r = buildConfirm(title, header, message, actionLabel).showAndWait();
+        return r.isPresent() && r.get().getButtonData() == ButtonBar.ButtonData.OK_DONE;
     }
 
     public static boolean confirm(String title, String message) {
         return confirm(title, null, message);
+    }
+
+    /** Builds (does not show) the confirmation dialog, so its structure can be inspected. */
+    public static Dialog<ButtonType> buildConfirm(String title, String header, String message, String actionLabel) {
+        Dialog<ButtonType> d = new Dialog<>();
+        d.setTitle(title == null ? "Confirmar" : title);
+        try {
+            d.getDialogPane().getStylesheets().add(Dialogs.class.getResource("/styles/app.css").toExternalForm());
+        } catch (Exception ignored) {}
+        d.getDialogPane().getStyleClass().add("dark-dialog");
+
+        VBox body = new VBox(8);
+        body.getStyleClass().add("dialog-confirm-body");
+        if (header != null && !header.isBlank()) {
+            Label question = new Label(header);
+            question.getStyleClass().add("dialog-question");
+            question.setWrapText(true);
+            body.getChildren().add(question);
+        }
+        Label consequence = new Label(message == null ? "" : message);
+        consequence.getStyleClass().add("text-secondary");
+        consequence.setWrapText(true);
+        body.getChildren().add(consequence);
+
+        String label = actionLabel == null || actionLabel.isBlank() ? "Confirmar" : actionLabel;
+        ButtonType primary = new ButtonType(label, ButtonBar.ButtonData.OK_DONE);
+        ButtonType cancel = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
+        d.getDialogPane().getButtonTypes().setAll(primary, cancel);
+        DialogChrome.frame(d, d.getTitle(), body, () -> true);
+        d.getDialogPane().setPrefWidth(440);
+
+        Button primaryBtn = (Button) d.getDialogPane().lookupButton(primary);
+        boolean destructive = label.toLowerCase().startsWith("excluir") || label.toLowerCase().startsWith("apagar");
+        primaryBtn.getStyleClass().add(destructive ? "danger-btn" : "primary-btn");
+        Button cancelBtn = (Button) d.getDialogPane().lookupButton(cancel);
+        cancelBtn.getStyleClass().add("ghost-btn");
+        cancelBtn.setCancelButton(true);
+        // Enter confirms a reversible action; on a destructive one (Excluir/Apagar) Enter = Cancelar,
+        // so a key held from the previous screen never deletes anything. Deleting takes a deliberate click/Space.
+        primaryBtn.setDefaultButton(!destructive);
+        cancelBtn.setDefaultButton(destructive);
+
+        d.addEventHandler(javafx.scene.control.DialogEvent.DIALOG_SHOWN, e -> ToastHost.showDim());
+        d.addEventHandler(javafx.scene.control.DialogEvent.DIALOG_HIDDEN, e -> ToastHost.hideDim());
+        return d;
     }
 
     public static Long askAmountCents(String title, String header) {

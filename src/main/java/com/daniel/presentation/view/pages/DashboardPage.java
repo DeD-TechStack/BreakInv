@@ -116,7 +116,7 @@ public final class DashboardPage implements ResponsivePage {
 
     private final Label tokenWarningBanner = new Label(
             "Token Brapi não configurado — cotações de ações usam preço de compra como referência. " +
-            "Configure seu token na página Configurações para ver rentabilidade real.");
+            "Configure seu token em Configurações para valorar as posições pela cotação de mercado.");
     private final AppSettingsRepository settingsRepo = new AppSettingsRepository();
 
     // BRAPI freshness chips
@@ -334,7 +334,7 @@ public final class DashboardPage implements ResponsivePage {
             if (investments.isEmpty()) {
                 long cashPatrimony = daily.getTotalPatrimony(today);
                 List<StatementEntry> txs = daily.hasLedger() ? daily.statement(YearMonth.now()) : legacyRows(YearMonth.now());
-                return new DashData(investments, null, cashPatrimony, 0, 0, null, null, null, txs, safeMetrics(today));
+                return new DashData(investments, null, cashPatrimony, 0, 0, null, null, null, txs, safeMetrics(today), safeCash());
             }
 
             LocalDate dataFim = today;
@@ -361,7 +361,7 @@ public final class DashboardPage implements ResponsivePage {
             List<StatementEntry> txs = daily.hasLedger() ? daily.statement(YearMonth.now()) : legacyRows(YearMonth.now());
 
             return new DashData(investments, currentValues, totalPatrimony, totalProfit,
-                    totalInvestmentValue, snaps, dataInicio, dataFim, txs, safeMetrics(today));
+                    totalInvestmentValue, snaps, dataInicio, dataFim, txs, safeMetrics(today), safeCash());
         }, UiExecutor.get()).thenAcceptAsync(data -> {
             if (refreshEpoch.get() != epoch) return;
             Platform.runLater(() -> {
@@ -381,13 +381,38 @@ public final class DashboardPage implements ResponsivePage {
         }
     }
 
-    private void applyStrip(long totalPatrimony, long totalInvestmentValue, PortfolioMetrics m) {
+    /** Cash state for the strip qualifier (same source Carteira uses); null without the ledger or on failure. */
+    private DailyTrackingUseCase.CashStatus safeCash() {
+        if (!daily.hasLedger()) return null;
+        try {
+            return daily.cashStatus();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Same words Carteira uses for the same state: a legacy cash figure is "a reconhecer", a
+     * pending review is "revisão pendente", and without a movement history the figure comes
+     * from the manual daily record. No new figure is computed here — only the existing one is qualified.
+     */
+    private static String cashQualifier(DailyTrackingUseCase.CashStatus cs, boolean hasLedger) {
+        if (!hasLedger || cs == null) return "sem histórico de movimentações";
+        if (!cs.opened() && cs.legacySnapshotsPresent()) return "a reconhecer";
+        if (cs.reconciliationPending()) return "revisão pendente";
+        return null;
+    }
+
+    private void applyStrip(long totalPatrimony, long totalInvestmentValue, PortfolioMetrics m,
+                            DailyTrackingUseCase.CashStatus cash) {
         // cash = patrimony − positions: the two numbers the page already shows, nothing new
-        strip.set(STAT_CASH, daily.brl(Math.max(0, totalPatrimony - totalInvestmentValue)));
+        strip.set(STAT_CASH, daily.brl(Math.max(0, totalPatrimony - totalInvestmentValue)), null,
+                cashQualifier(cash, daily.hasLedger()));
         strip.set(STAT_POSITIONS, daily.brl(totalInvestmentValue));
         if (m == null) {
-            strip.set(STAT_REALIZED, "—", "muted");
-            strip.set(STAT_UNREALIZED, "—", "muted");
+            // Unknown is not zero: the gain cannot be split without the movement history.
+            strip.set(STAT_REALIZED, "—", "muted", "sem histórico de movimentações");
+            strip.set(STAT_UNREALIZED, "—", "muted", "sem histórico de movimentações");
             return;
         }
         strip.set(STAT_REALIZED, signed(m.realizedGainCents()), tone(m.realizedGainCents()));
@@ -408,9 +433,10 @@ public final class DashboardPage implements ResponsivePage {
 
         if (investments.isEmpty()) {
             long cashPatrimony = data.totalPatrimony();
-            hero.setValue(cashPatrimony > 0 ? daily.brl(cashPatrimony) : "—");
-            hero.setSecondary(null, null);
-            applyStrip(cashPatrimony, 0, data.metrics());
+            // Zero is a known value (the strip shows R$ 0,00 too); "—" is reserved for unknown.
+            hero.setValue(daily.brl(cashPatrimony));
+            hero.setSecondary(cashPatrimony > 0 ? "só caixa, sem posições" : "nenhum investimento cadastrado", "muted");
+            applyStrip(cashPatrimony, 0, data.metrics(), data.cash());
             cdiComparisonLabel.setText("—");
             pieChart.getData().clear();
             waterfallChart.getData().clear();
@@ -435,7 +461,7 @@ public final class DashboardPage implements ResponsivePage {
         // CDI comparison uses investment-only value: cash is not invested capital and should not
         // inflate the benchmark comparison as if it earned CDI returns.
         long totalInvestmentValue = data.totalInvestmentValue();
-        applyStrip(totalPatrimony, totalInvestmentValue, data.metrics());
+        applyStrip(totalPatrimony, totalInvestmentValue, data.metrics(), data.cash());
         updateCDIComparison(today, investments, totalInvestmentValue);
         updatePieChart(investments, currentValues);
         updateWaterfallChart(investments, currentValues);
@@ -739,6 +765,8 @@ public final class DashboardPage implements ResponsivePage {
         toPicker.setPromptText("Até");
         toPicker.setPrefWidth(130);
         toPicker.setValue(LocalDate.now());
+        com.daniel.presentation.view.util.UiDates.applyBrFormat(fromPicker);
+        com.daniel.presentation.view.util.UiDates.applyBrFormat(toPicker);
 
         Button applyBtn = new Button("Aplicar");
         applyBtn.getStyleClass().addAll("primary-btn", "filter-toggle");
@@ -1594,7 +1622,8 @@ public final class DashboardPage implements ResponsivePage {
         LocalDate snapshotFrom,
         LocalDate snapshotTo,
         List<StatementEntry> recentTransactions,
-        PortfolioMetrics metrics
+        PortfolioMetrics metrics,
+        DailyTrackingUseCase.CashStatus cash
     ) {}
 
     /** Instala tooltip num nó XYChart, com fallback para nodeProperty se o nó ainda não existe. */

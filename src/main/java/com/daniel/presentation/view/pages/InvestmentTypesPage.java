@@ -940,7 +940,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         if (sel == null) { ToastHost.showWarn("Selecione um investimento."); return; }
         boolean ok = Dialogs.confirm("Arquivar", "Arquivar \"" + sel.name() + "\"?",
                 "O histórico, os lançamentos e os registros diários são preservados; o investimento sai da lista ativa.\n"
-                + "Posições com saldo não podem ser arquivadas (venda ou ajuste antes).");
+                + "Posições com saldo não podem ser arquivadas (venda ou ajuste antes).", "Arquivar");
         if (!ok) return;
         runMutation(() -> daily.archiveType(sel.id()), "Investimento arquivado (histórico preservado).");
     }
@@ -955,7 +955,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         InvestmentType sel = table.getSelectionModel().getSelectedItem();
         if (sel == null) { ToastHost.showWarn("Selecione um investimento para excluir."); return; }
         boolean ok = Dialogs.confirm("Excluir", "Excluir o cadastro \"" + sel.name() + "\"?",
-                "Só cadastros sem qualquer histórico podem ser excluídos. Se houver lançamentos ou registros diários, use Arquivar.");
+                "Só cadastros sem qualquer histórico podem ser excluídos. Se houver lançamentos ou registros diários, use Arquivar.", "Excluir");
         if (!ok) return;
         runMutation(() -> daily.deleteType(sel.id()), "Cadastro excluído.");
     }

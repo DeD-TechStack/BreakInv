@@ -149,6 +149,35 @@ class MotionTest {
     }
 
     @Test
+    void chartRefresh_isAShortOpacityPulseOnTheExistingNode_neverTouchingData_andRespectsReduceMotion() {
+        FxTestSupport.runAndWait(() -> {
+            Region chart = new Region();
+            Motion.chartRefresh(chart);
+            assertTrue(Motion.isAnimating(chart), "a data change is made visible by a pulse of the chart node");
+            Motion.settle(chart);
+            assertEquals(1.0, chart.getOpacity(), 1e-9);
+            prefs.setReduceMotion(true);
+            Motion.chartRefresh(chart);
+            assertFalse(Motion.isAnimating(chart));
+            assertEquals(1.0, chart.getOpacity(), 1e-9);
+        });
+    }
+
+    @Test
+    void interrupt_stopsWithoutApplyingTheFinalState_soANewAnimationContinuesFromHere() {
+        FxTestSupport.runAndWait(() -> {
+            Region r = new Region();
+            r.setPrefWidth(220);
+            boolean[] pinned = {false};
+            Motion.animatePrefWidth(r, 56, 200, () -> pinned[0] = true);
+            Motion.interrupt(r);
+            assertFalse(Motion.isAnimating(r));
+            assertFalse(pinned[0], "interrupt must not run the previous end state");
+            assertEquals(220, r.getPrefWidth(), 1e-9, "nor jump to the previous target");
+        });
+    }
+
+    @Test
     void reduceMotionPreferenceChange_isObservedWithoutReconfiguring() {
         FxTestSupport.runAndWait(() -> {
             assertFalse(Motion.reduced());
@@ -157,6 +186,38 @@ class MotionTest {
             Region r = new Region();
             Motion.fadeSlideIn(r, 180, 10);
             assertFalse(Motion.isAnimating(r));
+        });
+    }
+
+    @Test
+    void dialogExitContinuesCurrentOpacityAndSettlesItsTerminalActionExactlyOnce() {
+        FxTestSupport.runAndWait(() -> {
+            Region pane = new Region();
+            Motion.dialogIn(pane, 200);
+            pane.setOpacity(.3);
+            pane.setScaleX(.98); pane.setScaleY(.98);
+            int[] completed = {0};
+            Motion.dialogOut(pane, 200, () -> completed[0]++);
+            assertEquals(.3, pane.getOpacity(), 1e-9);
+            assertEquals(.98, pane.getScaleX(), 1e-9);
+            assertTrue(Motion.isAnimating(pane));
+            prefs.setReduceMotion(true);
+            Motion.settle(pane);
+            assertEquals(1, completed[0]);
+            assertFalse(Motion.isAnimating(pane));
+            assertEquals(1, pane.getOpacity(), 1e-9);
+        });
+    }
+
+    @Test
+    void reducedDialogExitRunsTheTerminalActionImmediately() {
+        FxTestSupport.runAndWait(() -> {
+            prefs.setReduceMotion(true);
+            Region pane = new Region();
+            int[] completed = {0};
+            Motion.dialogOut(pane, 200, () -> completed[0]++);
+            assertEquals(1, completed[0]);
+            assertFalse(Motion.isAnimating(pane));
         });
     }
 }

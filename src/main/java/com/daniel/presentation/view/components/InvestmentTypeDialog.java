@@ -1,5 +1,7 @@
 package com.daniel.presentation.view.components;
 
+import com.daniel.presentation.view.util.UiDates;
+
 import com.daniel.core.domain.entity.Enums.CategoryEnum;
 import com.daniel.core.domain.entity.Enums.LiquidityEnum;
 import com.daniel.core.domain.entity.Enums.InvestmentTypeEnum;
@@ -67,7 +69,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
     // Opening (ledger) — create mode only
     private final ToggleGroup openingGroup = new ToggleGroup();
     private final RadioButton openingZero = new RadioButton("Começar do zero — a primeira compra/aplicação entra depois como movimento");
-    private final RadioButton openingImport = new RadioButton("Já possuo este saldo — registrar como abertura (não é aporte nem lucro)");
+    private final RadioButton openingImport = new RadioButton("Já possuo este saldo — registrar como saldo inicial (não é aporte nem lucro)");
     private final Label openingHint = new Label();
 
     // Container VBoxes for visibility control
@@ -98,36 +100,23 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         ButtonType confirmButton = new ButtonType(isEdit ? "Atualizar" : "Criar", ButtonBar.ButtonData.OK_DONE);
         getDialogPane().getButtonTypes().addAll(confirmButton, ButtonType.CANCEL);
 
-        // Size
-        getDialogPane().setMinWidth(680);
+        // Size: wide enough for two columns, but the height follows the screen (DialogChrome caps it)
+        getDialogPane().setMinWidth(560);
         getDialogPane().setPrefWidth(720);
-        getDialogPane().setMinHeight(600);
-        getDialogPane().setPrefHeight(650);
+        getDialogPane().setPrefHeight(620);
 
         TabPane tabPane = new TabPane();
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        tabPane.setMinHeight(0);
 
-        Tab tab1 = new Tab("Dados Básicos", buildBasicTab());
-        Tab tab2 = new Tab("Tipo & Rentabilidade", buildTypeTab());
+        Tab tab1 = new Tab("Dados básicos", buildBasicTab());
+        Tab tab2 = new Tab("Tipo e rentabilidade", buildTypeTab());
         tabPane.getTabs().addAll(tab1, tab2);
         if (!isEdit) tabPane.getTabs().add(new Tab("Saldo inicial", buildOpeningTab()));
 
-        // ── Dialog header with title + close button ──
-        Label titleLabel = new Label(title);
-        titleLabel.getStyleClass().add("dialog-title-label");
-        Button closeBtn = new Button("✕");
-        closeBtn.getStyleClass().add("icon-btn");
-        closeBtn.setOnAction(e -> close());
-        Region headerSpacer = new Region();
-        HBox.setHgrow(headerSpacer, Priority.ALWAYS);
-        HBox headerRow = new HBox(titleLabel, headerSpacer, closeBtn);
-        headerRow.getStyleClass().add("dialog-header-row");
-
-        // ── Remove OS chrome, enable drag-to-move via header ──
-        DialogChrome.apply(this, headerRow);
-
-        VBox dialogContent = new VBox(0, headerRow, tabPane);
-        getDialogPane().setContent(dialogContent);
+        // Shared frame: header (title + close, draggable) and a body that scrolls on its own; the
+        // tabs scroll internally too, so the Criar/Cancelar bar is reachable in a short window.
+        DialogChrome.frame(this, title, tabPane, () -> true);
 
         // ── Dim overlay lifecycle ──
         showingProperty().addListener((obs, wasShowing, isShowing) -> {
@@ -140,6 +129,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         } else {
             datePicker.setValue(LocalDate.now());
         }
+        UiDates.applyBrFormat(datePicker);
 
         // Listeners
         typeCombo.valueProperty().addListener((o, a, b) -> updateTypeVisibility());
@@ -299,10 +289,10 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         openingImport.setWrapText(true);
         openingHint.getStyleClass().add("text-helper");
         openingHint.setWrapText(true);
-        openingHint.setText("Com \"Começar do zero\", o Valor Investido/Quantidade acima ficam só como referência do cadastro; "
+        openingHint.setText("Com \"Começar do zero\", o valor investido e a quantidade ficam só como referência do cadastro; "
                 + "o patrimônio só muda quando você registrar um aporte e uma compra. Com \"Já possuo este saldo\", a quantidade e o "
-                + "valor investido informados viram o marco de abertura no ledger (capital de abertura, sem efeito em aporte ou ganho).");
-        VBox card = buildCard("Como o saldo entra no ledger", openingZero, openingImport, openingHint);
+                + "valor investido informados viram o saldo inicial no histórico de movimentações (não é aporte nem lucro).");
+        VBox card = buildCard("Como o saldo entra no histórico", openingZero, openingImport, openingHint);
         VBox content = new VBox(14, card);
         content.setPadding(new Insets(14));
         return wrapInScroll(content);
@@ -653,7 +643,7 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         if (nameField.getText().isBlank()) errors.add("Nome é obrigatório");
         if (categoryCombo.getValue() == null) errors.add("Categoria é obrigatória");
         if (liquidityCombo.getValue() == null) errors.add("Liquidez é obrigatória");
-        if (datePicker.getValue() == null) errors.add("Data é obrigatória");
+        if (UiDates.commitEditor(datePicker) == null) errors.add("Data inválida ou vazia: use dd/mm/aaaa ou aaaa-mm-dd.");
 
         CategoryEnum selectedCategory = categoryCombo.getValue();
         if (selectedCategory != null) {
@@ -702,20 +692,8 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         if (!errors.isEmpty()) {
             StringBuilder text = new StringBuilder();
             for (String e : errors) text.append("• ").append(e).append('\n');
-            Alert alert = new Alert(Alert.AlertType.ERROR);
-            alert.setTitle("Validação");
-            alert.setHeaderText("Corrija os erros:");
-            alert.setContentText(text.toString());
-            alert.getDialogPane().getStylesheets().add(
-                    getClass().getResource("/styles/app.css").toExternalForm());
-            alert.getDialogPane().getStyleClass().addAll("dark-dialog", "dark-dialog-simple");
-            alert.initStyle(javafx.stage.StageStyle.TRANSPARENT);
-            alert.setOnShowing(ev -> {
-                javafx.scene.Scene sc = alert.getDialogPane().getScene();
-                if (sc != null) sc.setFill(Color.TRANSPARENT);
-                ToastHost.showDim();
-            });
-            alert.setOnHidden(ev -> ToastHost.hideDim());
+            Alert alert = com.daniel.presentation.view.util.Dialogs.buildAlert(Alert.AlertType.ERROR,
+                    "Validação", "Corrija os erros:", text.toString(), getDialogPane().getScene().getWindow());
             alert.showAndWait();
             return false;
         }
@@ -727,7 +705,8 @@ public final class InvestmentTypeDialog extends Dialog<InvestmentTypeDialog.Inve
         String name = nameField.getText().trim();
         String category = categoryCombo.getValue().name();
         String liquidity = liquidityCombo.getValue().name();
-        LocalDate date = datePicker.getValue();
+        LocalDate date = UiDates.commitEditor(datePicker);
+        if (date == null) throw new IllegalArgumentException("Data inválida ou vazia");
 
         BigDecimal profitability = null;
         if (!profitabilityField.getText().isBlank()) {

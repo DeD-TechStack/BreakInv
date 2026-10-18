@@ -108,6 +108,30 @@ class InvestmentTypesPageFocusTest {
         });
     }
 
+    static final InvestmentType SECOND = new InvestmentType(8, "Segundo ativo", "RENDA_FIXA", "ALTA",
+            LocalDate.of(2026, 10, 15), new BigDecimal("12.5"), new BigDecimal("500.00"), "PREFIXADO", null, null, null,
+            null, null, null);
+
+    @Test
+    void filterThatExcludesTheSelectedRow_butKeepsANeighbour_doesNotSwitchTheDetailsToTheNeighbour() throws Exception {
+        registrations.add(SECOND);
+        FxTestSupport.runAndWait(() -> showArchived.setSelected(true)); // refresh lists both
+        awaitRefresh();
+        FxTestSupport.runAndWait(() -> {
+            assertEquals(2, table.getItems().size());
+            table.getSelectionModel().select(0);
+            assertEquals(ONLY.id(), table.getSelectionModel().getSelectedItem().id());
+            search.requestFocus();
+
+            search.setText("Segundo"); // excludes ONLY, keeps SECOND
+
+            assertEquals(1, table.getItems().size());
+            assertNull(table.getSelectionModel().getSelectedItem(), "the filter must not silently select the neighbour");
+            assertFalse(details.isVisible(), "no details of an asset the user did not pick");
+            assertSame(search, scene.getFocusOwner());
+        });
+    }
+
     @Test
     void userClosingThePane_returnsFocusToTheTable_andClearsTheSelection() {
         FxTestSupport.runAndWait(() -> {

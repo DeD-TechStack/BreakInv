@@ -167,6 +167,64 @@ class AppShellTest {
     }
 
     @Test
+    void reversingTheToggleMidAnimation_continuesFromTheCurrentWidth_insteadOfJumping() throws Exception {
+        FxTestSupport.runAndWait(() -> { toggle().fire(); root.layout(); });
+        Thread.sleep(90); // part of the 200 ms collapse
+        FxTestSupport.runAndWait(() -> {
+            root.layout();
+            double mid = sidebar().getWidth();
+            assertTrue(mid < AppShell.SIDEBAR_WIDTH && mid > AppShell.RAIL_WIDTH, "mid-flight width: " + mid);
+            toggle().fire(); // the user reverses while the collapse is still running
+            root.layout();
+            assertTrue(Motion.isAnimating(sidebar()), "the reversal animates too");
+            assertEquals(AppShell.RAIL_WIDTH, sidebar().getMinWidth(), 1e-6, "min/max must span both sizes while the reversal animates");
+            assertEquals(AppShell.SIDEBAR_WIDTH, sidebar().getMaxWidth(), 1e-6, "an earlier settle must not leave the old pin in place");
+            double now = sidebar().getWidth();
+            assertTrue(Math.abs(now - mid) < 30, "no jump: the width continues from " + mid + ", got " + now);
+        });
+        FxTestSupport.runAndWait(() -> {
+            Motion.settle(sidebar());
+            root.applyCss();
+            root.layout();
+            assertEquals(AppShell.SIDEBAR_WIDTH, sidebar().getWidth(), 1e-6);
+            assertFalse(sidebar().getStyleClass().contains("rail"));
+            assertEquals(Boolean.FALSE, prefs.sidebarCollapsedChoice());
+        });
+    }
+
+    @Test
+    void expanding_keepsTextsAndLogoHiddenUntilTheWidthHasArrived_toggleStaysVisible() {
+        FxTestSupport.runAndWait(() -> {
+            toggle().fire();
+            Motion.settle(sidebar());
+            root.applyCss();
+            root.layout();
+            assertTrue(sidebar().getStyleClass().contains("rail"));
+        });
+        FxTestSupport.runAndWait(() -> {
+            toggle().fire(); // expand with animation
+            root.applyCss();
+            root.layout();
+            assertTrue(Motion.isAnimating(sidebar()));
+            javafx.scene.control.Label title = (javafx.scene.control.Label) root.lookup(".sidebar-title");
+            assertFalse(title.isVisible(), "the title must wait for room: at ~56 px it would overflow the rail");
+            for (Node n : root.lookupAll(".nav-btn")) {
+                assertEquals(ContentDisplay.GRAPHIC_ONLY, ((Button) n).getContentDisplay(), n.getId() + " no label fragments while expanding");
+            }
+            assertTrue(toggle().isVisible() && toggle().isManaged(), "the toggle is always a target");
+            Motion.settle(sidebar());
+            root.applyCss();
+            root.layout();
+            assertTrue(title.isVisible() && title.isManaged(), "revealed once the width arrived");
+            assertFalse(sidebar().getStyleClass().contains("rail"));
+            for (Node n : root.lookupAll(".nav-btn")) {
+                assertEquals(ContentDisplay.LEFT, ((Button) n).getContentDisplay(), n.getId());
+            }
+            assertEquals(AppShell.SIDEBAR_WIDTH, sidebar().getWidth(), 1e-6);
+        });
+    }
+
+    @Test
     void userToggle_withReduceMotion_jumpsToTheTargetWithoutAnimation() {
         prefs.setReduceMotion(true);
         FxTestSupport.runAndWait(() -> {

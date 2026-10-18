@@ -405,23 +405,6 @@
     -fx-text-fill: -color-text-3;
 }
 
-/* Accent-bordered result card — used for simulation result */
-.result-card {
-    -fx-background-color: -color-surface;
-    -fx-background-radius: 0 16 16 0;
-    -fx-border-radius: 0 16 16 0;
-    -fx-border-color: -color-accent -color-border-strong -color-border-strong -color-accent;
-    -fx-border-width: 1 1 1 4;
-    -fx-padding: 20 22 20 20;
-    -fx-spacing: 8;
-    -fx-effect: dropshadow(gaussian, -color-accent-glow, 12, 0, -2, 0);
-}
-.result-card .kpi-label         { -fx-font-size: 11px; -fx-font-weight: 800; -fx-text-fill: -color-accent; }
-.result-card .kpi-value         { -fx-font-size: 28px; -fx-font-weight: 900; -fx-text-fill: -color-text-1; }
-.result-card .kpi-value.pos     { -fx-text-fill: -color-success; }
-.result-card .kpi-value.neg     { -fx-text-fill: -color-danger; }
-.result-card .kpi-sub           { -fx-font-size: 11px; -fx-text-fill: -color-text-3; }
-
 /* ── Level 2: Section Card — general content ── */
 .card {
     -fx-background-color: -color-surface;
@@ -1451,10 +1434,10 @@
     -fx-background-color: -color-surface;
 }
 /* Button overrides: higher specificity so primary-btn/ghost-btn beat .dialog-pane > .button-bar .button */
-.dark-dialog .button-bar .button.primary-btn         { -fx-background-color: -color-accent-strong; -fx-text-fill: white; -fx-border-color: transparent; }
+.dark-dialog .button-bar .button.primary-btn         { -fx-background-color: -color-accent-strong; -fx-text-fill: -color-accent-ink; -fx-border-color: transparent; }
 .dark-dialog .button-bar .button.primary-btn:hover   { -fx-background-color: -color-accent; -fx-border-color: transparent; }
-.dark-dialog .button-bar .button.primary-btn:pressed { -fx-background-color: derive(-color-accent-strong, -25%); -fx-border-color: transparent; }
-.dark-dialog .button-bar .button.primary-btn:focused { -fx-border-color: transparent; -fx-effect: dropshadow(gaussian, -color-accent-a45, 8, 0, 0, 0); }
+.dark-dialog .button-bar .button.primary-btn:pressed { -fx-background-color: derive(-color-accent-strong, -10%); -fx-border-color: transparent; }
+.dark-dialog .button-bar .button.primary-btn:focused { -fx-border-color: -color-text-1; -fx-effect: null; }
 .dark-dialog .button-bar .button.ghost-btn           { -fx-background-color: -color-surface; -fx-text-fill: -color-text-1; -fx-border-color: -color-border-strong; }
 .dark-dialog .button-bar .button.ghost-btn:hover     { -fx-background-color: -color-surface-2; }
 .dark-dialog .button-bar .button.ghost-btn:focused   { -fx-effect: dropshadow(gaussian, -color-white-a12, 5, 0, 0, 0); }
@@ -2085,6 +2068,16 @@
 
 /* ── Header with actions (PageHeader + buttons that wrap under it) ── */
 .header-actions { -fx-hgap: 10; -fx-vgap: 8; -fx-alignment: BOTTOM_LEFT; }
+
+/* ── V3: shared confirmation body, search row, ranking lists, month label ── */
+.dialog-confirm-body { -fx-padding: 16 20 12 20; }
+.dialog-question { -fx-font-size: 14px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
+.search-row { -fx-padding: 2 0; }
+.ranking-list .table-view { -fx-pref-height: 240; }
+.month-label { -fx-min-width: 150; -fx-alignment: CENTER; }
+.bp-narrow .hero-number { -fx-font-size: 30px; }
+.hero-value .hero-number.pos { -fx-text-fill: -color-success; }
+.hero-value .hero-number.neg { -fx-text-fill: -color-danger; }
 
 /* ── Hero value ── */
 .hero-value      { -fx-padding: 4 0 0 0; }

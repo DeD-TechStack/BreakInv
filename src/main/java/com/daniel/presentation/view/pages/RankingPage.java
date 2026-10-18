@@ -6,120 +6,208 @@ import com.daniel.infrastructure.api.AssetHistoryClient.HistoryPoint;
 import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.infrastructure.api.BrapiClient.StockData;
 import com.daniel.infrastructure.api.BrapiClient.TickerSuggestion;
-import javafx.animation.KeyFrame;
-import javafx.animation.Timeline;
-import javafx.util.StringConverter;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import com.daniel.presentation.view.PageHeader;
+import com.daniel.presentation.view.components.DetailsPane;
 import com.daniel.presentation.view.components.EmptyState;
-import com.daniel.presentation.view.components.ToastHost;
+import com.daniel.presentation.view.components.Panel;
+import com.daniel.presentation.view.layout.AdaptivePair;
+import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.ChartAxisUtils;
 import com.daniel.presentation.view.util.ChartCrosshair;
 import com.daniel.presentation.view.util.ChartSeriesStyle;
+import com.daniel.presentation.view.util.Icons;
+import com.daniel.presentation.view.util.Motion;
+import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.viewmodel.RankingViewModel;
 import com.daniel.presentation.viewmodel.RankingViewModel.RankingRow;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.chart.*;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import javafx.util.StringConverter;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
 /**
- * Página de Ranking de Ativos da carteira por variação diária.
+ * Ranking (direction A): the metric and the period are named on screen; the two lists are
+ * comparable rows (asset, quote, day change) that stack when the window is narrow; a row opens a
+ * contextual detail with the real quote figures; the empty state and the connection warning say
+ * what is missing without discarding the data already on screen.
  *
- * <p>Gráficos de rentabilidade acumulada e média móvel usam {@link NumberAxis}
- * com epoch seconds como eixo X, garantindo escala temporal proporcional ao
- * intervalo real entre os dados. O BarChart de variação diária mantém
- * {@link CategoryAxis} pois exibe nomes de ativos, não datas.</p>
+ * <p>The day change is the change of the QUOTE, and the period chart is the change of the PRICE
+ * normalised at the start of the period — neither is the return of the user's position (no
+ * contributions, dividends or purchase price), and the texts say so. Charts with a time axis use
+ * {@link NumberAxis} with epoch seconds; the bar chart keeps {@link CategoryAxis} because its X
+ * values are asset names, not dates.</p>
  */
-public final class RankingPage implements Page {
+public final class RankingPage implements ResponsivePage {
 
     private static final Logger LOG = Logger.getLogger(RankingPage.class.getName());
     private static final DateTimeFormatter MA_DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yy");
 
+    /** Batch quote source (BRAPI in production); the page must survive it throwing. */
+    @FunctionalInterface
+    interface QuoteSource {
+        BrapiClient.FetchResult<Map<String, StockData>> fetch(String joinedTickers);
+    }
+
+    /** Price history source (BRAPI in production). */
+    @FunctionalInterface
+    interface HistorySource {
+        AssetHistoryClient.HistoryResult fetch(String ticker, AssetHistoryClient.Period period) throws Exception;
+    }
+
     private final DailyTrackingUseCase daily;
+    private final QuoteSource quotes;
+    private final HistorySource histories;
+    private final Executor worker;
+    private final Executor ui;
 
     private final ScrollPane scrollPane = new ScrollPane();
-    private final VBox root = new VBox(20);
+    private final VBox root = new VBox(16);
 
-    // ── Tables ──
+    // ── Day change: two lists + bar chart ──
     private final TableView<RankingRow> gainersTable = new TableView<>();
     private final TableView<RankingRow> losersTable  = new TableView<>();
-
-    // ── Bar chart (variação do dia) — CategoryAxis, pois X = ticker names ──
+    private final Label gainersPlaceholder = new Label("Nenhum ativo nesta lista");
+    private final Label losersPlaceholder = new Label("Nenhum ativo nesta lista");
+    private final AdaptivePair listsPair;
+    private final Panel dayPanel;
+    private final Label freshnessChip = new Label();
     private final CategoryAxis barXAxis = new CategoryAxis();
     private final NumberAxis   barYAxis = new NumberAxis();
     private final BarChart<String, Number> barChart = new BarChart<>(barXAxis, barYAxis);
+    private final Label barEmptyLabel = new Label();
 
-    // ── Return chart (rentabilidade acumulada) — NumberAxis temporal ──
+    // ── Row detail ──
+    private final DetailsPane details = new DetailsPane();
+    /** The list the user picked the detailed row from: Esc/X hand the focus back to it. */
+    private TableView<RankingRow> detailSource;
+
+    // ── Price change over a period — temporal NumberAxis ──
     private final NumberAxis retXAxis = new NumberAxis();
     private final NumberAxis retYAxis = new NumberAxis();
     private final LineChart<Number, Number> returnChart = new LineChart<>(retXAxis, retYAxis);
     private final ToggleGroup returnPeriodGroup = new ToggleGroup();
-    private Label returnLoadingLabel;
-    /** Epoch seconds dos pontos do último render do returnChart. */
+    private final FlowPane returnPeriodBar = new FlowPane(6, 6);
+    private final Panel returnPanel;
+    private final Label returnLoadingLabel = new Label("Carregando histórico…");
+    private final Label returnEmptyLabel = new Label();
+    /** One epoch per period-chart request (period × selection): the last REQUEST wins, not the last answer. */
+    private final AtomicLong returnEpoch = new AtomicLong();
+    /** Epoch seconds of the last render of returnChart. */
     private List<Long> lastReturnEpochSecs = List.of();
-    /** Formatter atual do returnChart — atualizado ao mudar período. */
+    /** Current formatter of returnChart — updated when the period changes. */
     private DateTimeFormatter currentReturnFmt = DateTimeFormatter.ofPattern("dd/MM");
 
-    // ── Moving Average chart — NumberAxis temporal ──
+    // ── Moving average — temporal NumberAxis ──
     private final NumberAxis maXAxis = new NumberAxis();
     private final NumberAxis maYAxis = new NumberAxis();
     private final LineChart<Number, Number> maChart = new LineChart<>(maXAxis, maYAxis);
     private final ComboBox<TickerSuggestion> maTickerCombo = new ComboBox<>();
-    private final javafx.scene.control.DatePicker maFromPicker = new javafx.scene.control.DatePicker();
-    private final javafx.scene.control.DatePicker maToPicker   = new javafx.scene.control.DatePicker();
-    private Label maLoadingLabel;
-    private Label maCrossLabel;
+    private final DatePicker maFromPicker = new DatePicker();
+    private final DatePicker maToPicker   = new DatePicker();
     private final Spinner<Integer> maShortPeriod = new Spinner<>(2, 50, 9);
     private final Spinner<Integer> maLongPeriod  = new Spinner<>(5, 200, 21);
-    /** Epoch seconds dos pontos do último render do maChart. */
+    private final FlowPane maInputBar = new FlowPane(8, 8);
+    private final Button maCalcBtn = new Button("Calcular");
+    private final Label maLoadingLabel = new Label("Calculando médias móveis…");
+    private final Label maCrossLabel = new Label("Sem cruzamento recente detectado.");
+    /** Epoch seconds of the last render of maChart. */
     private List<Long> lastMAEpochSecs = List.of();
 
     // ── State ──
-    private Map<String, StockData> lastStocks = new HashMap<>();
+    private Map<String, StockData> lastStocks = new LinkedHashMap<>();
     private boolean loading = false;
+    /** When the quotes on screen were obtained (0 = none yet); the chip speaks about THESE quotes. */
+    private long quotesObtainedAtMs = 0L;
 
-    // ── Loading / empty overlays ──
-    private Label loadingLabel;
-    private VBox emptyState;
-    private VBox contentArea;
-
-    /** Chip de frescor do card "VARIAÇÃO DO DIA (%)". Atualizado após cada fetch. */
-    private Label barFreshnessChip;
+    // ── Page states ──
+    private final HBox loadingBox = new HBox(10);
+    private final Label errorBanner = new Label();
+    private final VBox emptyState;
+    private final VBox contentArea;
 
     public RankingPage(DailyTrackingUseCase dailyTrackingUseCase) {
+        this(dailyTrackingUseCase, BrapiClient::fetchMultipleStocksSafe, AssetHistoryClient::fetchHistory,
+                UiExecutor.get(), Platform::runLater);
+    }
+
+    /** Test seam: the sources the page queries and the executors it queries on (worker) and answers on (ui). */
+    RankingPage(DailyTrackingUseCase dailyTrackingUseCase, QuoteSource quotes, HistorySource histories,
+                Executor worker, Executor ui) {
         this.daily = dailyTrackingUseCase;
+        this.quotes = quotes;
+        this.histories = histories;
+        this.worker = worker;
+        this.ui = ui;
         root.getStyleClass().add("page-root");
 
-        PageHeader header = new PageHeader("Ranking de Ativos",
-                "Desempenho diário dos ativos da sua carteira");
+        PageHeader header = new PageHeader("Ranking",
+                "Variação do dia e do período dos ativos com ticker na sua carteira (BRAPI)");
 
-        emptyState  = buildEmptyState();
-        contentArea = buildContent();
+        errorBanner.setGraphic(Icons.alertTriangle());
+        errorBanner.setGraphicTextGap(8);
+        errorBanner.setWrapText(true);
+        errorBanner.getStyleClass().add("warning-banner");
+        hide(errorBanner);
 
-        loadingLabel = new Label("Carregando dados...");
-        loadingLabel.getStyleClass().add("section-subtitle");
-        loadingLabel.setVisible(false);
-        loadingLabel.setManaged(false);
+        ProgressIndicator spinner = new ProgressIndicator();
+        spinner.setMaxSize(18, 18);
+        Label loadingLabel = new Label("Consultando cotações…");
+        loadingLabel.getStyleClass().add("text-secondary");
+        loadingBox.setAlignment(Pos.CENTER_LEFT);
+        loadingBox.getChildren().addAll(spinner, loadingLabel);
+        hide(loadingBox);
 
-        root.getChildren().addAll(header, loadingLabel, emptyState, contentArea);
+        emptyState = EmptyState.of("🏆", "Nenhum ativo com ticker",
+                "Cadastre ativos com ticker na Carteira para comparar a variação das cotações.");
+
+        Panel gainersPanel = buildListPanel("Maiores altas", gainersTable);
+        Panel losersPanel  = buildListPanel("Maiores baixas", losersTable);
+        listsPair = new AdaptivePair(gainersPanel, losersPanel, Breakpoint.NARROW, 0.5, 16);
+
+        dayPanel = buildDayPanel();
+        returnPanel = buildReturnPanel();
+        Panel maPanel = buildMAPanel();
+
+        details.setTitle("Ativo", null);
+        details.setOnClose(() -> {
+            gainersTable.getSelectionModel().clearSelection();
+            losersTable.getSelectionModel().clearSelection();
+            // U02: the USER closed the detail (Esc / X) → the focus returns to the list the row came from,
+            // never stays on the now-hidden close button.
+            TableView<RankingRow> back = detailSource != null ? detailSource : gainersTable;
+            back.requestFocus();
+        });
+        details.hide();
+
+        contentArea = new VBox(16, dayPanel, details, returnPanel, maPanel);
+        hide(contentArea);
+
+        root.getChildren().addAll(header, errorBanner, loadingBox, emptyState, contentArea);
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
         scrollPane.getStyleClass().add("page-scroll");
+        onBreakpoint(Breakpoint.WIDE);
     }
 
     @Override
@@ -132,100 +220,111 @@ public final class RankingPage implements Page {
         loadStockData();
     }
 
-    // ── Build helpers ──────────────────────────────────────────────────────
-
-    private VBox buildEmptyState() {
-        return EmptyState.of("🏆", "Nenhum ativo com ticker encontrado",
-                "Cadastre ativos com ticker na Carteira para comparar desempenho.");
+    @Override
+    public void onBreakpoint(Breakpoint bp) {
+        boolean narrow = bp == Breakpoint.NARROW;
+        listsPair.onBreakpoint(bp);
+        // period toggles sit in the panel header when there is room, under the title otherwise
+        returnPanel.body().getChildren().remove(returnPeriodBar);
+        if (narrow) {
+            returnPanel.actions();
+            returnPanel.body().getChildren().add(0, returnPeriodBar);
+        } else {
+            returnPanel.actions(returnPeriodBar);
+        }
+        root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
+        root.getStyleClass().add(bp.styleClass());
     }
 
-    private VBox buildContent() {
-        // ── Gainers / Losers tables side by side ──
-        VBox gainersCard = buildTableCard("📈 Maiores Altas", gainersTable);
-        VBox losersCard  = buildTableCard("📉 Maiores Baixas", losersTable);
+    private static void hide(Node n) { n.setVisible(false); n.setManaged(false); }
+    private static void show(Node n) { n.setVisible(true); n.setManaged(true); }
 
-        HBox tables = new HBox(16, gainersCard, losersCard);
-        HBox.setHgrow(gainersCard, Priority.ALWAYS);
-        HBox.setHgrow(losersCard,  Priority.ALWAYS);
+    // ── Build helpers ──────────────────────────────────────────────────────
 
-        // ── Bar chart card — CategoryAxis (ticker names) ──
+    private Panel buildDayPanel() {
         barChart.setAnimated(false);
         barChart.setLegendVisible(false);
-        barChart.setMinHeight(280);
+        barChart.setMinHeight(240);
         barChart.setCategoryGap(30);
         barChart.getStyleClass().add("bar-chart");
         barYAxis.setAutoRanging(true);
-        barYAxis.setLabel("Variação (%)");
+        barYAxis.setLabel("Variação do dia (%)");
         barXAxis.setLabel("");
-        // Não instala installSmartAxis no barChart — o CategoryAxis nativo já gerencia
-        // os labels dos tickers. installSmartAxis oculta labels intermediários, o que
-        // quebra a legibilidade do BarChart.
+        // No installSmartAxis on the bar chart — the native CategoryAxis owns the ticker labels;
+        // hiding intermediate labels would break its readability.
 
-        Label chartTitle = new Label("VARIAÇÃO DO DIA (%)");
-        chartTitle.getStyleClass().add("card-title");
+        Label chartHint = new Label("Selecione linhas nas listas para comparar só esses ativos; sem seleção, até 8 ativos.");
+        chartHint.getStyleClass().add("text-helper");
+        chartHint.setWrapText(true);
 
-        Label chartHint = new Label("Clique em ativos para filtrar (clique novamente para desmarcar)");
-        chartHint.getStyleClass().add("section-subtitle");
+        freshnessChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
+        // The panel's wrapped subtitle asks for the whole row; the status must not be the one that
+        // yields (it would be cut to "atraso ~..."): it keeps its width and the subtitle wraps instead.
+        freshnessChip.setMinWidth(Region.USE_PREF_SIZE);
+        updateFreshnessChip();
 
-        // Chip de atualização — informa quando os dados foram obtidos pela última vez
-        barFreshnessChip = new Label();
-        barFreshnessChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
-        updateBarFreshnessChip(barFreshnessChip);
-        Label freshnessLbl = barFreshnessChip;
+        barEmptyLabel.getStyleClass().add("text-secondary");
+        barEmptyLabel.setWrapText(true);
+        barEmptyLabel.setText("Aguardando cotações para montar o gráfico.");
+        show(barEmptyLabel);
 
-        HBox titleRow = new HBox(8, chartTitle, new javafx.scene.layout.Region(), freshnessLbl);
-        HBox.setHgrow(titleRow.getChildren().get(1), javafx.scene.layout.Priority.ALWAYS);
-        titleRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-
-        VBox chartCard = new VBox(8, titleRow, chartHint, barChart);
-        chartCard.getStyleClass().add("chart-card");
-
-        VBox content = new VBox(16, tables, chartCard, buildReturnChartCard(), buildMAChartCard());
-        return content;
+        return new Panel("Variação do dia", listsPair, chartHint, barEmptyLabel, barChart)
+                .subtitle("Variação da cotação em relação ao fechamento anterior (BRAPI, atraso de 15–30 min). "
+                        + "É a variação do preço, não é a rentabilidade da sua posição.")
+                .actions(freshnessChip);
     }
 
-    private VBox buildTableCard(String title, TableView<RankingRow> table) {
-        Label lbl = new Label(title);
-        lbl.getStyleClass().add("card-title");
-
-        TableColumn<RankingRow, String> tickerCol = new TableColumn<>("Ticker");
+    private Panel buildListPanel(String title, TableView<RankingRow> table) {
+        TableColumn<RankingRow, String> tickerCol = new TableColumn<>("Ativo");
         tickerCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().ticker()));
-        tickerCol.setPrefWidth(80);
+        tickerCol.setMinWidth(72);
 
-        TableColumn<RankingRow, Number> priceCol = new TableColumn<>("Preço");
+        TableColumn<RankingRow, Number> priceCol = new TableColumn<>("Cotação");
         priceCol.setCellValueFactory(c -> new SimpleDoubleProperty(c.getValue().price()));
         priceCol.setCellFactory(col -> new TableCell<>() {
             @Override
             protected void updateItem(Number item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null
-                        : String.format("R$ %.2f", item.doubleValue()).replace('.', ','));
+                getStyleClass().remove("num");
+                if (empty || item == null) { setText(null); return; }
+                setText(money(item.doubleValue()));
+                getStyleClass().add("num");
             }
         });
-        priceCol.setPrefWidth(90);
+        priceCol.setMinWidth(90);
+        priceCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
-        TableColumn<RankingRow, Number> chgCol = new TableColumn<>("Var. (%)");
+        TableColumn<RankingRow, Number> chgCol = new TableColumn<>("Variação do dia");
         chgCol.setCellValueFactory(c -> new SimpleDoubleProperty(c.getValue().changePct()));
         chgCol.setCellFactory(col -> new TableCell<>() {
             @Override
             protected void updateItem(Number item, boolean empty) {
                 super.updateItem(item, empty);
-                getStyleClass().removeAll("pos", "neg");
+                getStyleClass().removeAll("pos", "neg", "num");
                 if (empty || item == null) { setText(null); return; }
                 double v = item.doubleValue();
-                setText(String.format("%s%.2f%%", v >= 0 ? "+" : "", v).replace('.', ','));
-                getStyleClass().add(v >= 0 ? "pos" : "neg");
+                setText(signedPct(v));
+                getStyleClass().addAll("num", v >= 0 ? "pos" : "neg");
             }
         });
-        chgCol.setPrefWidth(90);
+        chgCol.setMinWidth(110);
+        chgCol.setStyle("-fx-alignment: CENTER-RIGHT;");
 
         table.getColumns().add(tickerCol);
         table.getColumns().add(priceCol);
         table.getColumns().add(chgCol);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        table.setPrefHeight(220);
+        table.setFixedCellSize(42);
+        table.setPrefHeight(42 * 5 + 30);
+        table.setPlaceholder(table == gainersTable ? gainersPlaceholder : losersPlaceholder);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        table.setAccessibleText(title);
+        // Esc with the focus on the list closes the detail (same as Carteira); the detail's own Esc still works.
+        table.setOnKeyPressed(e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE && details.isVisible()) { details.requestClose(); e.consume(); }
+        });
 
+        // Click toggles the row (a second click deselects) while keeping the other selected rows.
         table.setRowFactory(tv -> {
             TableRow<RankingRow> row = new TableRow<>();
             final boolean[] wasSelectedOnPress = {false};
@@ -252,11 +351,11 @@ public final class RankingPage implements Page {
         });
 
         table.getSelectionModel().getSelectedItems().addListener(
-                (ListChangeListener<RankingRow>) change -> onTableSelectionChanged());
+                (ListChangeListener<RankingRow>) change -> onTableSelectionChanged(table));
 
-        VBox card = new VBox(8, lbl, table);
-        card.getStyleClass().add("card");
-        return card;
+        Panel panel = new Panel(title, table);
+        panel.getStyleClass().add("ranking-list");
+        return panel;
     }
 
     // ── Data loading ───────────────────────────────────────────────────────
@@ -266,71 +365,150 @@ public final class RankingPage implements Page {
 
         List<String> tickers = getPortfolioTickers();
         if (tickers.isEmpty()) {
-            setContentVisible(false);
+            renderStocks(Map.of());
+            reloadReturnChart();
+            hide(contentArea);
+            hide(errorBanner);
+            show(emptyState);
             return;
         }
 
         loading = true;
-        loadingLabel.setVisible(true);
-        loadingLabel.setManaged(true);
-        setContentVisible(false);
+        hide(emptyState);
+        show(loadingBox);
 
         String joined = String.join(",", tickers);
 
-        CompletableFuture.supplyAsync(() -> BrapiClient.fetchMultipleStocksSafe(joined))
-                .thenAccept(result -> Platform.runLater(() -> {
+        CompletableFuture.supplyAsync(() -> quotes.fetch(joined), worker)
+                .thenAccept(result -> ui.execute(() -> {
             loading = false;
-            loadingLabel.setVisible(false);
-            loadingLabel.setManaged(false);
+            hide(loadingBox);
 
             if (!result.isSuccess()) {
                 String msg = switch (result.getReason()) {
-                    case NO_TOKEN      -> "Configure um token BRAPI em Configurações para ver cotações.";
-                    case HTTP_ERROR    -> "Serviço BRAPI indisponível (HTTP " + result.getDetail() + "). Exibindo dados em cache.";
+                    case NO_TOKEN      -> "Configure um token BRAPI em Configurações para ver as cotações.";
+                    case HTTP_ERROR    -> "Serviço BRAPI indisponível (HTTP " + result.getDetail() + "). Cotações podem estar desatualizadas.";
                     case NETWORK_ERROR -> "Sem conexão. Cotações podem estar desatualizadas.";
                     case NOT_FOUND     -> "Alguns tickers não foram encontrados na BRAPI.";
-                    case PARSE_ERROR   -> "Erro ao processar dados da BRAPI. Tente novamente.";
+                    case PARSE_ERROR   -> "Resposta inesperada da BRAPI. Tente novamente.";
                 };
-                ToastHost.showWarn(msg);
-                setContentVisible(false);
+                showFailure(msg);
                 return;
             }
 
-            Map<String, StockData> stocks = result.getData();
-            lastStocks = new HashMap<>();
-            for (StockData sd : stocks.values()) {
-                if (sd != null && sd.ticker() != null) lastStocks.put(sd.ticker(), sd);
-            }
-            populateTables(lastStocks);
-            setContentVisible(true);
-            reloadChart();
+            renderStocks(result.getData());
             reloadReturnChart();
-            if (barFreshnessChip != null) updateBarFreshnessChip(barFreshnessChip);
-        }));
+        }))
+                .exceptionally(ex -> {
+                    // The source promises not to throw; if it does, the page must still end somewhere:
+                    // never "loading" forever with the next onShow() refused.
+                    Throwable root = ex;
+                    while (root.getCause() != null) root = root.getCause();
+                    final String msg = root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage();
+                    LOG.warning("[Ranking] quotes → " + root.getClass().getSimpleName() + ": " + msg);
+                    ui.execute(() -> {
+                        loading = false;
+                        showFailure("Falha inesperada ao consultar as cotações: " + msg + ". Tente novamente.");
+                    });
+                    return null;
+                });
     }
 
-    private void populateTables(Map<String, StockData> stocks) {
-        gainersTable.setItems(FXCollections.observableArrayList(RankingViewModel.topGainers(stocks)));
-        losersTable.setItems(FXCollections.observableArrayList(RankingViewModel.topLosers(stocks)));
+    /** Failure state: the warning stays on the page; a previous ranking remains readable under it. */
+    void showFailure(String message) {
+        errorBanner.setText(message == null ? "Não foi possível consultar as cotações." : message);
+        hide(loadingBox);
+        show(errorBanner);
+        if (lastStocks.isEmpty()) {
+            hide(contentArea);
+            show(emptyState);
+        }
     }
 
-    private void onTableSelectionChanged() {
+    /** Result state: lists, bar chart and freshness assigned at once; clears any previous warning. */
+    void renderStocks(Map<String, StockData> stocks) {
+        lastStocks = new LinkedHashMap<>();
+        for (StockData stock : stocks.values()) {
+            if (stock != null && stock.ticker() != null && !stock.ticker().isBlank() && stock.isValid()) {
+                lastStocks.put(stock.ticker(), stock);
+            }
+        }
+        quotesObtainedAtMs = lastStocks.isEmpty() ? 0 : System.currentTimeMillis();
+        gainersTable.setItems(FXCollections.observableArrayList(RankingViewModel.topGainers(lastStocks)));
+        losersTable.setItems(FXCollections.observableArrayList(RankingViewModel.topLosers(lastStocks)));
+        // Empty lists are a RESULT, not a missing one: say what was obtained and what was not found.
+        long obtained = lastStocks.values().stream().filter(StockData::isValid).count();
+        String among = obtained == 1 ? "entre a 1 cotação obtida" : "entre as " + obtained + " cotações obtidas";
+        gainersPlaceholder.setText(obtained == 0 ? "Nenhuma cotação obtida" : "Nenhuma alta " + among);
+        losersPlaceholder.setText(obtained == 0 ? "Nenhuma cotação obtida" : "Nenhuma baixa " + among);
+        hide(errorBanner);
+        hide(emptyState);
+        boolean wasVisible = contentArea.isVisible();
+        show(contentArea);
+        if (!wasVisible) Motion.fadeSlideIn(contentArea, Motion.PANEL_MS, 12);
+        reloadChart();
+        updateFreshnessChip();
+    }
+
+    private void onTableSelectionChanged(TableView<RankingRow> source) {
+        // The detail follows the selection at once; the chart reloads are coalesced to the next pulse.
+        List<String> selected = selectedTickers();
+        if (selected.isEmpty()) {
+            details.hide();
+        } else {
+            detailSource = source;
+            // selectedItems is already current inside its own change event; selectedItem is not yet
+            RankingRow focus = lastOf(source.getSelectionModel().getSelectedItems());
+            if (focus == null) focus = lastOf(source == gainersTable
+                    ? losersTable.getSelectionModel().getSelectedItems()
+                    : gainersTable.getSelectionModel().getSelectedItems());
+            if (focus != null) showDetails(focus);
+        }
         Platform.runLater(() -> {
-            Set<String> selected = new LinkedHashSet<>();
-            for (RankingRow row : gainersTable.getSelectionModel().getSelectedItems()) {
-                if (row != null) selected.add(row.ticker());
-            }
-            for (RankingRow row : losersTable.getSelectionModel().getSelectedItems()) {
-                if (row != null) selected.add(row.ticker());
-            }
-
-            if (selected.isEmpty()) {
-                reloadChart();
-            } else {
-                reloadChartForTickers(new ArrayList<>(selected));
-            }
+            List<String> now = selectedTickers();
+            if (now.isEmpty()) reloadChart();
+            else reloadChartForTickers(now);
             reloadReturnChart();
         });
+    }
+
+    private static RankingRow lastOf(List<RankingRow> rows) {
+        for (int i = rows.size() - 1; i >= 0; i--) {
+            if (rows.get(i) != null) return rows.get(i);
+        }
+        return null;
+    }
+
+    private List<String> selectedTickers() {
+        Set<String> selected = new LinkedHashSet<>();
+        for (RankingRow row : gainersTable.getSelectionModel().getSelectedItems()) {
+            if (row != null) selected.add(row.ticker());
+        }
+        for (RankingRow row : losersTable.getSelectionModel().getSelectedItems()) {
+            if (row != null) selected.add(row.ticker());
+        }
+        return new ArrayList<>(selected);
+    }
+
+    /** Contextual detail: the real figures of the quote behind the row. */
+    private void showDetails(RankingRow row) {
+        StockData sd = lastStocks.get(row.ticker());
+        String name = sd != null && sd.longName() != null ? sd.longName() : row.name();
+        details.setTitle(row.ticker(), name);
+        details.setHeadline(money(row.price()), "cotação BRAPI");
+        details.setPrimaryActions();
+        details.setAdvancedActions();
+        details.clearFields();
+        details.addField("Variação do dia", signedPct(row.changePct()));
+        if (sd != null) {
+            details.addField("Variação em R$", (sd.regularMarketChange() >= 0 ? "+ " : "- ") + money(Math.abs(sd.regularMarketChange())));
+            details.addField("Abertura", money(sd.regularMarketOpen()));
+            details.addField("Máx. do dia", money(sd.regularMarketDayHigh()));
+            details.addField("Mín. do dia", money(sd.regularMarketDayLow()));
+            details.addField("Volume", volume(sd.regularMarketVolume()));
+        }
+        details.setNote("Valores da cotação do ativo na B3, não da sua posição.");
+        details.open(false);
     }
 
     private void reloadChart() {
@@ -342,16 +520,18 @@ public final class RankingPage implements Page {
     private void reloadChartForTickers(List<String> tickers) {
         barChart.getData().clear();
 
-        if (tickers.isEmpty()) return;
+        if (tickers.isEmpty()) { barEmptyLabel.setText("Sem cotações válidas para montar o gráfico."); show(barEmptyLabel); return; }
 
         int n = tickers.size();
         barChart.setCategoryGap(n <= 3 ? 60 : n <= 6 ? 30 : 12);
 
+        boolean anyChange = false;
         for (String ticker : tickers) {
             StockData d = lastStocks.get(ticker);
             if (d == null || !d.isValid()) continue;
 
             double pct = d.regularMarketChangePercent();
+            if (pct != 0) anyChange = true;
 
             XYChart.Series<String, Number> series = new XYChart.Series<>();
             series.setName(ticker);
@@ -372,83 +552,89 @@ public final class RankingPage implements Page {
                 }
             });
         }
-
-        // Não chama refreshLabels no barChart — CategoryAxis nativo é responsável
-        // pela exibição dos labels de ticker; ocultar labels intermediários quebra legibilidade.
+        // A chart of zero-height bars reads as "no data": say that the quotes came but did not move.
+        if (!anyChange) {
+            barEmptyLabel.setText("Sem variação do dia nas cotações obtidas — as barras ficam em zero.");
+            show(barEmptyLabel);
+        } else {
+            hide(barEmptyLabel);
+        }
+        Motion.chartRefresh(barChart); // data assigned above; the pulse only shows it changed
     }
 
-    // ── Return chart build & load ───────────────────────────────────────────
+    // ── Price change over a period ─────────────────────────────────────────
 
-    private VBox buildReturnChartCard() {
-        HBox periodBar = new HBox(6);
-        periodBar.setAlignment(Pos.CENTER_LEFT);
-
+    private Panel buildReturnPanel() {
+        returnPeriodBar.setAlignment(Pos.CENTER_LEFT);
         for (AssetHistoryClient.Period p : AssetHistoryClient.Period.values()) {
             ToggleButton tb = new ToggleButton(p.label);
             tb.setToggleGroup(returnPeriodGroup);
             tb.setUserData(p);
-            tb.getStyleClass().add("period-btn");
-            periodBar.getChildren().add(tb);
+            tb.getStyleClass().add("filter-toggle");
+            returnPeriodBar.getChildren().add(tb);
             if (p == AssetHistoryClient.Period.ONE_MONTH) tb.setSelected(true);
         }
 
         returnPeriodGroup.selectedToggleProperty().addListener((obs, old, now) -> {
-            if (now != null && !lastStocks.isEmpty()) reloadReturnChart();
+            if (now == null) { if (old != null) returnPeriodGroup.selectToggle(old); return; }
+            if (!lastStocks.isEmpty()) reloadReturnChart();
         });
 
         returnChart.setAnimated(false);
         returnChart.setLegendVisible(true);
         returnChart.setCreateSymbols(false);
-        returnChart.setMinHeight(300);
-        retYAxis.setLabel("Rentabilidade (%)");
+        returnChart.setMinHeight(280);
+        retYAxis.setLabel("Variação do preço (%)");
         retXAxis.setLabel("");
 
-        // Eixo temporal: distribuição proporcional ao intervalo real entre datas
-        ChartAxisUtils.installTemporalAxis(retXAxis, returnChart,
-                () -> currentReturnFmt,
-                () -> lastReturnEpochSecs);
-        // Oculta labels do eixo X — hover/crosshair é o mecanismo principal de leitura
-        ChartAxisUtils.hideTemporalAxisLabels(retXAxis);
+        // Temporal axis: distribution proportional to the real interval between dates
+        ChartAxisUtils.installTemporalAxis(retXAxis, returnChart, () -> currentReturnFmt, () -> lastReturnEpochSecs);
+        ChartAxisUtils.hideTemporalAxisLabels(retXAxis); // the crosshair is the reading mechanism
 
-        returnLoadingLabel = new Label("Carregando histórico...");
-        returnLoadingLabel.getStyleClass().add("section-subtitle");
-        returnLoadingLabel.setVisible(false);
-        returnLoadingLabel.setManaged(false);
+        returnLoadingLabel.getStyleClass().add("text-helper");
+        hide(returnLoadingLabel);
+        returnEmptyLabel.getStyleClass().add("text-secondary");
+        returnEmptyLabel.setWrapText(true);
+        hide(returnEmptyLabel);
 
         StackPane returnWrapper = ChartCrosshair.installTemporal(returnChart,
-                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC)
-                        .format(currentReturnFmt),
-                y -> String.format("%s%.2f%%", y >= 0 ? "+" : "", y).replace('.', ','));
+                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(currentReturnFmt),
+                y -> signedPct(y));
 
-        Label chartTitle = new Label("RENTABILIDADE ACUMULADA (%)");
-        chartTitle.getStyleClass().add("card-title");
+        Label chartHint = new Label("Selecione ativos nas listas para comparar; sem seleção, até 5 ativos.");
+        chartHint.getStyleClass().add("text-helper");
+        chartHint.setWrapText(true);
 
-        Label chartHint = new Label("Selecione ativos nas tabelas para comparar • Sem seleção: exibe todos os ativos");
-        chartHint.getStyleClass().add("section-subtitle");
-
-        VBox card = new VBox(8, chartTitle, chartHint, periodBar, returnLoadingLabel, returnWrapper);
-        card.getStyleClass().add("chart-card");
-        return card;
+        return new Panel("Variação do preço no período", chartHint, returnLoadingLabel, returnEmptyLabel, returnWrapper)
+                .subtitle("Preço de fechamento em relação ao início do período (BRAPI). "
+                        + "Não considera aportes, dividendos nem o seu preço de compra.");
     }
 
     private void reloadReturnChart() {
         List<String> tickers = getSelectedOrAllTickers();
+        final long epoch = returnEpoch.incrementAndGet();
         returnChart.getData().clear();
-        if (tickers.isEmpty()) return;
+        lastReturnEpochSecs = List.of();
+        hide(returnLoadingLabel);
+        hide(returnEmptyLabel);
+        if (tickers.isEmpty()) {
+            returnEmptyLabel.setText("Sem cotações válidas para consultar o histórico.");
+            show(returnEmptyLabel);
+            return;
+        }
 
         AssetHistoryClient.Period period = getSelectedReturnPeriod();
         currentReturnFmt = DateTimeFormatter.ofPattern(period.datePattern);
-        returnLoadingLabel.setVisible(true);
-        returnLoadingLabel.setManaged(true);
+        show(returnLoadingLabel);
 
         List<CompletableFuture<Map.Entry<String, List<HistoryPoint>>>> futures = tickers.stream()
                 .map(t -> CompletableFuture.<Map.Entry<String, List<HistoryPoint>>>supplyAsync(() -> {
                     try {
-                        return Map.entry(t, AssetHistoryClient.fetchHistory(t, period).points());
+                        return Map.entry(t, histories.fetch(t, period).points());
                     } catch (Exception e) {
                         return Map.entry(t, List.<HistoryPoint>of());
                     }
-                }))
+                }, worker))
                 .toList();
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
@@ -458,19 +644,23 @@ public final class RankingPage implements Page {
                         var entry = f.join();
                         if (!entry.getValue().isEmpty()) all.put(entry.getKey(), entry.getValue());
                     }
-                    Platform.runLater(() -> renderReturnChart(all));
+                    ui.execute(() -> {
+                        if (returnEpoch.get() != epoch) return; // a newer period/selection request replaced this one
+                        renderReturnChart(all);
+                    });
                 });
     }
 
     private void renderReturnChart(Map<String, List<HistoryPoint>> allHistories) {
-        returnLoadingLabel.setVisible(false);
-        returnLoadingLabel.setManaged(false);
+        hide(returnLoadingLabel);
         returnChart.getData().clear();
 
         if (allHistories.isEmpty()) {
-            ToastHost.showWarn("Sem histórico disponível. Configure um token BRAPI em Configurações.");
+            returnEmptyLabel.setText("Sem histórico disponível para estes ativos. Verifique a conexão ou o token BRAPI em Configurações.");
+            show(returnEmptyLabel);
             return;
         }
+        hide(returnEmptyLabel);
 
         List<Long> refEpochSecs = new ArrayList<>();
 
@@ -501,18 +691,13 @@ public final class RankingPage implements Page {
         }
 
         lastReturnEpochSecs = refEpochSecs;
+        Motion.chartRefresh(returnChart);
         Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(retXAxis, lastReturnEpochSecs, returnChart.getWidth()));
     }
 
     private List<String> getSelectedOrAllTickers() {
-        Set<String> selected = new LinkedHashSet<>();
-        for (RankingRow row : gainersTable.getSelectionModel().getSelectedItems()) {
-            if (row != null) selected.add(row.ticker());
-        }
-        for (RankingRow row : losersTable.getSelectionModel().getSelectedItems()) {
-            if (row != null) selected.add(row.ticker());
-        }
-        if (!selected.isEmpty()) return new ArrayList<>(selected);
+        List<String> selected = selectedTickers();
+        if (!selected.isEmpty()) return selected;
         List<String> all = new ArrayList<>(lastStocks.keySet());
         return all.size() > 5 ? all.subList(0, 5) : all;
     }
@@ -526,32 +711,22 @@ public final class RankingPage implements Page {
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private static void applyReturnTooltip(XYChart.Data<String, Number> dp,
-                                            String tip, String baseColor, String hoverColor) {
-        javafx.scene.Node n = dp.getNode();
-        if (n != null) {
-            applyReturnNode(n, tip, baseColor, hoverColor);
-        } else {
-            dp.nodeProperty().addListener((obs, o, node) -> {
-                if (node != null) applyReturnNode(node, tip, baseColor, hoverColor);
-            });
-        }
+    private static String money(double v) {
+        return String.format("R$ %.2f", v).replace('.', ',');
     }
 
-    private static void applyReturnNode(javafx.scene.Node node, String tip,
-                                         String baseColor, String hoverColor) {
-        node.setStyle("-fx-background-color: " + baseColor + "; -fx-padding: 4; -fx-background-radius: 50;");
-        Tooltip tp = new Tooltip(tip);
-        tp.setShowDelay(javafx.util.Duration.ZERO);
-        Tooltip.install(node, tp);
-        node.setOnMouseEntered(e -> node.setStyle(
-                "-fx-background-color: " + hoverColor + "; -fx-padding: 5; -fx-background-radius: 50;"));
-        node.setOnMouseExited(e -> node.setStyle(
-                "-fx-background-color: " + baseColor + "; -fx-padding: 4; -fx-background-radius: 50;"));
+    private static String signedPct(double v) {
+        return String.format("%s%.2f%%", v >= 0 ? "+" : "", v).replace('.', ',');
+    }
+
+    private static String volume(long vol) {
+        if (vol >= 1_000_000) return String.format("%.1fM", vol / 1_000_000.0).replace('.', ',');
+        if (vol >= 1_000) return String.format("%.1fK", vol / 1_000.0).replace('.', ',');
+        return vol > 0 ? String.valueOf(vol) : "—";
     }
 
     private void applyBarTooltip(XYChart.Data<String, Number> bar, double pct, StockData sd) {
-        javafx.scene.Node node = bar.getNode();
+        Node node = bar.getNode();
         if (node == null) return;
 
         String color      = pct >= 0 ? "#22c55e" : "#ef4444";
@@ -563,18 +738,17 @@ public final class RankingPage implements Page {
         if (node instanceof StackPane sp
                 && sp.getChildren().stream().noneMatch(c -> c instanceof Label)) {
             Label lbl = new Label(bar.getXValue());
-            lbl.setStyle("-fx-text-fill: white; -fx-font-size: 10px; -fx-font-weight: bold;");
+            lbl.setStyle("-fx-text-fill: white; -fx-font-size: 12px; -fx-font-weight: bold;");
             lbl.setRotate(-90);
             lbl.setMouseTransparent(true);
             StackPane.setAlignment(lbl, Pos.CENTER);
             sp.getChildren().add(lbl);
         }
 
-        String sign = pct >= 0 ? "+" : "";
         Tooltip tp = new Tooltip(
                 bar.getXValue()
-                + "\n" + sign + String.format("%.2f%%", pct).replace('.', ',')
-                + "\nPreço:    R$ " + String.format("%.2f", sd.regularMarketPrice()).replace('.', ',')
+                + "\n" + signedPct(pct) + " hoje"
+                + "\nCotação:  " + money(sd.regularMarketPrice())
                 + "\nVariação: R$ " + String.format("%+.2f", sd.regularMarketChange()).replace('.', ',')
         );
         tp.setStyle("-fx-font-size: 12px;");
@@ -587,33 +761,20 @@ public final class RankingPage implements Page {
         node.setOnMouseExited(e -> node.setStyle(baseStyle));
     }
 
-    // ── Moving Average chart ─────────────────────────────────────────────────
+    // ── Moving average ───────────────────────────────────────────────────────
 
-    private VBox buildMAChartCard() {
-        Label title = new Label("ANÁLISE DE MÉDIA MÓVEL");
-        title.getStyleClass().add("card-title");
-
-        Label hint = new Label(
-                "Como usar: digite o ticker, ajuste o intervalo de datas e defina as janelas MM Curta e MM Longa. " +
-                "A MM Longa determina o mínimo de pontos necessários — ex.: MM 200 exige ~200 pregões (~10 meses de dados). " +
-                "Clique em \"Calcular\" para plotar as três linhas.");
-        hint.getStyleClass().add("section-subtitle");
-        hint.setWrapText(true);
-
+    private Panel buildMAPanel() {
         Label hintLegend = new Label(
-                "Linhas: \uD83D\uDFE2 Verde (contínuo) — preço do ativo  ·  \uD83D\uDFE1 Amarelo tracejado — MM Curta  ·  \uD83D\uDD35 Azul (contínuo) — MM Longa");
-        hintLegend.getStyleClass().add("section-subtitle");
-
-        Label hintSignals = new Label(
-                "Sinais: \u2B06 Golden Cross → MM Curta (amarela) cruza acima da MM Longa (azul) — tendência de alta  ·  " +
-                "\u2B07 Death Cross → MM Curta (amarela) cruza abaixo da MM Longa (azul) — tendência de baixa");
-        hintSignals.getStyleClass().add("section-subtitle");
-        hintSignals.setWrapText(true);
+                "Linhas: verde contínua — preço do ativo · amarela tracejada — média curta · azul contínua — média longa. "
+                + "Cruzamento para cima da curta sobre a longa é lido como sinal de alta; para baixo, de baixa.");
+        hintLegend.getStyleClass().add("text-helper");
+        hintLegend.setWrapText(true);
 
         // ── Input fields ──
         maTickerCombo.setEditable(true);
-        maTickerCombo.setPromptText("Digite ticker ou nome (ex: PETR4 ou Petrobras)");
-        maTickerCombo.setPrefWidth(280);
+        maTickerCombo.setPromptText("Ticker ou nome (ex.: PETR4)");
+        maTickerCombo.setAccessibleText("Ticker para a média móvel");
+        maTickerCombo.setPrefWidth(240);
         maTickerCombo.getStyleClass().add("search-field");
 
         maTickerCombo.setCellFactory(lv -> new ListCell<>() {
@@ -684,85 +845,94 @@ public final class RankingPage implements Page {
 
         maFromPicker.setPromptText("Data inicial");
         maFromPicker.setValue(LocalDate.now().minusMonths(6));
-        maFromPicker.setPrefWidth(145);
+        maFromPicker.setPrefWidth(140);
+        maFromPicker.setAccessibleText("Data inicial");
+        com.daniel.presentation.view.util.UiDates.applyBrFormat(maFromPicker);
 
         maToPicker.setPromptText("Data final");
         maToPicker.setValue(LocalDate.now());
-        maToPicker.setPrefWidth(145);
+        maToPicker.setPrefWidth(140);
+        maToPicker.setAccessibleText("Data final");
+        com.daniel.presentation.view.util.UiDates.applyBrFormat(maToPicker);
 
-        Button calcBtn = new Button("Calcular");
-        calcBtn.getStyleClass().addAll("btn-primary", "btn-sm");
-        calcBtn.setOnAction(e -> loadMAChart());
+        maCalcBtn.getStyleClass().add("button");
+        maCalcBtn.setTooltip(new Tooltip("Calcular preço e médias móveis para o intervalo (Enter)"));
+        maCalcBtn.setOnAction(e -> loadMAChart());
 
-        maShortPeriod.setPrefWidth(75);
+        maShortPeriod.setPrefWidth(80);
         maShortPeriod.setEditable(true);
-        maLongPeriod.setPrefWidth(75);
+        maShortPeriod.setTooltip(new Tooltip("Janela da média curta, em pregões"));
+        maLongPeriod.setPrefWidth(80);
         maLongPeriod.setEditable(true);
+        maLongPeriod.setTooltip(new Tooltip("Janela da média longa, em pregões; define o mínimo de pontos necessários"));
 
-        HBox inputBar = new HBox(8,
+        // Inputs wrap instead of one fixed row, so a narrow window keeps every control reachable
+        maInputBar.setAlignment(Pos.CENTER_LEFT);
+        maInputBar.setRowValignment(javafx.geometry.VPos.CENTER);
+        maInputBar.getChildren().addAll(
                 maTickerCombo,
-                new Label("De:"), maFromPicker,
-                new Label("Até:"), maToPicker,
-                new Label("MM Curta:"), maShortPeriod,
-                new Label("MM Longa:"), maLongPeriod,
-                calcBtn);
-        inputBar.setAlignment(Pos.CENTER_LEFT);
-        inputBar.getStyleClass().add("toolbar");
+                labelled("De", maFromPicker),
+                labelled("Até", maToPicker),
+                labelled("Média curta", maShortPeriod),
+                labelled("Média longa", maLongPeriod),
+                maCalcBtn);
 
-        maLoadingLabel = new Label("Calculando médias móveis...");
-        maLoadingLabel.getStyleClass().add("section-subtitle");
-        maLoadingLabel.setVisible(false);
-        maLoadingLabel.setManaged(false);
+        maLoadingLabel.getStyleClass().add("text-helper");
+        hide(maLoadingLabel);
 
-        // ── Chart setup — NumberAxis temporal ──
+        // ── Chart setup — temporal NumberAxis ──
         maChart.setAnimated(false);
         maChart.setLegendVisible(false);
         maChart.setCreateSymbols(false);
-        maChart.setMinHeight(300);
+        maChart.setMinHeight(280);
         maYAxis.setLabel("Preço (R$)");
         maXAxis.setLabel("");
         maYAxis.setAutoRanging(false);
 
-        ChartAxisUtils.installTemporalAxis(maXAxis, maChart,
-                () -> MA_DATE_FMT,
-                () -> lastMAEpochSecs);
-        // Oculta labels do eixo X — hover/crosshair é o mecanismo principal de leitura
-        ChartAxisUtils.hideTemporalAxisLabels(maXAxis);
+        ChartAxisUtils.installTemporalAxis(maXAxis, maChart, () -> MA_DATE_FMT, () -> lastMAEpochSecs);
+        ChartAxisUtils.hideTemporalAxisLabels(maXAxis); // the crosshair is the reading mechanism
 
         StackPane chartWrapper = ChartCrosshair.installTemporal(maChart,
-                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC)
-                        .format(MA_DATE_FMT),
-                y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+                epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(MA_DATE_FMT),
+                y -> money(y));
 
-        maCrossLabel = new Label("⚪ Sem cruzamento recente detectado");
-        maCrossLabel.getStyleClass().add("section-subtitle");
+        maCrossLabel.getStyleClass().add("text-secondary");
+        maCrossLabel.setWrapText(true);
 
-        VBox card = new VBox(8, title, hint, hintLegend, hintSignals, inputBar, maLoadingLabel, chartWrapper, maCrossLabel);
-        card.getStyleClass().add("chart-card");
-        return card;
+        return new Panel("Média móvel", maInputBar, hintLegend, maLoadingLabel, chartWrapper, maCrossLabel)
+                .subtitle("Preço de fechamento e duas médias móveis simples de um ticker. "
+                        + "A média longa exige pelo menos esse número de pregões no intervalo (ex.: 200 ≈ 10 meses).");
+    }
+
+    private static HBox labelled(String text, Control control) {
+        Label l = new Label(text);
+        l.getStyleClass().add("text-secondary");
+        l.setLabelFor(control);
+        HBox box = new HBox(6, l, control);
+        box.setAlignment(Pos.CENTER_LEFT);
+        return box;
     }
 
     private void loadMAChart() {
-        String ticker = maTickerCombo.getEditor().getText().trim().toUpperCase();
+        String ticker = maTickerCombo.getEditor().getText() == null ? "" : maTickerCombo.getEditor().getText().trim().toUpperCase();
         LocalDate from = maFromPicker.getValue();
         LocalDate to   = maToPicker.getValue();
 
         if (ticker.isBlank()) {
-            ToastHost.showWarn("Informe o ticker do ativo.");
+            maCrossLabel.setText("Informe o ticker do ativo.");
             return;
         }
         if (from == null || to == null) {
-            ToastHost.showWarn("Informe a data de início e a data final.");
+            maCrossLabel.setText("Informe a data inicial e a data final.");
             return;
         }
         if (from.isAfter(to)) {
-            ToastHost.showWarn("A data de início deve ser anterior à data final.");
+            maCrossLabel.setText("A data inicial deve ser anterior à data final.");
             return;
         }
 
         maChart.getData().clear();
-        maLoadingLabel.setVisible(true);
-        maLoadingLabel.setManaged(true);
+        show(maLoadingLabel);
 
         final LocalDate fFrom = from;
         final LocalDate fTo   = to;
@@ -779,12 +949,11 @@ public final class RankingPage implements Page {
     }
 
     private void renderMAChart(List<HistoryPoint> points, String ticker) {
-        maLoadingLabel.setVisible(false);
-        maLoadingLabel.setManaged(false);
+        hide(maLoadingLabel);
         maChart.getData().clear();
 
         if (points.isEmpty()) {
-            ToastHost.showWarn("Sem dados para " + ticker + " no período informado. Verifique o ticker ou configure um token BRAPI.");
+            maCrossLabel.setText("Sem dados para " + ticker + " no intervalo informado. Confira o ticker, a conexão ou o token BRAPI em Configurações.");
             return;
         }
 
@@ -792,18 +961,15 @@ public final class RankingPage implements Page {
         int longPeriod  = maLongPeriod.getValue();
 
         if (shortPeriod >= longPeriod) {
-            maCrossLabel.setText("⚠ MM Curta deve ter período menor que MM Longa.");
-            ToastHost.showWarn("MM Curta deve ter período menor que MM Longa.");
+            maCrossLabel.setText("A média curta deve ter janela menor que a média longa.");
             return;
         }
 
         int total = points.size();
         if (total < longPeriod) {
             int monthsNeeded = (int) Math.ceil(longPeriod / 21.0);
-            maCrossLabel.setText("⚠ Dados insuficientes: " + total + " pontos obtidos, MM Longa=" + longPeriod
+            maCrossLabel.setText("Dados insuficientes: " + total + " pregões obtidos; a média longa de " + longPeriod
                     + " exige ~" + longPeriod + " pregões (~" + monthsNeeded + " meses). Amplie o intervalo de datas.");
-            ToastHost.showWarn("Período muito curto: " + total + " pontos, MM Longa=" + longPeriod
-                    + " exige ~" + longPeriod + " pregões (~" + monthsNeeded + " meses).");
             return;
         }
 
@@ -812,8 +978,8 @@ public final class RankingPage implements Page {
         XYChart.Series<Number, Number> maLongSeries  = new XYChart.Series<>();
 
         priceSeries.setName("Preço " + ticker);
-        maShortSeries.setName("MM" + shortPeriod);
-        maLongSeries.setName("MM" + longPeriod);
+        maShortSeries.setName("Média " + shortPeriod);
+        maLongSeries.setName("Média " + longPeriod);
 
         double minPrice = Double.MAX_VALUE;
         double maxPrice = -Double.MAX_VALUE;
@@ -866,18 +1032,20 @@ public final class RankingPage implements Page {
             double longPrev  = maLongSeries.getData().get(longSize - 2).getYValue().doubleValue();
 
             if (shortLast > longLast && shortPrev <= longPrev) {
-                maCrossLabel.setText("🟢 Golden Cross: MM Curta cruzou acima da MM Longa (sinal de alta)");
+                maCrossLabel.setText("Cruzamento para cima: a média curta passou acima da longa no último pregão (lido como sinal de alta).");
             } else if (shortLast < longLast && shortPrev >= longPrev) {
-                maCrossLabel.setText("🔴 Death Cross: MM Curta cruzou abaixo da MM Longa (sinal de baixa)");
+                maCrossLabel.setText("Cruzamento para baixo: a média curta passou abaixo da longa no último pregão (lido como sinal de baixa).");
             } else {
-                maCrossLabel.setText("⚪ Sem cruzamento recente detectado");
+                maCrossLabel.setText("Sem cruzamento recente detectado.");
             }
         } else {
-            maCrossLabel.setText("⚪ Sem cruzamento recente detectado");
+            maCrossLabel.setText("Sem cruzamento recente detectado.");
         }
 
-        // Estiliza as linhas após renderização — duplo runLater garante que o JavaFX
-        // tenha completado o ciclo de layout e exposto os nós de série no scene graph.
+        Motion.chartRefresh(maChart); // data assigned above; the pulse only shows it changed
+
+        // Style the lines after rendering — the double runLater lets JavaFX finish the layout
+        // pass and expose the series nodes in the scene graph.
         Platform.runLater(() -> Platform.runLater(() -> {
             ChartSeriesStyle.accent(maChart.lookup(".series0.chart-series-line"), 1.5);
             ChartSeriesStyle.warningDashed(maChart.lookup(".series1.chart-series-line"), 2.0);
@@ -895,38 +1063,32 @@ public final class RankingPage implements Page {
                 .toList();
     }
 
-    private void setContentVisible(boolean visible) {
-        emptyState.setVisible(!visible);
-        emptyState.setManaged(!visible);
-        contentArea.setVisible(visible);
-        contentArea.setManaged(visible);
-    }
-
     /**
-     * Atualiza o chip de frescor da cotação no card "VARIAÇÃO DO DIA (%)".
-     * Usa {@link BrapiClient#getLastSuccessfulFetchMs()} para informar quando
-     * os dados foram obtidos pela última vez. Dados da B3 têm atraso típico de
-     * 15–30 min no plano gratuito da BRAPI — o chip não implica dados em tempo real.
+     * Freshness chip of the day-change block: says when the quotes ON THIS PAGE were obtained
+     * (not a global BRAPI timestamp another page may have set). B3 data has a typical 15–30 min
+     * delay on the free BRAPI plan — the chip never implies real-time data.
      */
-    private void updateBarFreshnessChip(Label chip) {
-        long lastFetch = BrapiClient.getLastSuccessfulFetchMs();
-        chip.getStyleClass().removeAll("brapi-chip-success", "brapi-chip-warn", "brapi-chip-neutral");
+    private void updateFreshnessChip() {
+        long lastFetch = quotesObtainedAtMs;
+        freshnessChip.getStyleClass().removeAll("brapi-chip-success", "brapi-chip-warn", "brapi-chip-neutral");
         if (lastFetch == 0) {
-            chip.setText("Sem dados");
-            chip.getStyleClass().add("brapi-chip-neutral");
+            freshnessChip.setText("Sem cotações ainda");
+            freshnessChip.getStyleClass().add("brapi-chip-neutral");
         } else {
             long elapsedMin = (System.currentTimeMillis() - lastFetch) / 60_000L;
             if (elapsedMin < 2) {
-                chip.setText("Cotações atualizadas agora");
-                chip.getStyleClass().add("brapi-chip-success");
+                freshnessChip.setText("Cotações obtidas agora · atraso ~15–30 min");
+                freshnessChip.getStyleClass().add("brapi-chip-success");
             } else if (elapsedMin < 60) {
-                chip.setText("Cotações há " + elapsedMin + " min · atraso ~15-30 min");
-                chip.getStyleClass().add(elapsedMin <= 30 ? "brapi-chip-success" : "brapi-chip-warn");
+                freshnessChip.setText("Cotações há " + elapsedMin + " min · atraso ~15–30 min");
+                freshnessChip.getStyleClass().add(elapsedMin <= 30 ? "brapi-chip-success" : "brapi-chip-warn");
             } else {
                 long elapsedHours = elapsedMin / 60;
-                chip.setText("Cotações há " + elapsedHours + "h");
-                chip.getStyleClass().add("brapi-chip-warn");
+                freshnessChip.setText("Cotações há " + elapsedHours + "h");
+                freshnessChip.getStyleClass().add("brapi-chip-warn");
             }
         }
+        freshnessChip.setTooltip(new Tooltip(freshnessChip.getText()
+                + "\nCotações da B3 pela BRAPI (plano gratuito): atraso típico de 15–30 min em relação ao pregão."));
     }
 }

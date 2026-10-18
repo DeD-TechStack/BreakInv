@@ -12,9 +12,14 @@ import com.daniel.infrastructure.api.BcbClient;
 import com.daniel.infrastructure.api.BrapiClient;
 import com.daniel.infrastructure.persistence.repository.SavedAnalysisRepository;
 import com.daniel.presentation.view.PageHeader;
+import com.daniel.presentation.view.components.HeroValue;
+import com.daniel.presentation.view.components.Panel;
 import com.daniel.presentation.view.components.ToastHost;
+import com.daniel.presentation.view.layout.AdaptivePair;
+import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.ChartCrosshair;
 import com.daniel.presentation.view.util.Dialogs;
+import com.daniel.presentation.view.util.Motion;
 import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.viewmodel.ScenarioCardController;
 import com.daniel.presentation.viewmodel.SimulationForm;
@@ -47,12 +52,21 @@ import java.util.concurrent.CompletableFuture;
  * {@link ScenarioCardController}: every async save/reload/duplicate captures the form
  * epoch and is applied only if the form was not replaced meanwhile, and "Novo" is
  * disabled while a write is in flight.</p>
+ *
+ * <p>Layout (direction A): parameters and result are neighbours — side by side when wide,
+ * stacked otherwise — the result is a hero that says it is an estimate, one "Calcular" serves
+ * every type, and saved scenarios are a discreet panel after the work area. Re-flowing moves
+ * the same nodes; nothing typed is lost.</p>
  */
-public final class SimulationPage implements Page {
+public final class SimulationPage implements ResponsivePage {
 
     private final ScrollPane scrollPane = new ScrollPane();
-    private final VBox root = new VBox(20);
+    private final VBox root = new VBox(16);
     private final ScenarioCardController scenarioCtrl;
+    private AdaptivePair workPair;
+    private Panel scenarioPanel;
+    private Panel chartPanel;
+    private final Button calculateBtn = new Button("Calcular");
 
     private enum RentabilityMode {
         FIXED_RATE("Taxa Fixa (% a.a.)"),
@@ -89,8 +103,8 @@ public final class SimulationPage implements Page {
     private final Slider priceVariationSlider = new Slider(-20, 20, 0);
     private final Label sliderValueLabel = new Label("0%");
 
-    private final Label resultLabel = new Label("—");
-    private final Label resultSubLabel = new Label("Preencha os campos e clique em Calcular");
+    private static final String RESULT_IDLE = "Preencha os parâmetros e clique em Calcular — estimativa, sem efeito na carteira";
+    private final HeroValue resultHero = new HeroValue("Valor final estimado");
     private final LineChart<Number, Number> projectionChart;
 
     private final Label ratesStatusLabel = new Label();
@@ -146,28 +160,33 @@ public final class SimulationPage implements Page {
         yAxis.setLabel("Valor (R$)");
         projectionChart = new LineChart<>(xAxis, yAxis);
         projectionChart.setTitle(null);
-        projectionChart.setMinHeight(380);
+        projectionChart.setMinHeight(280);
         projectionChart.setCreateSymbols(false);
 
-        VBox scenarioCard = buildScenarioCard();
+        scenarioPanel = buildScenarioCard();
         HBox typeSelector = buildTypeSelector();
-        VBox baseParamsCard = buildBaseParamsCard();
-        VBox rentabilityCard = buildRentabilityCard();
-        VBox stockCard = buildStockCard();
-        VBox resultCard = buildResultCard();
+        VBox baseParams = buildBaseParamsCard();
+        VBox rentability = buildRentabilityCard();
+        VBox stock = buildStockCard();
 
-        VBox chartCard = new VBox(8);
-        chartCard.getStyleClass().add("chart-card");
-        Label chartTitle = new Label("PROJEÇÃO DE RENTABILIDADE");
-        chartTitle.getStyleClass().add("card-title");
+        calculateBtn.getStyleClass().add("button");
+        calculateBtn.setMaxWidth(Double.MAX_VALUE);
+        calculateBtn.setTooltip(new Tooltip("Projeta o resultado com os parâmetros informados (Enter também calcula)"));
+        calculateBtn.setOnAction(e -> calculate());
+        Panel paramsPanel = new Panel("Parâmetros", typeSelector, baseParams, rentability, stock, calculateBtn);
+
+        resultHero.setContext(RESULT_IDLE);
         javafx.scene.layout.StackPane projWrapper = ChartCrosshair.installNumeric(projectionChart,
                 month -> "Mês " + month,
                 y -> "R$ " + String.format("%.2f", y).replace('.', ','));
         VBox.setVgrow(projWrapper, Priority.ALWAYS);
-        chartCard.getChildren().addAll(chartTitle, projWrapper);
+        chartPanel = new Panel("Projeção mês a mês", projWrapper);
+        VBox resultColumn = new VBox(16, resultHero, chartPanel);
+        VBox.setVgrow(chartPanel, Priority.ALWAYS);
 
-        root.getChildren().addAll(header, scenarioCard, typeSelector, baseParamsCard,
-                rentabilityCard, stockCard, resultCard, chartCard);
+        workPair = new AdaptivePair(paramsPanel, resultColumn, Breakpoint.MEDIUM, 0.44, 16);
+
+        root.getChildren().addAll(header, workPair, scenarioPanel);
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
@@ -178,6 +197,7 @@ public final class SimulationPage implements Page {
         updateRatesStatus(null);
         updatePriceOriginLabel();
         updateScenarioStatus();
+        onBreakpoint(Breakpoint.WIDE);
     }
 
     @Override
@@ -189,6 +209,13 @@ public final class SimulationPage implements Page {
     public void onShow() {
         // No network on show: rates stay frozen until the user asks. Only the scenario list is refreshed.
         scenarioCtrl.reload();
+    }
+
+    @Override
+    public void onBreakpoint(Breakpoint bp) {
+        workPair.onBreakpoint(bp);
+        root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
+        root.getStyleClass().add(bp.styleClass());
     }
 
     private SimulationScenario loadedScenario() {
@@ -268,15 +295,10 @@ public final class SimulationPage implements Page {
     // Scenario card
     // =====================================================================
 
-    private VBox buildScenarioCard() {
-        VBox box = new VBox(12);
-        box.getStyleClass().add("card");
-
-        Label title = new Label("CENÁRIOS SALVOS");
-        title.getStyleClass().add("card-title");
-
+    private Panel buildScenarioCard() {
         scenarioCombo.setMaxWidth(Double.MAX_VALUE);
         scenarioCombo.setPromptText("Selecione um cenário salvo");
+        scenarioCombo.setAccessibleText("Cenário salvo");
         scenarioCombo.setCellFactory(lv -> new ListCell<>() {
             @Override protected void updateItem(SimulationScenario item, boolean empty) {
                 super.updateItem(item, empty);
@@ -300,34 +322,43 @@ public final class SimulationPage implements Page {
         HBox.setHgrow(scenarioCombo, Priority.ALWAYS);
 
         newScenarioBtn.getStyleClass().add("ghost-btn");
+        newScenarioBtn.setTooltip(new Tooltip("Limpa o nome e o resultado para começar um cenário novo; os parâmetros ficam"));
         newScenarioBtn.setOnAction(e -> scenarioCtrl.startNew());
         duplicateScenarioBtn.getStyleClass().add("ghost-btn");
+        duplicateScenarioBtn.setTooltip(new Tooltip("Grava uma cópia do cenário carregado"));
         duplicateScenarioBtn.setOnAction(e -> scenarioCtrl.duplicate());
         deleteScenarioBtn.getStyleClass().add("danger-btn");
+        deleteScenarioBtn.setTooltip(new Tooltip("Exclui o cenário carregado; a carteira não muda"));
         deleteScenarioBtn.setOnAction(e -> deleteScenario());
 
-        HBox row1 = new HBox(8, scenarioCombo, newScenarioBtn, duplicateScenarioBtn, deleteScenarioBtn);
-        row1.setAlignment(Pos.CENTER_LEFT);
+        FlowPane listActions = new FlowPane(8, 8, newScenarioBtn, duplicateScenarioBtn, deleteScenarioBtn);
+        listActions.setAlignment(Pos.CENTER_LEFT);
+        VBox row1 = new VBox(8, scenarioCombo, listActions);
 
-        Label nameLabel = new Label("Nome:");
+        Label nameLabel = new Label("Nome");
         nameLabel.getStyleClass().add("form-label");
+        nameLabel.setLabelFor(scenarioNameField);
         scenarioNameField.setPromptText("Ex.: CDB 110% CDI por 2 anos");
+        scenarioNameField.setAccessibleText("Nome do cenário");
         scenarioNameField.setOnAction(e -> saveScenario(false));
         HBox.setHgrow(scenarioNameField, Priority.ALWAYS);
         saveScenarioBtn.getStyleClass().add("button");
+        saveScenarioBtn.setTooltip(new Tooltip("Grava os parâmetros e as taxas congeladas com este nome"));
         saveScenarioBtn.setOnAction(e -> saveScenario(false));
         saveAsScenarioBtn.getStyleClass().add("secondary-btn");
+        saveAsScenarioBtn.setTooltip(new Tooltip("Grava como um cenário novo, mantendo o carregado"));
         saveAsScenarioBtn.setOnAction(e -> saveScenario(true));
-        HBox row2 = new HBox(8, nameLabel, scenarioNameField, saveScenarioBtn, saveAsScenarioBtn);
-        row2.setAlignment(Pos.CENTER_LEFT);
+        FlowPane saveActions = new FlowPane(8, 8, saveScenarioBtn, saveAsScenarioBtn);
+        saveActions.setAlignment(Pos.CENTER_LEFT);
+        VBox row2 = new VBox(6, nameLabel, scenarioNameField, saveActions);
 
         scenarioStatusLabel.getStyleClass().add("text-helper");
         scenarioStatusLabel.setWrapText(true);
         scenarioEmptyLabel.getStyleClass().add("text-helper");
         scenarioEmptyLabel.setWrapText(true);
 
-        box.getChildren().addAll(title, row1, row2, scenarioStatusLabel, scenarioEmptyLabel);
-        return box;
+        return new Panel("Cenários salvos", row1, row2, scenarioStatusLabel, scenarioEmptyLabel)
+                .subtitle("Um cenário guarda os parâmetros e as taxas congeladas; o resultado é recalculado ao reabrir.");
     }
 
     private void updateScenarioStatus() {
@@ -339,13 +370,13 @@ public final class SimulationPage implements Page {
         deleteScenarioBtn.setDisable(!loaded);
         saveAsScenarioBtn.setDisable(!loaded);
         if (!loaded) {
-            scenarioStatusLabel.setText("Cenário novo (não salvo). São gravados os parâmetros e as taxas congeladas; o resultado é recalculado ao reabrir.");
+            scenarioStatusLabel.setText("Cenário novo, ainda não salvo.");
         } else {
             SimulationScenario s = loadedScenario();
             SimulationParameters p = s.parameters();
             String rates = p.rates() == null ? "" : " — taxas congeladas: " + p.rates().origin() + " " + nvl(p.rates().referenceDate());
             String price = p.kind() == Kind.STOCK ? " — preço: " + p.priceOrigin() + " " + nvl(p.priceReferenceDate()) : "";
-            scenarioStatusLabel.setText("Cenário \"" + s.name() + "\" carregado (versão de cálculo "
+            scenarioStatusLabel.setText("Cenário \"" + s.name() + "\" carregado (cálculo v"
                     + p.calculationVersion() + ")" + rates + price + ".");
         }
     }
@@ -419,8 +450,10 @@ public final class SimulationPage implements Page {
             suppressScenarioEvents = false;
         }
         scenarioNameField.clear();
-        resultLabel.setText("—");
-        resultSubLabel.setText("Preencha os campos e clique em Calcular");
+        resultHero.setValue("—");
+        resultHero.setSecondary(null, null);
+        resultHero.setContext(RESULT_IDLE);
+        applyResultStyle(null);
         projectionChart.getData().clear();
         updateScenarioStatus();
         scenarioNameField.requestFocus();
@@ -489,9 +522,7 @@ public final class SimulationPage implements Page {
         try {
             params = buildParameters();
         } catch (IllegalArgumentException ex) {
-            resultLabel.setText("Verifique os campos");
-            resultSubLabel.setText(ex.getMessage());
-            applyResultStyle(false);
+            showResultProblem("Verifique os campos", ex.getMessage());
             ToastHost.showWarn(ex.getMessage());
             return;
         }
@@ -508,7 +539,7 @@ public final class SimulationPage implements Page {
         SimulationScenario target = loadedScenario();
         if (target == null || scenarioCtrl.isBusy()) return;
         if (!Dialogs.confirm("Excluir cenário", "Excluir o cenário \"" + target.name() + "\"?",
-                "Apenas a simulação salva é removida. Nenhum investimento, caixa ou histórico é alterado.")) return;
+                "Apenas a simulação salva é removida. Nenhum investimento, caixa ou histórico é alterado.", "Excluir")) return;
         scenarioCtrl.delete();
     }
 
@@ -518,10 +549,9 @@ public final class SimulationPage implements Page {
 
     private HBox buildTypeSelector() {
         HBox box = new HBox(12);
-        box.getStyleClass().add("toolbar");
         box.setAlignment(Pos.CENTER_LEFT);
 
-        Label label = new Label("Tipo:");
+        Label label = new Label("Tipo");
         label.getStyleClass().add("form-label");
 
         ToggleGroup group = new ToggleGroup();
@@ -560,22 +590,20 @@ public final class SimulationPage implements Page {
     }
 
     private VBox buildBaseParamsCard() {
-        VBox box = new VBox(12);
-        box.getStyleClass().add("card");
-
-        Label title = new Label("PARÂMETROS BASE");
-        title.getStyleClass().add("card-title");
-
-        Label initialLabel = new Label("Valor Inicial:");
+        Label initialLabel = new Label("Valor inicial");
         initialLabel.getStyleClass().add("form-label");
+        initialLabel.setLabelFor(initialValueField);
         initialValueField.setPromptText("R$ 10.000,00");
+        initialValueField.setAccessibleText("Valor inicial");
         initialValueField.setTextFormatter(Money.currencyFormatterEditable());
         Money.applyFormatOnBlur(initialValueField);
 
-        Label monthsLabel = new Label("Período (meses):");
+        Label monthsLabel = new Label("Período (meses)");
         monthsLabel.getStyleClass().add("form-label");
+        monthsLabel.setLabelFor(monthsCombo);
         monthsCombo.getItems().addAll(1, 3, 6, 12, 24, 36, 48, 60, 120);
         monthsCombo.setValue(12);
+        monthsCombo.setAccessibleText("Período em meses");
 
         HBox row = new HBox(12);
         VBox initialBox = new VBox(6, initialLabel, initialValueField);
@@ -584,22 +612,16 @@ public final class SimulationPage implements Page {
         HBox.setHgrow(monthsBox, Priority.ALWAYS);
         monthsCombo.setMaxWidth(Double.MAX_VALUE);
         row.getChildren().addAll(initialBox, monthsBox);
-
-        box.getChildren().addAll(title, row);
-        return box;
+        return new VBox(row);
     }
 
     private VBox buildRentabilityCard() {
-        VBox box = new VBox(12);
-        box.getStyleClass().add("card");
-
-        Label title = new Label("MODALIDADE DE RENTABILIDADE");
-        title.getStyleClass().add("card-title");
-
-        Label modeLabel = new Label("Modalidade:");
+        Label modeLabel = new Label("Modalidade de rentabilidade");
         modeLabel.getStyleClass().add("form-label");
+        modeLabel.setLabelFor(rentabilityModeCombo);
         rentabilityModeCombo.getItems().addAll(RentabilityMode.values());
         rentabilityModeCombo.setValue(RentabilityMode.FIXED_RATE);
+        rentabilityModeCombo.setAccessibleText("Modalidade de rentabilidade");
         rentabilityModeCombo.setCellFactory(lv -> new ListCell<>() {
             @Override
             protected void updateItem(RentabilityMode item, boolean empty) {
@@ -624,21 +646,27 @@ public final class SimulationPage implements Page {
         rentabilityModeSection = new VBox(10);
 
         // Fixed rate section
-        Label fixedLabel = new Label("Taxa Anual (%):");
+        Label fixedLabel = new Label("Taxa anual (%)");
         fixedLabel.getStyleClass().add("form-label");
+        fixedLabel.setLabelFor(fixedRateField);
         fixedRateField.setPromptText("12,50");
+        fixedRateField.setAccessibleText("Taxa anual em porcentagem");
+        fixedRateField.setOnAction(e -> calculate());
         fixedRateSection = new VBox(6, fixedLabel, fixedRateField);
 
         // Benchmark section
-        Label benchmarkLabel = new Label("Benchmark:");
+        Label benchmarkLabel = new Label("Benchmark");
         benchmarkLabel.getStyleClass().add("form-label");
         benchmarkCombo.getItems().addAll("CDI", "SELIC", "IPCA");
         benchmarkCombo.setValue("CDI");
         benchmarkCombo.setMaxWidth(Double.MAX_VALUE);
+        benchmarkCombo.setAccessibleText("Benchmark");
 
-        Label benchmarkPercentLabel = new Label("Percentual do Benchmark:");
+        Label benchmarkPercentLabel = new Label("Percentual do benchmark");
         benchmarkPercentLabel.getStyleClass().add("form-label");
         benchmarkPercentField.setPromptText("110 (= 110% do CDI)");
+        benchmarkPercentField.setAccessibleText("Percentual do benchmark");
+        benchmarkPercentField.setOnAction(e -> calculate());
 
         HBox benchRow = new HBox(12);
         VBox benchBox = new VBox(6, benchmarkLabel, benchmarkCombo);
@@ -648,23 +676,25 @@ public final class SimulationPage implements Page {
         benchRow.getChildren().addAll(benchBox, benchPctBox);
 
         refreshRatesBtn.getStyleClass().add("ghost-btn");
+        refreshRatesBtn.setTooltip(new Tooltip("Consulta CDI, SELIC e IPCA no Banco Central e congela as taxas neste formulário"));
         refreshRatesBtn.setOnAction(e -> fetchRealRates());
         ratesStatusLabel.setWrapText(true);
-        HBox.setHgrow(ratesStatusLabel, Priority.ALWAYS);
-        HBox ratesRow = new HBox(10, ratesStatusLabel, refreshRatesBtn);
-        ratesRow.setAlignment(Pos.CENTER_LEFT);
-        VBox ratesPanel = new VBox(ratesRow);
+        VBox ratesPanel = new VBox(8, ratesStatusLabel, refreshRatesBtn);
         ratesPanel.getStyleClass().add("panel");
         benchmarkSection = new VBox(8, benchRow, ratesPanel);
 
         // Hybrid section
-        Label hybridLabel = new Label("Taxa Fixa (% a.a.):");
+        Label hybridLabel = new Label("Taxa fixa (% a.a.)");
         hybridLabel.getStyleClass().add("form-label");
         hybridFixedField.setPromptText("5,0");
+        hybridFixedField.setAccessibleText("Taxa fixa anual em porcentagem");
+        hybridFixedField.setOnAction(e -> calculate());
 
-        Label indexLabel = new Label("Taxa do Índice (% a.a.):");
+        Label indexLabel = new Label("Taxa do índice (% a.a.)");
         indexLabel.getStyleClass().add("form-label");
         indexRateField.setPromptText("4,5 (IPCA estimado)");
+        indexRateField.setAccessibleText("Taxa do índice anual em porcentagem");
+        indexRateField.setOnAction(e -> calculate());
 
         HBox hybridRow = new HBox(12);
         VBox hybFixedBox = new VBox(6, hybridLabel, hybridFixedField);
@@ -677,57 +707,53 @@ public final class SimulationPage implements Page {
         rentabilityModeSection.getChildren().addAll(
                 new VBox(6, modeLabel, rentabilityModeCombo),
                 fixedRateSection, benchmarkSection, hybridSection);
-
-        Button calculateBtn = new Button("Calcular Simulação");
-        calculateBtn.getStyleClass().add("button");
-        calculateBtn.setMaxWidth(Double.MAX_VALUE);
-        calculateBtn.setOnAction(e -> calculate());
-
-        box.getChildren().addAll(title, rentabilityModeSection, calculateBtn);
-        return box;
+        return rentabilityModeSection;
     }
 
     private VBox buildStockCard() {
         VBox box = new VBox(12);
-        box.getStyleClass().add("card");
 
-        Label title = new Label("DADOS DO ATIVO");
-        title.getStyleClass().add("card-title");
-
-        Label tickerLabel = new Label("Ticker:");
+        Label tickerLabel = new Label("Ticker");
         tickerLabel.getStyleClass().add("form-label");
         tickerField.setPromptText("PETR4, VALE3, HGLG11...");
+        tickerField.setAccessibleText("Ticker");
         tickerField.setOnAction(e -> lookupTicker());
 
         lookupTickerBtn.getStyleClass().add("ghost-btn");
+        lookupTickerBtn.setTooltip(new Tooltip("Busca preço e dividendos na BRAPI; os campos continuam editáveis"));
         lookupTickerBtn.setOnAction(e -> lookupTicker());
 
-        Label purchasePriceLabel = new Label("Preço de Compra:");
+        Label purchasePriceLabel = new Label("Preço de compra");
         purchasePriceLabel.getStyleClass().add("form-label");
         purchasePriceField.setPromptText("R$ 35,50");
+        purchasePriceField.setAccessibleText("Preço de compra");
         purchasePriceField.setTextFormatter(Money.currencyFormatterEditable());
 
-        Label quantityLabel = new Label("Quantidade:");
+        Label quantityLabel = new Label("Quantidade");
         quantityLabel.getStyleClass().add("form-label");
         quantityField.setPromptText("100");
+        quantityField.setAccessibleText("Quantidade");
 
-        Label currentPriceLabel = new Label("Preço Atual (manual ou cotação):");
+        Label currentPriceLabel = new Label("Preço atual (manual ou cotação)");
         currentPriceLabel.getStyleClass().add("form-label");
         currentPriceField.setPromptText("Vazio = usar preço de compra");
+        currentPriceField.setAccessibleText("Preço atual");
         currentPriceField.setTextFormatter(Money.currencyFormatterEditable());
         currentPriceField.textProperty().addListener((obs, o, n) -> { if (currentPriceField.isFocused()) markManualPrice(); });
 
-        Label dividendsLabel = new Label("Dividendos por cota/ação (anual):");
+        Label dividendsLabel = new Label("Dividendos por cota/ação (anual)");
         dividendsLabel.getStyleClass().add("form-label");
         dividendsField.setPromptText("R$ 0,00");
+        dividendsField.setAccessibleText("Dividendos anuais por cota ou ação");
         dividendsField.setTextFormatter(Money.currencyFormatterEditable());
         dividendsField.textProperty().addListener((obs, o, n) -> { if (dividendsField.isFocused()) markManualPrice(); });
 
         priceOriginLabel.getStyleClass().add("text-helper");
         priceOriginLabel.setWrapText(true);
 
-        Label variationLabel = new Label("Variação de Preço (%):");
+        Label variationLabel = new Label("Variação de preço (%)");
         variationLabel.getStyleClass().add("form-label");
+        priceVariationSlider.setAccessibleText("Variação de preço em porcentagem");
         priceVariationSlider.setShowTickLabels(true);
         priceVariationSlider.setShowTickMarks(true);
         priceVariationSlider.setMajorTickUnit(10);
@@ -744,16 +770,15 @@ public final class SimulationPage implements Page {
         HBox.setHgrow(priceVariationSlider, Priority.ALWAYS);
         sliderRow.setAlignment(Pos.CENTER_LEFT);
 
-        HBox row1 = new HBox(12);
         HBox tickerRow = new HBox(6, tickerField, lookupTickerBtn);
         HBox.setHgrow(tickerField, Priority.ALWAYS);
         VBox tickerBox = new VBox(6, tickerLabel, tickerRow);
+        HBox row1 = new HBox(12);
         VBox priceBox = new VBox(6, purchasePriceLabel, purchasePriceField);
         VBox qtyBox = new VBox(6, quantityLabel, quantityField);
-        HBox.setHgrow(tickerBox, Priority.ALWAYS);
         HBox.setHgrow(priceBox, Priority.ALWAYS);
         HBox.setHgrow(qtyBox, Priority.ALWAYS);
-        row1.getChildren().addAll(tickerBox, priceBox, qtyBox);
+        row1.getChildren().addAll(priceBox, qtyBox);
 
         HBox row2 = new HBox(12);
         VBox curPriceBox = new VBox(6, currentPriceLabel, currentPriceField);
@@ -762,33 +787,21 @@ public final class SimulationPage implements Page {
         HBox.setHgrow(divBox, Priority.ALWAYS);
         row2.getChildren().addAll(curPriceBox, divBox);
 
-        Button calculateBtn = new Button("Calcular Simulação");
-        calculateBtn.getStyleClass().add("button");
-        calculateBtn.setMaxWidth(Double.MAX_VALUE);
-        calculateBtn.setOnAction(e -> calculate());
-
         VBox sliderPanel = new VBox(6, variationLabel, sliderRow);
         sliderPanel.getStyleClass().add("panel");
 
-        box.getChildren().addAll(title, row1, row2, priceOriginLabel, sliderPanel, calculateBtn);
+        box.getChildren().addAll(tickerBox, row1, row2, priceOriginLabel, sliderPanel);
 
         stockSection = box;
         return box;
     }
 
-    private VBox buildResultCard() {
-        VBox box = new VBox(8);
-        box.getStyleClass().add("result-card");
-
-        Label title = new Label("RESULTADO DA SIMULAÇÃO (ESTIMATIVA)");
-        title.getStyleClass().add("kpi-label");
-
-        resultLabel.getStyleClass().addAll("kpi-value", "num");
-        resultSubLabel.getStyleClass().add("kpi-sub");
-        resultSubLabel.setWrapText(true);
-
-        box.getChildren().addAll(title, resultLabel, resultSubLabel);
-        return box;
+    /** A form problem shown in the result block itself; the chart is left as it was. */
+    private void showResultProblem(String title, String detail) {
+        resultHero.setValue(title);
+        resultHero.setSecondary(null, null);
+        resultHero.setContext(detail);
+        applyResultStyle(null);
     }
 
     private void updateInputsVisibility() {
@@ -913,9 +926,7 @@ public final class SimulationPage implements Page {
         try {
             showProjection(buildParameters());
         } catch (IllegalArgumentException | ArithmeticException e) {
-            resultLabel.setText("Verifique os campos");
-            resultSubLabel.setText(e.getMessage());
-            applyResultStyle(false);
+            showResultProblem("Verifique os campos", e.getMessage());
         }
     }
 
@@ -933,33 +944,39 @@ public final class SimulationPage implements Page {
         try {
             r = SimulationCalculator.project(p);
         } catch (ArithmeticException e) {
-            resultLabel.setText("Fora do intervalo calculável");
-            resultSubLabel.setText(e.getMessage());
-            applyResultStyle(false);
+            showResultProblem("Fora do intervalo calculável", e.getMessage());
             return;
         }
+        Boolean gain = r.profitCents() == 0 ? null : r.profitCents() > 0;
+        String tone = gain == null ? null : gain ? "pos" : "neg";
+        String resultName = gain == null ? "Resultado" : gain ? "Lucro" : "Prejuízo";
         if (p.kind() == Kind.STOCK) {
-            resultLabel.setText(Money.centsToText(r.finalCents()));
-            resultSubLabel.setText(String.format("Investido: %s | Dividendos (%d × %s): %s | Lucro total: %s (%.2f%%)",
+            resultHero.setValue(Money.centsToText(r.finalCents()));
+            resultHero.setSecondary(String.format("%s total: %s (%.2f%%)", resultName, Money.centsToText(r.profitCents()), r.returnPercent())
+                    .replace('.', ','), tone);
+            resultHero.setContext(String.format("Estimativa — investido %s; dividendos %d × %s = %s. Sem efeito na carteira.",
                     Money.centsToText(r.investedCents()), p.quantity(), Money.centsToText(p.dividendPerShareCents()),
-                    Money.centsToText(r.dividendsCents()), Money.centsToText(r.profitCents()), r.returnPercent())
-                    .replace('.', ','));
-            applyResultStyle(r.profitCents() >= 0);
+                    Money.centsToText(r.dividendsCents())));
+            applyResultStyle(gain);
             projectionChart.getData().clear();
             XYChart.Series<Number, Number> series = new XYChart.Series<>();
             series.setName("Ação");
             series.getData().add(new XYChart.Data<>(0, r.seriesCents().get(0) / 100.0));
             series.getData().add(new XYChart.Data<>(1, r.seriesCents().get(1) / 100.0));
             projectionChart.getData().add(series);
+            Motion.chartRefresh(projectionChart);
         } else {
-            resultLabel.setText(Money.centsToText(r.finalCents()));
             String ratesNote = p.kind() == Kind.BENCHMARK_PERCENT
-                    ? " | taxas: " + p.rates().origin() + " " + nvl(p.rates().referenceDate())
+                    ? " Taxas: " + p.rates().origin() + " " + nvl(p.rates().referenceDate()) + "."
                     : "";
-            resultSubLabel.setText(String.format("Lucro: %s (%.1f%%) em %d meses — taxa efetiva %.2f%% a.a.%s",
-                    Money.centsToText(r.profitCents()), r.returnPercent(), p.months(),
-                    r.effectiveAnnualRate() * 100, ratesNote).replace('.', ','));
-            applyResultStyle(true);
+            // Negative rates are accepted (fixed −5 %, a negative frozen index): the tone follows the sign
+            // of the profit here exactly as it does for stocks, never "always positive".
+            resultHero.setValue(Money.centsToText(r.finalCents()));
+            resultHero.setSecondary(String.format("%s: %s (%.1f%%)", resultName, Money.centsToText(r.profitCents()), r.returnPercent())
+                    .replace('.', ','), tone);
+            resultHero.setContext(String.format("Estimativa em %d meses — taxa efetiva %.2f%% a.a.%s Sem efeito na carteira.",
+                    p.months(), r.effectiveAnnualRate() * 100, ratesNote).replace('.', ','));
+            applyResultStyle(gain);
             updateChartMonths(r.seriesCents(), "Renda Fixa");
         }
     }
@@ -975,11 +992,14 @@ public final class SimulationPage implements Page {
         }
 
         projectionChart.getData().add(series);
+        Motion.chartRefresh(projectionChart);
     }
 
-    private void applyResultStyle(boolean positive) {
-        resultLabel.getStyleClass().removeAll("pos", "neg");
-        resultLabel.getStyleClass().add(positive ? "pos" : "neg");
+    /** {@code null} = neutral (idle or a problem to fix), otherwise gain/loss tone on the number. */
+    private void applyResultStyle(Boolean positive) {
+        Label value = resultHero.valueLabel();
+        value.getStyleClass().removeAll("pos", "neg");
+        if (positive != null) value.getStyleClass().add(positive ? "pos" : "neg");
     }
 
     private void applyRatesStatusStyle(String... classes) {

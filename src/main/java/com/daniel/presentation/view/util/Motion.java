@@ -103,6 +103,22 @@ public final class Motion {
         settle(node);
     }
 
+    /**
+     * Stops whatever runs on the node and leaves it WHERE IT IS: neither the visual reset nor the
+     * pending final state is applied. Used when a new animation on the same node must continue
+     * from the current value (e.g. the sidebar reversed mid-flight) instead of jumping to the end
+     * of the previous one and then starting over.
+     */
+    public static void interrupt(Node node) {
+        Animation a = (Animation) node.getProperties().remove(KEY_ANIMATION);
+        node.getProperties().remove(KEY_FINAL_STATE);
+        live.remove(node);
+        if (a != null) {
+            a.setOnFinished(null);
+            a.stop();
+        }
+    }
+
     private static void restoreVisualState(Node node) {
         node.setOpacity(1.0);
         node.setTranslateX(0);
@@ -185,6 +201,38 @@ public final class Motion {
         run(node, new ParallelTransition(fade, slide), null, null);
     }
 
+    /**
+     * Dialog entrance: fade plus a slight scale-up (0.97 → 1). Scale instead of translate because
+     * a transparent dialog window is exactly the pane's size — a translate would be clipped.
+     * Cancellable through {@link #settle}; a no-op under reduced motion.
+     */
+    public static void dialogIn(Node node, int ms) {
+        settle(node);
+        if (reduced) return;
+        node.setOpacity(0);
+        node.setScaleX(0.97);
+        node.setScaleY(0.97);
+        FadeTransition fade = new FadeTransition(Duration.millis(ms), node);
+        fade.setFromValue(0); fade.setToValue(1); fade.setInterpolator(Interpolator.EASE_OUT);
+        ScaleTransition scale = new ScaleTransition(Duration.millis(ms), node);
+        scale.setFromX(0.97); scale.setFromY(0.97); scale.setToX(1); scale.setToY(1); scale.setInterpolator(Interpolator.EASE_OUT);
+        run(node, new ParallelTransition(fade, scale), null, null);
+    }
+
+    /** Dialog exit continues an interrupted entrance, without jumping to full opacity first. */
+    public static void dialogOut(Node node, int ms, Runnable then) {
+        double opacity = node.getOpacity(), scaleX = node.getScaleX(), scaleY = node.getScaleY();
+        interrupt(node);
+        FadeTransition fade = new FadeTransition(Duration.millis(ms), node);
+        fade.setFromValue(opacity); fade.setToValue(0); fade.setInterpolator(Interpolator.EASE_IN);
+        run(node, fade, then, null);
+        if (!reduced) {
+            node.setOpacity(opacity);
+            node.setScaleX(scaleX);
+            node.setScaleY(scaleY);
+        }
+    }
+
     /** Horizontal variant for side panels (positive fromX = enters from the right). */
     public static void slideInX(Node node, int ms, double fromX) {
         settle(node);
@@ -198,13 +246,17 @@ public final class Motion {
         run(node, new ParallelTransition(fade, slide), null, null);
     }
 
-    /** Fades a node out, then runs {@code then} (typically hide/unmanage). Reduced: runs at once. */
+    /**
+     * Fades a node out, then runs {@code then} (typically hide/unmanage/remove). {@code then} is the
+     * node's END STATE: it also runs when the fade is cancelled ({@link #settle}) or when motion is
+     * reduced, so a dismissed overlay never lingers half-faded.
+     */
     public static void fadeOut(Node node, int ms, Runnable then) {
         settle(node);
         if (reduced) { if (then != null) then.run(); return; }
         FadeTransition fade = new FadeTransition(Duration.millis(ms), node);
         fade.setFromValue(1); fade.setToValue(0); fade.setInterpolator(Interpolator.EASE_IN);
-        run(node, fade, null, then);
+        run(node, fade, then, null);
     }
 
     /** Fades a node out and removes it from its parent pane. */
@@ -229,6 +281,20 @@ public final class Motion {
                 new KeyFrame(Duration.ZERO, new KeyValue(label.opacityProperty(), 0.35)),
                 new KeyFrame(Duration.millis(FEEDBACK_MS), new KeyValue(label.opacityProperty(), 1.0, Interpolator.EASE_OUT)));
         run(label, pulse, null, null);
+    }
+
+    /**
+     * Makes a data change in a chart visible: a short opacity pulse of the chart node itself
+     * (250–450 ms band), started AFTER the series were assigned. No value is interpolated and no
+     * series is invented; with "reduce motion" nothing moves.
+     */
+    public static void chartRefresh(Node chart) {
+        settle(chart);
+        if (reduced) return;
+        Timeline pulse = new Timeline(
+                new KeyFrame(Duration.ZERO, new KeyValue(chart.opacityProperty(), 0.55)),
+                new KeyFrame(Duration.millis(CHART_MS), new KeyValue(chart.opacityProperty(), 1.0, Interpolator.EASE_OUT)));
+        run(chart, pulse, null, null);
     }
 
     /** Animates a region's prefWidth (sidebar 220↔56). Last target wins; settle jumps to it. */

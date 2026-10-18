@@ -142,6 +142,8 @@ public final class AppShell {
         WelcomeOverlay welcome = new WelcomeOverlay(
                 () -> go("Cadastrar Investimento"),
                 () -> go("Configurações"));
+        // First run: nothing was focused before the welcome, so the focus lands on the current page's nav item.
+        welcome.focusAfterDismiss(() -> currentKey == null ? toggleBtn : nav.getOrDefault(currentKey, toggleBtn));
         shell.getChildren().add(welcome.getNode());
         welcome.getNode().toFront();
         welcome.animateIn();
@@ -179,24 +181,44 @@ public final class AppShell {
     private void setCollapsed(boolean value, boolean animate) {
         collapsed = value;
         double target = value ? RAIL_WIDTH : SIDEBAR_WIDTH;
+        // A transition still running (the user reversed mid-flight, or the window crossed 900 px
+        // twice) is interrupted WHERE IT IS: settling it first would run the previous pin and the
+        // new animation would start with min = max = old target, i.e. frozen, then jump.
+        Motion.interrupt(sidebar);
         // While the width animates, min/max must span both sizes or BorderPane clamps pref to the
         // target at once and the transition is invisible; they are pinned again at the end state.
         sidebar.setMinWidth(RAIL_WIDTH);
         sidebar.setMaxWidth(SIDEBAR_WIDTH);
-        if (value) { if (!sidebar.getStyleClass().contains("rail")) sidebar.getStyleClass().add("rail"); }
-        else sidebar.getStyleClass().remove("rail");
-        for (Label l : sidebarTexts) { l.setVisible(!value); l.setManaged(!value); }
-        for (Node n : sidebarGraphics) { n.setVisible(!value); n.setManaged(!value); }
-        for (Button b : nav.values()) {
-            b.setContentDisplay(value ? ContentDisplay.GRAPHIC_ONLY : ContentDisplay.LEFT);
-            b.setAlignment(value ? Pos.CENTER : Pos.CENTER_LEFT);
-        }
         toggleBtn.setGraphic(Icons.of(value ? Feather.CHEVRONS_RIGHT : Feather.CHEVRONS_LEFT, 14));
         toggleBtn.setTooltip(new Tooltip(value ? "Expandir navegação" : "Recolher navegação"));
         toggleBtn.setAccessibleText(value ? "Expandir navegação" : "Recolher navegação");
         Runnable pin = () -> { sidebar.setMinWidth(target); sidebar.setMaxWidth(target); };
-        if (animate) Motion.animatePrefWidth(sidebar, target, Motion.NAV_MS, pin);
-        else { Motion.settle(sidebar); sidebar.setPrefWidth(target); pin.run(); }
+        if (value) {
+            // Collapsing: the rail look applies at once, so no text is cut while the width shrinks.
+            applyRailLook(true);
+            if (animate) Motion.animatePrefWidth(sidebar, target, Motion.NAV_MS, pin);
+            else { sidebar.setPrefWidth(target); pin.run(); }
+        } else if (animate) {
+            // Expanding: texts, logo and labels only come back once there is room for them; the
+            // rail look (icons only, centred) stays until the width has arrived.
+            Motion.animatePrefWidth(sidebar, target, Motion.NAV_MS, () -> { applyRailLook(false); pin.run(); });
+        } else {
+            applyRailLook(false);
+            sidebar.setPrefWidth(target);
+            pin.run();
+        }
+    }
+
+    /** Rail = icons only, texts/logo hidden, items centred; expanded = everything visible, left aligned. */
+    private void applyRailLook(boolean rail) {
+        if (rail) { if (!sidebar.getStyleClass().contains("rail")) sidebar.getStyleClass().add("rail"); }
+        else sidebar.getStyleClass().remove("rail");
+        for (Label l : sidebarTexts) { l.setVisible(!rail); l.setManaged(!rail); }
+        for (Node n : sidebarGraphics) { n.setVisible(!rail); n.setManaged(!rail); }
+        for (Button b : nav.values()) {
+            b.setContentDisplay(rail ? ContentDisplay.GRAPHIC_ONLY : ContentDisplay.LEFT);
+            b.setAlignment(rail ? Pos.CENTER : Pos.CENTER_LEFT);
+        }
     }
 
     private void onToggleSidebar() {
