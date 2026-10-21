@@ -2401,20 +2401,46 @@
 .c04-search > .right-pane { -fx-padding: 0 5 0 4; }
 .c04-search .search-clear { -fx-padding: 4; -fx-background-radius: 6; -fx-border-radius: 6; }
 .positions-toolbar .position-count { -fx-padding: 0 2 0 0; }
-/* Native SplitPane: a quiet gutter whose grabber brightens on hover and takes the accent while dragged. */
+/* Native SplitPane. C04 r2 (b): the divider is a full-height 1 px line in an 11 px grip zone, with no short
+   grabber pill that read as a second scrollbar; the line brightens on hover and takes the accent while dragged. */
 .positions-workspace .carteira-split { -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: 0; }
-.positions-workspace .carteira-split > .split-pane-divider { -fx-background-color: transparent; -fx-padding: 0 5 0 5; -fx-opacity: 1; }
-.positions-workspace .carteira-split > .split-pane-divider > .horizontal-grabber,
-.positions-workspace .carteira-split > .split-pane-divider > .vertical-grabber {
-    -fx-background-color: -color-text-3; -fx-background-radius: 2; -fx-padding: 16 1.5 16 1.5; -fx-opacity: 0.55;
+.positions-workspace .carteira-split > .split-pane-divider {
+    -fx-background-color: transparent, -color-border; -fx-background-insets: 0, 0 5 0 5; -fx-padding: 0 5 0 6; -fx-opacity: 1;
 }
+.positions-workspace .carteira-split > .split-pane-divider:hover { -fx-background-color: transparent, -color-text-3; }
+.positions-workspace .carteira-split > .split-pane-divider:pressed {
+    -fx-background-color: transparent, -color-accent; -fx-background-insets: 0, 0 4 0 5;
+}
+.positions-workspace .carteira-split > .split-pane-divider > .horizontal-grabber,
+.positions-workspace .carteira-split > .split-pane-divider > .vertical-grabber,
 .positions-workspace .carteira-split > .split-pane-divider:hover > .horizontal-grabber,
-.positions-workspace .carteira-split > .split-pane-divider:hover > .vertical-grabber { -fx-opacity: 1; }
+.positions-workspace .carteira-split > .split-pane-divider:hover > .vertical-grabber,
 .positions-workspace .carteira-split > .split-pane-divider:pressed > .horizontal-grabber,
-.positions-workspace .carteira-split > .split-pane-divider:pressed > .vertical-grabber { -fx-background-color: -color-accent; -fx-opacity: 1; }
-/* The detail scrolls inside its own pane: no second frame around the details card. */
-.positions-workspace .details-scroll,
-.positions-workspace .details-scroll > .viewport { -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 0; }
+.positions-workspace .carteira-split > .split-pane-divider:pressed > .vertical-grabber {
+    -fx-background-color: transparent; -fx-padding: 0; -fx-opacity: 0;
+}
+/* C04 r2 (a): beside the table the frame belongs to the detail's scroll region, so the viewport never cuts
+   a card and the scrollbar runs inside the frame; below the table the details card keeps its own frame. */
+.positions-workspace .details-scroll > .viewport { -fx-background-color: transparent; }
+.positions-workspace .carteira-split .details-scroll {
+    -fx-background-color: -color-surface; -fx-background-insets: 0; -fx-background-radius: 10;
+    -fx-border-color: -color-border; -fx-border-width: 1; -fx-border-radius: 10; -fx-padding: 4 3 4 0;
+}
+.positions-workspace .carteira-split .details-pane {
+    -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 12 12 16 18;
+}
+/* C04 r2 (e): the summary read on one line under the page title (medium/wide); narrow keeps the stat band. */
+.stat-line { -fx-hgap: 14; -fx-vgap: 4; }
+.stat-line .stat-line-item {
+    -fx-padding: 0 14 0 0; -fx-border-color: transparent -color-border transparent transparent; -fx-border-width: 0 1 0 0;
+}
+.stat-line .stat-line-item.last { -fx-padding: 0; -fx-border-width: 0; }
+.stat-line .stat-label { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; }
+.stat-line .stat-value { -fx-font-size: 15px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
+.stat-line .stat-value.pos { -fx-text-fill: -color-success; }
+.stat-line .stat-value.neg { -fx-text-fill: -color-danger; }
+.stat-line .stat-value.muted { -fx-text-fill: -color-text-2; }
+.stat-line .stat-qualifier { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; }
 
 /* ── C04 pilot · Dashboard: content ahead of the frame ────────────────────────────── */
 /* Token warning: one compact line, said once, with its action. */

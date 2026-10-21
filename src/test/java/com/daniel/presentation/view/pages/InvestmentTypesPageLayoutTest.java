@@ -881,4 +881,223 @@ class InvestmentTypesPageLayoutTest {
                     "the opened detail starts inside the viewport: " + top + " of " + scroll.getViewportBounds().getHeight());
         });
     }
+
+    // ── C04 round 2: the Carteira's frame, divider, detail width, Ativo column and summary ──────
+
+    static boolean visiblePaint(javafx.scene.paint.Paint paint) {
+        return paint instanceof javafx.scene.paint.Color c && c.getOpacity() > 0.01;
+    }
+
+    static boolean hasVisibleBorder(javafx.scene.layout.Region region) {
+        var border = region.getBorder();
+        if (border == null) return false;
+        for (var s : border.getStrokes()) {
+            var w = s.getWidths();
+            if ((visiblePaint(s.getTopStroke()) && w.getTop() > 0) || (visiblePaint(s.getRightStroke()) && w.getRight() > 0)
+                    || (visiblePaint(s.getBottomStroke()) && w.getBottom() > 0) || (visiblePaint(s.getLeftStroke()) && w.getLeft() > 0))
+                return true;
+        }
+        return false;
+    }
+
+    static boolean hasVisibleFill(javafx.scene.layout.Region region) {
+        var background = region.getBackground();
+        return background != null && background.getFills().stream().anyMatch(f -> visiblePaint(f.getFill()));
+    }
+
+    /** Wide, 75 rows, the first one selected: the state of the p1 capture at 1280×800 (page 1060×800). */
+    void wideWithDetailOpen(int rows) throws Exception {
+        usePrefs(memoryPrefs());
+        javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+        items.setAll(numbered(rows));
+        styledScene(1060, 800);
+        com.daniel.presentation.view.util.UiTheme.applyFont(view);
+        layOut(1060, 800);
+        TableView<InvestmentType> table = field("table");
+        table.getSelectionModel().select(0);
+        layOut(1060, 800);
+    }
+
+    /** C04 r2 (a): beside the table the detail's frame is its scroll region, so the frame stays whole and the scrollbar runs inside it. */
+    @Test
+    void wideDetailFrameBelongsToItsScrollRegionNotToTheScrolledCard() {
+        FxTestSupport.runAndWait(() -> {
+            wideWithDetailOpen(75);
+            DetailsPane details = field("details");
+            ScrollPane detailsScroll = field("detailsScroll");
+            assertTrue(hasVisibleBorder(detailsScroll) && hasVisibleFill(detailsScroll), "the frame is drawn by the scroll region");
+            assertFalse(hasVisibleBorder(details), "the scrolled content carries no second frame for the viewport to cut");
+            var frame = detailsScroll.localToScene(detailsScroll.getLayoutBounds());
+            assertTrue(frame.getMaxY() <= 800 + 0.5, "the whole frame is inside the window: " + frame.getMaxY());
+            boolean sawBar = false;
+            for (Node n : detailsScroll.lookupAll(".scroll-bar")) {
+                if (n instanceof ScrollBar bar && bar.getOrientation() == javafx.geometry.Orientation.VERTICAL && bar.isVisible()) {
+                    sawBar = true;
+                    var b = bar.localToScene(bar.getLayoutBounds());
+                    assertTrue(b.getMinX() >= frame.getMinX() && b.getMaxX() <= frame.getMaxX() - 1 && b.getMinY() >= frame.getMinY() + 1
+                                    && b.getMaxY() <= frame.getMaxY() - 1, "the detail's scrollbar runs inside its frame: " + b + " in " + frame);
+                }
+            }
+            assertTrue(sawBar, "the 75-row fixture's detail is taller than its pane, so it scrolls");
+            layOut(740, 800);
+            assertTrue(hasVisibleBorder(details), "below the table the detail keeps its own card");
+        });
+    }
+
+    /** C04 r2 (b): the divider reads as a full-height line inside a wider grip zone, not as a second scrollbar beside the table's. */
+    @Test
+    void dividerIsAFullHeightLineInItsOwnGripZoneApartFromTheTableScrollbar() {
+        FxTestSupport.runAndWait(() -> {
+            wideWithDetailOpen(75);
+            SplitPane split = field("split");
+            TableView<InvestmentType> table = field("table");
+            var divider = (javafx.scene.layout.Region) split.lookup(".split-pane-divider");
+            assertNotNull(divider, "the split shows its divider");
+            assertTrue(divider.getWidth() >= 9, "the grip zone is wider than the line: " + divider.getWidth());
+            var lines = divider.getBackground() == null ? List.<javafx.scene.layout.BackgroundFill>of()
+                    : divider.getBackground().getFills().stream().filter(f -> visiblePaint(f.getFill())
+                            && divider.getWidth() - f.getInsets().getLeft() - f.getInsets().getRight() <= 2.01
+                            && f.getInsets().getTop() <= 0 && f.getInsets().getBottom() <= 0).toList();
+            assertFalse(lines.isEmpty(), "a visible full-height line of 1-2 px inside the zone: " + divider.getBackground());
+            if (divider.lookup(".horizontal-grabber") instanceof javafx.scene.layout.Region grabber)
+                assertTrue(!grabber.isVisible() || grabber.getOpacity() == 0 || !hasVisibleFill(grabber)
+                        || grabber.getWidth() < 0.5 || grabber.getHeight() < 0.5, "no short grabber pill that reads like a scrollbar thumb");
+            double lineMinX = divider.localToScene(divider.getLayoutBounds()).getMinX() + lines.getFirst().getInsets().getLeft();
+            for (Node n : table.lookupAll(".scroll-bar")) {
+                if (n instanceof ScrollBar bar && bar.getOrientation() == javafx.geometry.Orientation.VERTICAL && bar.isVisible())
+                    assertTrue(bar.localToScene(bar.getLayoutBounds()).getMaxX() + 3 <= lineMinX,
+                            "room between the table's scrollbar and the line: " + bar.localToScene(bar.getLayoutBounds()).getMaxX() + " / " + lineMinX);
+            }
+        });
+    }
+
+    /** C04 r2 (c): with no width chosen yet, the detail opens wide enough for Comprar, Vender and Editar on one row. */
+    @Test
+    void detailOpensWideEnoughForItsThreePrimaryActionsOnOneRow() {
+        FxTestSupport.runAndWait(() -> {
+            wideWithDetailOpen(10);
+            DetailsPane details = field("details");
+            var actions = (javafx.scene.layout.FlowPane) details.lookup(".details-actions");
+            List<Node> buttons = actions.getChildren().stream().filter(Node::isManaged).toList();
+            assertEquals(List.of("Comprar", "Vender", "Editar"), buttons.stream().map(b -> ((Labeled) b).getText()).toList());
+            double row = buttons.getFirst().getLayoutY();
+            for (Node b : buttons) {
+                var button = (javafx.scene.layout.Region) b;
+                assertEquals(row, b.getLayoutY(), 0.5, ((Labeled) b).getText() + " shares the first action's row");
+                assertTrue(button.getWidth() + 0.5 >= button.prefWidth(-1), ((Labeled) b).getText() + " keeps its width: " + button.getWidth());
+            }
+        });
+    }
+
+    /** C04 r2 (d): the Ativo column takes the flexible width; value and state columns keep the width their content needs. */
+    @Test
+    void assetColumnTakesTheFlexibleWidthWhileValueColumnsKeepTheirOwn() {
+        FxTestSupport.runAndWait(() -> {
+            wideWithDetailOpen(10);
+            TableView<InvestmentType> table = field("table");
+            TableColumn<InvestmentType, ?> name = table.getColumns().getFirst();
+            TableColumn<InvestmentType, ?> cost = table.getColumns().stream().filter(c -> "Custo".equals(c.getText())).findFirst().orElseThrow();
+            assertTrue(cost.isVisible() && cost.getWidth() <= 160.5, "with the detail open the cost column stays at its own width: " + cost.getWidth());
+            usePrefs(memoryPrefs());
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(numbered(10));
+            styledScene(1500, 900);
+            com.daniel.presentation.view.util.UiTheme.applyFont(view);
+            layOut(1500, 900);
+            TableView<InvestmentType> wide = field("table");
+            TableColumn<InvestmentType, ?> wideName = wide.getColumns().getFirst();
+            assertTrue(wideName.getWidth() >= wideName.getPrefWidth() + 150,
+                    "a wide table gives its spare width to Ativo: " + wideName.getWidth() + " for pref " + wideName.getPrefWidth());
+            for (TableColumn<InvestmentType, ?> c : wide.getVisibleLeafColumns()) {
+                if (c == wideName || !c.isResizable()) continue;
+                assertTrue(c.getWidth() <= c.getPrefWidth() + 35.5, c.getText() + " grows little: " + c.getWidth() + " for pref " + c.getPrefWidth());
+            }
+            assertNotNull(name);
+        });
+    }
+
+    /** C04 r2 (d): where the column cuts a long name, the full name stays reachable (tooltip, accessible text, detail title). */
+    @Test
+    void aLongAssetNameStaysReachableWhereTheColumnCutsIt() {
+        FxTestSupport.runAndWait(() -> {
+            usePrefs(memoryPrefs());
+            String full = "Ativo sintético com nome longo — infraestrutura, energia e desenvolvimento de longo prazo no exterior";
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(new InvestmentType(901, full, "ACOES", "ALTA", LocalDate.of(2026, 10, 15), null, new BigDecimal("120.00"),
+                    "ACAO", null, null, "FICT9", new BigDecimal("20.00"), 6, null));
+            styledScene(1060, 800);
+            com.daniel.presentation.view.util.UiTheme.applyFont(view);
+            layOut(1060, 800);
+            TableView<InvestmentType> table = field("table");
+            Label cellName = (Label) table.lookupAll(".cell-primary").stream().filter(n -> full.equals(((Label) n).getText())).findFirst().orElseThrow();
+            var shown = (javafx.scene.text.Text) cellName.lookup(".text");
+            assertNotEquals(full, shown.getText(), "the fixture is long enough to be cut in the column");
+            assertEquals(full, cellName.getTooltip().getText(), "the tooltip holds the whole name");
+            Node cell = cellName;
+            while (cell != null && !(cell instanceof TableCell<?, ?>)) cell = cell.getParent();
+            assertNotNull(cell);
+            assertTrue(cell.getAccessibleText().contains(full), "the accessible text holds the whole name");
+            table.getSelectionModel().select(0);
+            layOut(1060, 800);
+            DetailsPane details = field("details");
+            Label title = (Label) details.lookup(".details-name");
+            assertEquals(full, title.getText());
+            assertEquals(full, ((javafx.scene.text.Text) title.lookup(".text")).getText(), "the detail title wraps the whole name");
+        });
+    }
+
+    /** C04 r2 (e): medium/wide, the summary reads on one line under the title instead of a band of its own; narrow keeps the band. */
+    @Test
+    void wideSummaryJoinsTheTitleBandAndTheTableGetsRowsBack() {
+        FxTestSupport.runAndWait(() -> {
+            wideWithDetailOpen(75);
+            com.daniel.presentation.view.components.StatStrip strip = field("strip");
+            Node line = view.lookup(".stat-line");
+            assertNotNull(line, "the title band has a summary line");
+            assertTrue(line.isVisible() && line.isManaged(), "shown on the wide page");
+            assertFalse(strip.isManaged(), "the separate band leaves the flow");
+            Node band = view.lookup(".header-actions");
+            assertTrue(line.localToScene(line.getLayoutBounds()).getMaxY() <= band.localToScene(band.getLayoutBounds()).getMaxY() + 0.5,
+                    "the summary sits inside the title band");
+            TableView<InvestmentType> table = field("table");
+            double rows = (table.getHeight() - InvestmentTypesPage.TABLE_HEADER) / InvestmentTypesPage.ROW_HEIGHT;
+            assertTrue(rows >= 10.8, "the table gets rows back at 1060×800 (p1: about 9.6): " + rows);
+            strip.set(InvestmentTypesPage.STAT_CASH, "R$ 0,00", "muted", "a reconhecer");
+            layOut(1060, 800);
+            Node cash = line.lookupAll(".stat-line-item").stream()
+                    .filter(i -> i.lookup(".stat-label") instanceof Label l && InvestmentTypesPage.STAT_CASH.equals(l.getText()))
+                    .findFirst().orElseThrow();
+            Label value = (Label) cash.lookup(".stat-value");
+            Label qualifier = (Label) cash.lookup(".stat-qualifier");
+            assertEquals("R$ 0,00", value.getText(), "the line reads the strip's value");
+            assertTrue(value.getStyleClass().contains("muted"), "with its tone");
+            assertTrue(qualifier.isVisible() && "a reconhecer".equals(qualifier.getText()), "and its qualifier, apart from the number");
+            assertTrue(cash.getAccessibleText() != null && cash.getAccessibleText().contains("a reconhecer"), "read together by assistive technology");
+            layOut(584, 600);
+            assertTrue(strip.isManaged() && strip.isVisible(), "narrow keeps the stat band");
+            assertFalse(line.isManaged(), "and drops the line");
+            layOut(1060, 800);
+            assertTrue(line.isManaged() && !strip.isManaged(), "wide again, the line comes back");
+        });
+    }
+
+    /** C04 r2 (a): in the detail's field list every value keeps its own width at the right edge, the status badge included. */
+    @Test
+    void detailValuesShareOneRightEdgeIncludingTheStatusBadge() {
+        FxTestSupport.runAndWait(() -> {
+            wideWithDetailOpen(10);
+            DetailsPane details = field("details");
+            var grid = (javafx.scene.layout.GridPane) details.lookup(".details-fields");
+            List<Double> rights = new ArrayList<>();
+            for (Node n : grid.getChildren()) {
+                Integer column = javafx.scene.layout.GridPane.getColumnIndex(n);
+                if (column == null || column != 1 || !n.isVisible()) continue;
+                assertTrue(n.getLayoutBounds().getWidth() <= n.prefWidth(-1) + 1,
+                        "a value is not stretched across its cell: " + n + " " + n.getLayoutBounds().getWidth() + " > " + n.prefWidth(-1));
+                rights.add(n.localToScene(n.getLayoutBounds()).getMaxX());
+            }
+            assertTrue(rights.size() >= 6, "the fixture lists its fields: " + rights);
+            for (double right : rights) assertEquals(rights.getFirst(), right, 1.5, "the values share one right edge: " + rights);
+        });
+    }
 }

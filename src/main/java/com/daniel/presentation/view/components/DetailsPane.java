@@ -116,6 +116,23 @@ public final class DetailsPane extends VBox {
         primaryActions.getChildren().setAll(buttons);
     }
 
+    /**
+     * Width the primary actions take on one row, this pane's insets included: each button at its
+     * preferred width plus the row's gaps, snapped as the FlowPane lays them out. 0 when empty.
+     */
+    public double primaryActionsRowWidth() {
+        double sum = 0;
+        int managed = 0;
+        for (Node n : primaryActions.getChildren()) {
+            if (!n.isManaged()) continue;
+            sum += primaryActions.snapSizeX(Math.max(n.minWidth(-1), n.prefWidth(-1)));
+            managed++;
+        }
+        if (managed == 0) return 0;
+        return snappedLeftInset() + snappedRightInset() + primaryActions.snappedLeftInset() + primaryActions.snappedRightInset()
+                + sum + (managed - 1) * primaryActions.snapSpaceX(primaryActions.getHgap());
+    }
+
     public void setAdvancedActions(ButtonBase... buttons) {
         advancedActions.getChildren().setAll(buttons);
         advancedActions.getParent().setVisible(buttons.length > 0);
@@ -133,6 +150,8 @@ public final class DetailsPane extends VBox {
         Label l = new Label(label);
         l.getStyleClass().add("details-field-label");
         if (valueNode instanceof Label vl) vl.getStyleClass().add("details-field-value");
+        // A badge keeps its own width, so the column's right alignment places it with the other values.
+        else GridPane.setFillWidth(valueNode, false);
         fields.add(l, 0, row);
         fields.add(valueNode, 1, row);
         fieldLabels.add(label);

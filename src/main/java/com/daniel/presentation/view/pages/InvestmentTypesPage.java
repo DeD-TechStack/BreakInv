@@ -15,6 +15,7 @@ import com.daniel.presentation.view.components.ColorBadge;
 import com.daniel.presentation.view.components.DetailsPane;
 import com.daniel.presentation.view.components.EmptyState;
 import com.daniel.presentation.view.components.HeaderActions;
+import com.daniel.presentation.view.components.StatLine;
 import com.daniel.presentation.view.components.InvestmentTypeDialog;
 import com.daniel.presentation.view.components.InvestmentTypeDialog.InvestmentTypeData;
 import com.daniel.presentation.view.components.LedgerRecognitionDialog;
@@ -107,6 +108,8 @@ public final class InvestmentTypesPage implements ResponsivePage {
     private double appliedDetailWidth = Double.NaN;
     private double detailTarget = Double.NaN;
     private int detailCorrections;
+    /** No width chosen yet: the next split layout measures the actions row (C04 r2 c). */
+    private boolean defaultDetailWidthPending;
     private TableColumn<InvestmentType, String> valueColRef;
 
     private final ObservableList<InvestmentType> allItems = FXCollections.observableArrayList();
@@ -133,6 +136,8 @@ public final class InvestmentTypesPage implements ResponsivePage {
 
     private final StatStrip strip = new StatStrip(STAT_CASH, STAT_COST, STAT_COUNT);
     private final Label cashStateLabel = new Label();
+    /** C04 r2 (e): the same figures on one line in the title band (medium/wide); narrow keeps the strip. */
+    private final StatLine statLine = new StatLine(strip);
 
     // Header actions
     private final Button addBtn = new Button("Novo ativo", Icons.plus());
@@ -165,6 +170,10 @@ public final class InvestmentTypesPage implements ResponsivePage {
         // ── Header + actions ─────────────────────────────────────────────────
         PageHeader header = new PageHeader("Carteira",
                 "Posições, custo e caixa calculados a partir do histórico de movimentações");
+        // C04 r2 (e): medium/wide, the figures read on one line under the title instead of a band of
+        // their own, so the positions get the height back (narrow keeps the strip, see onBreakpoint).
+        VBox.setMargin(statLine, new Insets(4, 0, 0, 0));
+        header.getChildren().add(statLine);
         addBtn.getStyleClass().add("primary-btn");
         addBtn.setOnAction(e -> onCreate());
         depositBtn.getStyleClass().add("ghost-btn");
@@ -353,6 +362,10 @@ public final class InvestmentTypesPage implements ResponsivePage {
         updateTableColumns();
         resetColumnWidths();
         strip.setColumns(narrow ? 2 : 3);
+        statLine.setVisible(!narrow);
+        statLine.setManaged(!narrow);
+        strip.setVisible(narrow);
+        strip.setManaged(narrow);
         placeDetails();
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
         root.getStyleClass().add(bp.styleClass());
@@ -402,6 +415,8 @@ public final class InvestmentTypesPage implements ResponsivePage {
         boolean present = split.getItems().contains(detailsScroll);
         if (open && !present) {
             split.getItems().add(detailsScroll);
+            // C04 r2 (c): with no width chosen, the next split layout measures what the actions need.
+            defaultDetailWidthPending = !Double.isFinite(chosenDetailWidth);
             setDetailTarget(Double.isFinite(chosenDetailWidth) ? chosenDetailWidth : DEFAULT_DETAIL_WIDTH);
         } else if (!open && present) {
             split.getItems().remove(detailsScroll);
@@ -428,6 +443,21 @@ public final class InvestmentTypesPage implements ResponsivePage {
 
     private double detailMinWidth() {
         return Math.max(DETAIL_MIN_WIDTH, details.minWidth(-1) + detailsScroll.snappedLeftInset() + detailsScroll.snappedRightInset());
+    }
+
+    /**
+     * C04 r2 (c): the detail width that keeps Comprar, Vender and Editar on one row — the actions row
+     * with the pane's insets, the frame and the scrollbar the long detail shows. 0 until measurable.
+     */
+    private double preferredDetailWidth() {
+        double row = details.primaryActionsRowWidth();
+        if (!(row > 0)) return 0;
+        double bar = 8;
+        for (javafx.scene.Node n : detailsScroll.lookupAll(".scroll-bar")) {
+            if (n instanceof ScrollBar sb && sb.getOrientation() == javafx.geometry.Orientation.VERTICAL)
+                bar = Math.max(bar, sb.prefWidth(-1));
+        }
+        return Math.ceil(row + detailsScroll.snappedLeftInset() + detailsScroll.snappedRightInset() + bar + 1);
     }
 
     /**
@@ -460,6 +490,14 @@ public final class InvestmentTypesPage implements ResponsivePage {
         detailsScroll.setMinWidth(detailMin);
         double divider = dividerWidth();
         double detailMax = Math.max(detailMin, size - tableMin - divider);
+        if (defaultDetailWidthPending) {
+            double needed = preferredDetailWidth();
+            if (needed > 0) {
+                detailTarget = Math.max(DEFAULT_DETAIL_WIDTH, needed);
+                detailCorrections = 0;
+                defaultDetailWidthPending = false;
+            }
+        }
         double current = detailPaneWidth();
         if (!Double.isFinite(detailTarget) && current > 0 && (current < detailMin - 0.5 || current > detailMax + 0.5)) {
             detailTarget = current;
@@ -502,6 +540,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         double detailMax = Math.max(detailMin, size - tableMinWidth() - dividerWidth());
         double width = Math.max(detailMin, Math.min(detailMax, wanted));
         setDetailTarget(width);
+        defaultDetailWidthPending = false;
         chosenDetailWidth = width;
         prefs.setCarteiraDetailWidth(width);
         e.consume();
@@ -565,6 +604,8 @@ public final class InvestmentTypesPage implements ResponsivePage {
         });
         nameCol.setPrefWidth(240);
         nameCol.setMinWidth(140);
+        // C04 r2 (d): the identity column takes the spare width. Label and state columns stay at the minimum
+        // their content needs; quantity and cost keep a little room (money up to R$ 999.999.999,99).
 
         catColRef = new TableColumn<>("Categoria");
         TableColumn<InvestmentType, String> catCol = catColRef;
@@ -583,8 +624,9 @@ public final class InvestmentTypesPage implements ResponsivePage {
                 }
             }
         });
-        catCol.setPrefWidth(150);
+        catCol.setPrefWidth(200);
         catCol.setMinWidth(200);
+        catCol.setMaxWidth(200);
 
         liqColRef = new TableColumn<>("Liquidez");
         TableColumn<InvestmentType, String> liqCol = liqColRef;
@@ -605,6 +647,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         });
         liqCol.setPrefWidth(165);
         liqCol.setMinWidth(165);
+        liqCol.setMaxWidth(165);
 
         dateColRef = new TableColumn<>("Data");
         TableColumn<InvestmentType, String> dateCol = dateColRef;
@@ -614,6 +657,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         });
         dateCol.setPrefWidth(110);
         dateCol.setMinWidth(110);
+        dateCol.setMaxWidth(110);
         dateCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> qtyCol = new TableColumn<>("Qtd.");
@@ -622,6 +666,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
                 c.getValue().quantity() == null ? "—" : c.getValue().quantity().toString()));
         qtyCol.setPrefWidth(75);
         qtyCol.setMinWidth(75);
+        qtyCol.setMaxWidth(100);
         qtyCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> valueCol = new TableColumn<>("Custo");
@@ -634,6 +679,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         });
         valueCol.setPrefWidth(130);
         valueCol.setMinWidth(110);
+        valueCol.setMaxWidth(150);
         valueCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> statusCol = new TableColumn<>("Situação");
@@ -649,6 +695,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         });
         statusCol.setPrefWidth(140);
         statusCol.setMinWidth(140);
+        statusCol.setMaxWidth(140);
 
         TableColumn<InvestmentType, Void> actionsCol = new TableColumn<>("");
         actionsCol.getStyleClass().add("actions-col");
