@@ -68,9 +68,23 @@ class ConfiguracoesPageLayoutTest {
     }
 
     @Test
+    void integrationsShareAWorkspaceThatStacksWithoutRecreatingControls() {
+        FxTestSupport.runAndWait(() -> {
+            Node workspace = pageRoot().lookup(".settings-integrations");
+            assertNotNull(workspace, "quotes and reference data should be adjacent at wide widths");
+            var pair = (com.daniel.presentation.view.layout.AdaptivePair) workspace;
+            assertTrue(flatten(pair.first()).contains(field("tokenField")));
+            assertTrue(flatten(pair.second()).contains(field("ratesStrip")));
+            page.onBreakpoint(Breakpoint.WIDE); assertTrue(pair.isSideBySide());
+            page.onBreakpoint(Breakpoint.NARROW); assertFalse(pair.isSideBySide());
+            page.onBreakpoint(Breakpoint.WIDE); assertTrue(pair.isSideBySide());
+        });
+    }
+
+    @Test
     void groupsAreAppearanceIntegrationsData_asPanelsWithSentenceCaseTitles() {
         FxTestSupport.runAndWait(() -> {
-            List<Panel> panels = pageRoot().getChildren().stream().filter(Panel.class::isInstance).map(Panel.class::cast).toList();
+            List<Panel> panels = flatten(pageRoot()).stream().filter(Panel.class::isInstance).map(Panel.class::cast).distinct().toList();
             List<String> titles = panels.stream().map(p -> ((Label) p.lookup(".panel-title")).getText()).toList();
             assertEquals(4, titles.size(), titles.toString());
             assertTrue(titles.get(0).toLowerCase().startsWith("aparência"), titles.toString());
@@ -128,7 +142,9 @@ class ConfiguracoesPageLayoutTest {
             page.onBreakpoint(Breakpoint.NARROW);
             assertEquals(1, rates.columns());
             page.onBreakpoint(Breakpoint.WIDE);
-            assertEquals(3, rates.columns());
+            assertEquals(1, rates.columns(), "reference values stack in the narrower integration column");
+            page.onBreakpoint(Breakpoint.MEDIUM);
+            assertEquals(3, rates.columns(), "full-width integration panel can show three rates");
         });
     }
 }

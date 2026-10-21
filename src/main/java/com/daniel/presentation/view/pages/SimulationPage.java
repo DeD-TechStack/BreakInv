@@ -169,7 +169,7 @@ public final class SimulationPage implements ResponsivePage {
         VBox rentability = buildRentabilityCard();
         VBox stock = buildStockCard();
 
-        calculateBtn.getStyleClass().add("button");
+        calculateBtn.getStyleClass().add("primary-btn");
         calculateBtn.setMaxWidth(Double.MAX_VALUE);
         calculateBtn.setTooltip(new Tooltip("Projeta o resultado com os parâmetros informados (Enter também calcula)"));
         calculateBtn.setOnAction(e -> calculate());
@@ -180,8 +180,17 @@ public final class SimulationPage implements ResponsivePage {
                 month -> "Mês " + month,
                 y -> "R$ " + String.format("%.2f", y).replace('.', ','));
         VBox.setVgrow(projWrapper, Priority.ALWAYS);
-        chartPanel = new Panel("Projeção mês a mês", projWrapper);
-        VBox resultColumn = new VBox(16, resultHero, chartPanel);
+        var noProjection = javafx.beans.binding.Bindings.isEmpty(projectionChart.getData());
+        projWrapper.visibleProperty().bind(noProjection.not());
+        projWrapper.managedProperty().bind(projWrapper.visibleProperty());
+        Label guidance = new Label("A curva aparece após calcular, com valores em reais e período em meses.");
+        guidance.setWrapText(true);
+        guidance.getStyleClass().addAll("text-secondary", "projection-guidance");
+        guidance.visibleProperty().bind(noProjection);
+        guidance.managedProperty().bind(guidance.visibleProperty());
+        chartPanel = new Panel("Resultado da simulação", resultHero, guidance, projWrapper);
+        chartPanel.getStyleClass().add("simulation-result");
+        VBox resultColumn = new VBox(16, chartPanel);
         VBox.setVgrow(chartPanel, Priority.ALWAYS);
 
         workPair = new AdaptivePair(paramsPanel, resultColumn, Breakpoint.MEDIUM, 0.44, 16);

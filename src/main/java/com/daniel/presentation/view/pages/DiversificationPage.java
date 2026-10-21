@@ -104,6 +104,10 @@ public final class DiversificationPage implements ResponsivePage {
     private Panel suggestionsPanel;
     private AdaptivePair controlsPair;
     private AdaptivePair comparisonPair;
+    private final VBox alignedComparison = new VBox(0);
+    private final List<AdaptivePair> categoryRows = new ArrayList<>();
+    private Panel comparisonSummary;
+    private Breakpoint currentBreakpoint = Breakpoint.WIDE;
 
     // Empty state — shown when no investments are registered
     private final VBox noInvestmentsPanel = buildNoInvestmentsPanel();
@@ -140,13 +144,22 @@ public final class DiversificationPage implements ResponsivePage {
         // two small control panels fit from medium width on; two tables only when wide
         controlsPair = new AdaptivePair(calculationPanel, planPanel, Breakpoint.NARROW, 0.42, 16);
         comparisonPair = new AdaptivePair(currentPanel, idealPanel, Breakpoint.MEDIUM, 0.5, 16);
+        comparisonSummary = new Panel("Atual × alvo", alignedComparison)
+                .subtitle("Cada categoria reúne as duas bases; as barras representam percentuais, não dinheiro disponível.");
+        comparisonSummary.setVisible(false);
+        comparisonSummary.setManaged(false);
+        TitledPane detailedTables = new TitledPane("Ver tabelas detalhadas", comparisonPair);
+        detailedTables.setAnimated(false);
+        detailedTables.setExpanded(false);
+        detailedTables.getStyleClass().add("allocation-tables");
 
         distributionBasisLabel.getStyleClass().add("text-secondary");
         distributionBasisLabel.setWrapText(true);
         distributionBasisLabel.setVisible(false);
         distributionBasisLabel.setManaged(false);
 
-        root.getChildren().addAll(header, hero, noInvestmentsPanel, controlsPair, distributionBasisLabel, comparisonPair, suggestionsPanel);
+        root.getChildren().addAll(header, hero, noInvestmentsPanel, controlsPair, distributionBasisLabel,
+                comparisonSummary, suggestionsPanel, detailedTables);
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
@@ -166,8 +179,10 @@ public final class DiversificationPage implements ResponsivePage {
 
     @Override
     public void onBreakpoint(Breakpoint bp) {
+        currentBreakpoint = bp;
         controlsPair.onBreakpoint(bp);
         comparisonPair.onBreakpoint(bp);
+        categoryRows.forEach(row -> row.onBreakpoint(bp));
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
         root.getStyleClass().add(bp.styleClass());
     }
@@ -726,6 +741,10 @@ public final class DiversificationPage implements ResponsivePage {
                     currentTable.getItems().clear();
                     idealTable.getItems().clear();
                     suggestionsTable.getItems().clear();
+                    alignedComparison.getChildren().clear();
+                    categoryRows.clear();
+                    comparisonSummary.setVisible(false);
+                    comparisonSummary.setManaged(false);
                     noInvestmentsPanel.setVisible(true);
                     noInvestmentsPanel.setManaged(true);
                     return;
@@ -815,6 +834,7 @@ public final class DiversificationPage implements ResponsivePage {
             ));
         }
         idealTable.setItems(idealRows);
+        updateAlignedComparison(currentData, idealRows, profile);
 
         var suggestionRows = FXCollections.<SuggestionRow>observableArrayList();
         for (var sug : suggestions) {
@@ -832,6 +852,63 @@ public final class DiversificationPage implements ResponsivePage {
 
         long totalAporte = suggestions.stream().mapToLong(s -> s.aporteNecessarioCents()).sum();
         totalAporteLabel.setText(totalAporte > 0 ? "Aporte total sugerido: " + daily.brl(totalAporte) : "");
+    }
+
+    private void updateAlignedComparison(DiversificationData currentData, List<AllocationRow> idealRows,
+                                         Map<CategoryEnum, Double> profile) {
+        alignedComparison.getChildren().clear();
+        categoryRows.clear();
+        for (AllocationRow ideal : idealRows) {
+            CategoryEnum category = ideal.getCategory();
+            double currentPercentage = currentData.allocations().stream()
+                    .filter(a -> a.category() == category).mapToDouble(CategoryAllocation::percentage).findFirst().orElse(0);
+            Label name = new Label(category.getDisplayName());
+            name.getStyleClass().add("text-strong");
+            name.setWrapText(true);
+            name.setMinWidth(0);
+            VBox current = allocationMetric("Atual · posições",
+                    daily.brl(currentData.valuesCents().getOrDefault(category, 0L)),
+                    String.format("%.1f%%", currentPercentage), currentPercentage / 100.0, "allocation-current");
+            VBox target = allocationMetric("Alvo · base ideal", ideal.valueProperty().get(),
+                    ideal.percentageProperty().get(), profile.getOrDefault(category, 0.0), "allocation-target");
+            GridPane metrics = new GridPane();
+            metrics.setHgap(16);
+            metrics.setMinWidth(0);
+            for (int i = 0; i < 2; i++) {
+                ColumnConstraints col = new ColumnConstraints();
+                col.setPercentWidth(50);
+                col.setMinWidth(0);
+                metrics.getColumnConstraints().add(col);
+            }
+            metrics.add(current, 0, 0);
+            metrics.add(target, 1, 0);
+            AdaptivePair row = new AdaptivePair(name, metrics, Breakpoint.MEDIUM, 0.27, 12);
+            row.setUserData(category);
+            row.getStyleClass().add("allocation-comparison-row");
+            row.onBreakpoint(currentBreakpoint);
+            categoryRows.add(row);
+            alignedComparison.getChildren().add(row);
+        }
+        comparisonSummary.setVisible(true);
+        comparisonSummary.setManaged(true);
+    }
+
+    private VBox allocationMetric(String caption, String value, String percentage, double fraction, String style) {
+        Label title = new Label(caption);
+        title.getStyleClass().add("text-helper");
+        title.setWrapText(true);
+        Label amount = new Label(value);
+        amount.getStyleClass().addAll("text-strong", "allocation-value");
+        amount.setWrapText(true);
+        Label share = new Label(percentage);
+        share.getStyleClass().add("text-secondary");
+        ProgressBar bar = new ProgressBar(Math.max(0, Math.min(1, fraction)));
+        bar.setMaxWidth(Double.MAX_VALUE);
+        bar.setAccessibleText(caption + ": " + percentage);
+        VBox metric = new VBox(3, title, amount, bar, share);
+        metric.setMinWidth(0);
+        metric.getStyleClass().add(style);
+        return metric;
     }
 
     private long getTargetPatrimony(long currentPatrimony) {

@@ -199,7 +199,7 @@ public final class RankingPage implements ResponsivePage {
         });
         details.hide();
 
-        contentArea = new VBox(16, dayPanel, details, returnPanel, maPanel);
+        contentArea = new VBox(16, dayPanel, returnPanel, maPanel);
         hide(contentArea);
 
         root.getChildren().addAll(header, errorBanner, loadingBox, emptyState, contentArea);
@@ -268,7 +268,7 @@ public final class RankingPage implements ResponsivePage {
         barEmptyLabel.setText("Aguardando cotações para montar o gráfico.");
         show(barEmptyLabel);
 
-        return new Panel("Variação do dia", listsPair, chartHint, barEmptyLabel, barChart)
+        return new Panel("Variação do dia", listsPair, details, chartHint, barEmptyLabel, barChart)
                 .subtitle("Variação da cotação em relação ao fechamento anterior (BRAPI, atraso de 15–30 min). "
                         + "É a variação do preço, não é a rentabilidade da sua posição.")
                 .actions(freshnessChip);
@@ -315,7 +315,11 @@ public final class RankingPage implements ResponsivePage {
         table.getColumns().add(chgCol);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         table.setFixedCellSize(42);
-        table.setPrefHeight(42 * 5 + 30);
+        table.getStyleClass().addAll("table-analytic", "table-dense");
+        table.prefHeightProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
+                () -> table.getItems().isEmpty() ? 128.0 : 44.0 + 42 * Math.min(5, table.getItems().size()), table.itemsProperty()));
+        table.setMinHeight(Region.USE_PREF_SIZE);
+        table.setMaxHeight(Region.USE_PREF_SIZE);
         table.setPlaceholder(table == gainersTable ? gainersPlaceholder : losersPlaceholder);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.setAccessibleText(title);

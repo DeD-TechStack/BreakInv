@@ -982,6 +982,19 @@
     -fx-padding: 11 14;
 }
 
+.asset-search-workspace .empty-state { -fx-padding: 24 8; }
+.asset-summary .hero-value { -fx-background-color: transparent; -fx-padding: 0; }
+
+/* Category comparison: aligned current/target figures, separate financial bases. */
+.allocation-comparison-row {
+    -fx-padding: 12 0;
+    -fx-border-color: transparent transparent -color-border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.allocation-current .progress-bar .bar { -fx-background-color: -color-accent; }
+.allocation-target .progress-bar .bar { -fx-background-color: -color-info; }
+.allocation-comparison-row .progress-bar { -fx-pref-height: 5px; }
+
 /* Suggestion action cells */
 .suggestion-invest {
     -fx-text-fill: -color-success;

@@ -66,6 +66,22 @@ class RankingPageLayoutTest {
     }
 
     @Test
+    void shortListsUseTheirRowsAndSelectionDetailStaysBeforeTheChart() {
+        FxTestSupport.runAndWait(() -> {
+            page.renderStocks(stocks());
+            TableView<?> gainers = field("gainersTable");
+            assertTrue(gainers.getPrefHeight() <= 100, "one quote must not reserve five rows of empty table");
+            Panel day = field("dayPanel");
+            Node detail = field("details");
+            Node chart = field("barChart");
+            assertTrue(day.body().getChildren().contains(detail), "selection detail belongs to the day workspace");
+            assertTrue(day.body().getChildren().indexOf(detail) < day.body().getChildren().indexOf(chart));
+            gainers.getSelectionModel().select(0);
+            assertTrue(detail.isVisible());
+        });
+    }
+
+    @Test
     void metricAndPeriodAreExplicit_andRowsAreComparable() throws Exception {
         FxTestSupport.runAndWait(() -> {
             Panel dayPanel = field("dayPanel");

@@ -136,6 +136,36 @@ class DiversificationPageReadabilityTest {
     }
 
     @Test
+    void categoryComparisonKeepsCurrentAndTargetAdjacentWithTheirOwnBases() {
+        FxTestSupport.runAndWait(() -> {
+            page.onShow(); drain();
+            layOutWide();
+            var rows = view.lookupAll(".allocation-comparison-row");
+            assertFalse(rows.isEmpty(), "current and target need a shared category row, not separate tables");
+            Node stock = rows.stream().filter(n -> n.getUserData() == CategoryEnum.ACOES).findFirst().orElseThrow();
+            var labels = stock.lookupAll(".label").stream().map(n -> ((Label)n).getText().replace('\u00a0', ' ')).toList();
+            assertTrue(labels.contains("Atual · posições"), labels.toString());
+            assertTrue(labels.contains("Alvo · base ideal"), labels.toString());
+            assertTrue(labels.contains("R$ 150,00"), labels.toString());
+            assertEquals(2, stock.lookupAll(".progress-bar").size());
+            Label basis = field("distributionBasisLabel");
+            assertTrue(basis.isVisible() && basis.getText().contains("sem caixa"));
+            for (int width : new int[]{1060, 380, 740, 1060}) {
+                page.onBreakpoint(width < 600 ? Breakpoint.NARROW : width < 900 ? Breakpoint.MEDIUM : Breakpoint.WIDE);
+                ((Region)view).resize(width, 800);
+                for (int i=0;i<4;i++) { view.applyCss(); view.layout(); }
+                for (Node n : view.lookupAll(".allocation-comparison-row")) {
+                    assertTrue(n.getLayoutBounds().getWidth() <= width, "category row overflows at " + width);
+                    for (Node value : n.lookupAll(".allocation-value")) {
+                        Label label = (Label)value;
+                        assertEquals(label.getText(), rendered(label), "numeric value clipped at " + width);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     void longCategoryNames_areReadableInFull_inTheComparisonTables() throws Exception {
         FxTestSupport.runAndWait(() -> {
             page.onShow();

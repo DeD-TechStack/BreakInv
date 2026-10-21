@@ -82,6 +82,26 @@ class ReportsPageLayoutTest {
     }
 
     @Test
+    void filteredListReportsItsScopeAndDoesNotReserveEmptyRows() {
+        FxTestSupport.runAndWait(() -> {
+            page.showEntries(sample(), 0, 0);
+            Label count = (Label) pageRoot().lookup(".statement-count");
+            assertNotNull(count);
+            assertEquals("5 de 5 lançamentos", count.getText());
+            select(field("filterGroup"), "Caixa");
+            assertEquals("1 de 5 lançamentos", count.getText());
+            TableView<?> table = field("table");
+            assertTrue(table.getPrefHeight() <= 100, "one movement should not reserve a full empty table");
+            Node details = field("details");
+            assertSame(table.getParent(), details.getParent(), "detail stays within the statement workspace");
+            page.showLoading();
+            assertEquals("Carregando…", count.getText());
+            page.showFailure("Falha sintética");
+            assertEquals("Indisponível", count.getText());
+        });
+    }
+
+    @Test
     void monthNavigationLivesInTheHeader_withNamedButtons() throws Exception {
         FxTestSupport.runAndWait(() -> {
             HeaderActions header = (HeaderActions) pageRoot().getChildren().get(0);

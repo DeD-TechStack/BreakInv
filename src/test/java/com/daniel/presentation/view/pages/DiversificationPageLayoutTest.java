@@ -67,6 +67,7 @@ class DiversificationPageLayoutTest {
         out.add(n);
         if (n instanceof Parent p) for (Node c : p.getChildrenUnmodifiable()) out.addAll(flatten(c));
         if (n instanceof ScrollPane sp && sp.getContent() != null) out.addAll(flatten(sp.getContent()));
+        if (n instanceof TitledPane tp && tp.getContent() != null) out.addAll(flatten(tp.getContent()));
         return out;
     }
 

@@ -8,6 +8,7 @@ import com.daniel.presentation.view.components.Panel;
 import com.daniel.presentation.view.components.StatStrip;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.components.WelcomeOverlay;
+import com.daniel.presentation.view.layout.AdaptivePair;
 import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.UiPreferences;
 
@@ -40,6 +41,7 @@ public final class ConfiguracoesPage implements ResponsivePage {
     private final AppSettingsRepository settings = new AppSettingsRepository();
     private final ScrollPane scrollPane = new ScrollPane();
     private final VBox root = new VBox(16);
+    private final AdaptivePair integrationsPair;
 
     public static final String SETTINGS_KEY_BRAPI_DELAY = "brapi_refresh_delay_minutes";
 
@@ -79,7 +81,9 @@ public final class ConfiguracoesPage implements ResponsivePage {
         PageHeader header = new PageHeader("Configurações",
                 "Aparência, integrações e dados do aplicativo");
 
-        root.getChildren().addAll(header, buildAppearanceSection(), buildBrapiSection(), buildBcbSection(), buildAboutSection());
+        integrationsPair = new AdaptivePair(buildBrapiSection(), buildBcbSection(), Breakpoint.MEDIUM, 0.60, 20);
+        integrationsPair.getStyleClass().add("settings-integrations");
+        root.getChildren().addAll(header, buildAppearanceSection(), integrationsPair, buildAboutSection());
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
@@ -100,7 +104,8 @@ public final class ConfiguracoesPage implements ResponsivePage {
 
     @Override
     public void onBreakpoint(Breakpoint bp) {
-        ratesStrip.setColumns(bp == Breakpoint.NARROW ? 1 : 3);
+        integrationsPair.onBreakpoint(bp);
+        ratesStrip.setColumns(bp == Breakpoint.MEDIUM ? 3 : 1);
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
         root.getStyleClass().add(bp.styleClass());
     }
@@ -216,6 +221,9 @@ public final class ConfiguracoesPage implements ResponsivePage {
 
         tokenStatusLabel.setWrapText(true);
         tokenStatusLabel.setMaxWidth(Double.MAX_VALUE);
+        autoUpdateCheckbox.setWrapText(true);
+        autoUpdateCheckbox.setMinWidth(0);
+        autoUpdateCheckbox.setMaxWidth(Double.MAX_VALUE);
         updateTokenStatus(tokenField.getText());
 
         tokenField.textProperty().addListener((obs, old, newVal) -> updateTokenStatus(newVal));
@@ -290,7 +298,9 @@ public final class ConfiguracoesPage implements ResponsivePage {
         updateRatesBtn.setTooltip(new Tooltip("Consulta as taxas oficiais no Banco Central e guarda neste computador"));
         updateRatesBtn.setOnAction(e -> fetchBcbRates(updateRatesBtn));
 
-        HBox actions = new HBox(12, updateRatesBtn, bcbLastUpdateLabel);
+        FlowPane actions = new FlowPane(12, 8, updateRatesBtn, bcbLastUpdateLabel);
+        bcbLastUpdateLabel.setWrapText(true);
+        bcbLastUpdateLabel.maxWidthProperty().bind(actions.widthProperty());
         actions.setAlignment(Pos.CENTER_LEFT);
 
         return new Panel("Taxas de referência (Banco Central)", ratesStrip, actions)

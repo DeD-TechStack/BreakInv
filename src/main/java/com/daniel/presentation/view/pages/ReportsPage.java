@@ -64,6 +64,7 @@ public final class ReportsPage implements ResponsivePage {
 
     private final TableView<ExtractRow> table = new TableView<>();
     private final DetailsPane details = new DetailsPane();
+    private final Label entryCount = new Label("0 de 0 lançamentos");
     private ExtractRow detailedRow;
     private TableColumn<ExtractRow, String> numberColRef;
     private TableColumn<ExtractRow, String> descColRef;
@@ -153,7 +154,9 @@ public final class ReportsPage implements ResponsivePage {
         legendLabel.getStyleClass().add("text-helper");
         legendLabel.setWrapText(true);
 
-        Panel listPanel = new Panel("Lançamentos", filterBar, loadingLabel, errorBanner, table, legendLabel);
+        entryCount.getStyleClass().addAll("text-helper", "statement-count");
+        Panel listPanel = new Panel("Lançamentos", filterBar, loadingLabel, errorBanner, details, table, legendLabel)
+                .actions(entryCount);
         VBox.setVgrow(listPanel, Priority.ALWAYS);
 
         details.setFocusTraversable(true);
@@ -161,7 +164,7 @@ public final class ReportsPage implements ResponsivePage {
             detailedRow = null;
             table.requestFocus();
         });
-        root.getChildren().addAll(headerRow, strip, details, listPanel);
+        root.getChildren().addAll(headerRow, strip, listPanel);
 
         scrollPane.setContent(root);
         scrollPane.setFitToWidth(true);
@@ -241,6 +244,8 @@ public final class ReportsPage implements ResponsivePage {
         Flow f = t == null ? Flow.ALL : (Flow) t.getUserData();
         ExtractRow selected = table.getSelectionModel().getSelectedItem();
         table.setItems(FXCollections.observableArrayList(allRows.stream().filter(f.keep).toList()));
+        entryCount.setText(table.getItems().size() + " de " + allRows.size() + " lançamentos");
+        table.setPrefHeight(table.getItems().isEmpty() ? 240 : 44 + 42 * Math.min(10, table.getItems().size()));
         if (selected != null && table.getItems().contains(selected)) table.getSelectionModel().select(selected);
         if (detailedRow != null && !table.getItems().contains(detailedRow)) {
             detailedRow = null;
@@ -252,6 +257,9 @@ public final class ReportsPage implements ResponsivePage {
         // Fixed 42px rows need the dense cell insets, including room for action labels.
         table.getStyleClass().addAll("table-analytic", "table-dense");
         table.setFixedCellSize(42);
+        table.setMinHeight(Region.USE_PREF_SIZE);
+        table.setMaxHeight(Region.USE_PREF_SIZE);
+        table.setPrefHeight(240);
 
         TableColumn<ExtractRow, String> dateCol = new TableColumn<>("Data");
         dateColRef = dateCol;
@@ -367,7 +375,7 @@ public final class ReportsPage implements ResponsivePage {
         });
 
         table.setPlaceholder(EmptyState.of("📋", "Nenhum lançamento neste período",
-                "Aportes, compras, vendas, ajustes e estornos registrados neste mês aparecem aqui."));
+                "Aportes, compras, vendas, ajustes e estornos registrados neste mês aparecem aqui.", true));
 
         table.getColumns().add(dateCol);
         table.getColumns().add(numberCol);
@@ -419,6 +427,7 @@ public final class ReportsPage implements ResponsivePage {
     void showLoading() {
         allRows = List.of();
         applyFilter();
+        entryCount.setText("Carregando…");
         hide(errorBanner);
         show(loadingLabel);
         for (String s : List.of(STAT_DEPOSITS, STAT_BUYS, STAT_GAIN, STAT_WEALTH)) strip.set(s, "—", "muted", "carregando…");
@@ -428,6 +437,7 @@ public final class ReportsPage implements ResponsivePage {
     void showFailure(String message) {
         allRows = List.of();
         applyFilter();
+        entryCount.setText("Indisponível");
         hide(loadingLabel);
         errorBanner.setText(message == null ? "Não foi possível carregar os lançamentos." : message);
         show(errorBanner);

@@ -12,6 +12,7 @@ import com.daniel.presentation.view.components.EmptyState;
 import com.daniel.presentation.view.components.HeroValue;
 import com.daniel.presentation.view.components.Panel;
 import com.daniel.presentation.view.components.StatStrip;
+import com.daniel.presentation.view.layout.AdaptivePair;
 import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.ChartAxisUtils;
 import com.daniel.presentation.view.util.ChartCrosshair;
@@ -116,6 +117,7 @@ public final class AssetAnalysisPage implements ResponsivePage {
     private final NumberAxis yAxis   = new NumberAxis();
     private final AreaChart<Number, Number> areaChart = new AreaChart<>(xAxis, yAxis);
     private final Panel chartPanel;
+    private final AdaptivePair summaryPair;
     private final FlowPane periodBar = new FlowPane(6, 6);
     private final ToggleGroup periodGroup = new ToggleGroup();
     private final Label chartEmptyLabel = new Label("Sem dados para este período");
@@ -162,10 +164,15 @@ public final class AssetAnalysisPage implements ResponsivePage {
         hide(noResultLabel);
 
         chartPanel = buildChartPanel();
-        resultBox.getChildren().addAll(hero, dayStrip, yearStrip, chartPanel);
+        summaryPair = new AdaptivePair(hero, dayStrip, Breakpoint.MEDIUM, 0.56, 24);
+        VBox summary = new VBox(summaryPair);
+        summary.getStyleClass().addAll("portfolio-summary", "asset-summary");
+        resultBox.getChildren().addAll(summary, chartPanel, yearStrip);
         hide(resultBox);
 
-        root.getChildren().addAll(header, searchRow, errorBanner, loadingBox, noResultLabel, emptyState, resultBox);
+        Panel searchWorkspace = new Panel("Consultar ativo", searchRow, errorBanner, loadingBox, noResultLabel, emptyState);
+        searchWorkspace.getStyleClass().add("asset-search-workspace");
+        root.getChildren().addAll(header, searchWorkspace, resultBox);
 
         // Resize debounce: recomputes the tick density when the width changes by more than 50 px
         resizeDebounce = new Timeline(new KeyFrame(javafx.util.Duration.millis(150), ev -> {
@@ -200,7 +207,8 @@ public final class AssetAnalysisPage implements ResponsivePage {
     @Override
     public void onBreakpoint(Breakpoint bp) {
         boolean narrow = bp == Breakpoint.NARROW;
-        dayStrip.setColumns(narrow ? 2 : 4);
+        dayStrip.setColumns(2);
+        summaryPair.onBreakpoint(bp);
         yearStrip.setColumns(narrow ? 2 : bp == Breakpoint.MEDIUM ? 3 : 5);
         // period toggles sit in the panel header when there is room, under the title otherwise
         chartPanel.body().getChildren().remove(periodBar);

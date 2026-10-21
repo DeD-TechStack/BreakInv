@@ -85,6 +85,25 @@ class SimulationPageLayoutTest {
     }
 
     @Test
+    void uncalculatedResultHasGuidanceInsteadOfAnEmptyAxisAndSharesOneSurface() {
+        FxTestSupport.runAndWait(() -> {
+            LineChart<?, ?> chart = field("projectionChart");
+            assertFalse(chart.getParent().isVisible(), "no invented empty chart scale before calculation");
+            Panel panel = field("chartPanel");
+            HeroValue hero = field("resultHero");
+            assertTrue(flatten(panel).contains(hero), "summary and projection form one result surface");
+            Node guidance = panel.lookup(".projection-guidance");
+            assertNotNull(guidance);
+            assertTrue(guidance.isVisible() && guidance.isManaged());
+            ((TextField)field("initialValueField")).setText("10000");
+            ((TextField)field("fixedRateField")).setText("12,5");
+            ((Button)field("calculateBtn")).fire();
+            assertTrue(chart.getParent().isVisible());
+            assertFalse(guidance.isVisible() || guidance.isManaged());
+        });
+    }
+
+    @Test
     void parametersAndResultAreNeighbours_sideBySideWhenWide_stackedOtherwise() throws Exception {
         FxTestSupport.runAndWait(() -> {
             AdaptivePair pair = field("workPair");

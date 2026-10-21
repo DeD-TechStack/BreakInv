@@ -71,6 +71,25 @@ class AssetAnalysisPageLayoutTest {
     }
 
     @Test
+    void searchStatesAreIntegratedAndPriceSharesTheDaySummaryBeforeTheChart() {
+        FxTestSupport.runAndWait(() -> {
+            Node search = pageRoot().lookup(".asset-search-workspace");
+            assertNotNull(search, "search and its feedback belong to one workspace");
+            assertTrue(flatten(search).contains(field("tickerCombo")));
+            assertTrue(flatten(search).contains(field("errorBanner")));
+            assertTrue(flatten(search).contains(field("emptyState")));
+            page.renderQuote(petr());
+            Node summary = pageRoot().lookup(".asset-summary");
+            assertNotNull(summary);
+            assertTrue(flatten(summary).contains(field("hero")));
+            assertTrue(flatten(summary).contains(field("dayStrip")));
+            Pane result = field("resultBox");
+            assertTrue(result.getChildren().indexOf(field("chartPanel")) < result.getChildren().indexOf(field("yearStrip")),
+                    "history is the workspace; year indicators are secondary");
+        });
+    }
+
+    @Test
     void searchIsAboveEverything_andHasAnAccessibleName() throws Exception {
         FxTestSupport.runAndWait(() -> {
             ComboBox<?> ticker = field("tickerCombo");
@@ -155,7 +174,7 @@ class AssetAnalysisPageLayoutTest {
             StatStrip day = field("dayStrip");
             assertEquals(2, day.columns());
             page.onBreakpoint(Breakpoint.WIDE);
-            assertEquals(4, day.columns());
+            assertEquals(2, day.columns(), "day metrics form a 2×2 strip beside the quote");
         });
     }
 
