@@ -43,6 +43,38 @@ public final class ChartAxisUtils {
 
     private ChartAxisUtils() {}
 
+    /**
+     * R3-08: a value axis that reads — a step of 1, 2, 2.5 or 5 × 10ⁿ from a multiple of that step, a margin
+     * around the data and three to nine intervals (±5 % with a sixth of the range as the step gave true but
+     * unreadable ticks: 34.704 / 33.856 / …). Non-negative data never gets a negative bound.
+     */
+    public static void roundValueAxis(NumberAxis axis, double min, double max) {
+        double lo = Math.min(min, max), hi = Math.max(min, max);
+        double span = hi - lo;
+        double pad = span > 0 ? span * 0.05 : (hi != 0 ? Math.abs(hi) * 0.02 : 1);
+        double from = lo - pad, to = hi + pad;
+        if (lo >= 0) from = Math.max(0, from); // prices: no negative bound, and the steps are chosen for that range
+        double raw = (to - from) / 6;
+        double magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+        double unit = magnitude * 10;
+        for (double m : new double[]{1, 2, 2.5, 5}) {
+            if (magnitude * m >= raw * (1 - 1e-12)) { unit = magnitude * m; break; }
+        }
+        double lower = clean(Math.floor(from / unit) * unit, unit);
+        double upper = clean(Math.ceil(to / unit) * unit, unit);
+        if (lo >= 0 && lower < 0) lower = 0;
+        axis.setAutoRanging(false);
+        axis.setLowerBound(lower);
+        axis.setUpperBound(upper);
+        axis.setTickUnit(unit);
+    }
+
+    /** Drops the floating residue of a multiplication (29.000000000000004) at the step's precision. */
+    private static double clean(double value, double unit) {
+        int decimals = Math.max(0, (int) Math.ceil(-Math.log10(unit)) + 1);
+        return java.math.BigDecimal.valueOf(value).setScale(decimals, java.math.RoundingMode.HALF_UP).doubleValue();
+    }
+
     // ── CategoryAxis (BarChart, etc.) ─────────────────────────────────────────
 
     /**
@@ -92,23 +124,6 @@ public final class ChartAxisUtils {
     }
 
     // ── NumberAxis temporal (AreaChart / LineChart com datas) ─────────────────
-
-    /**
-     * Oculta labels, marcas e ticks menores do eixo X de um gráfico temporal.
-     *
-     * <p>Deve ser chamado após {@link #installTemporalAxis} somente em gráficos
-     * linha/área temporais onde o hover/crosshair é o mecanismo principal de leitura.
-     * <strong>Não chamar em BarChart nem em gráficos com CategoryAxis.</strong></p>
-     *
-     * @param xAxis eixo temporal a silenciar
-     */
-    public static void hideTemporalAxisLabels(NumberAxis xAxis) {
-        xAxis.setTickLabelsVisible(false);
-        xAxis.setTickMarkVisible(false);
-        xAxis.setMinorTickVisible(false);
-    }
-
-
 
     /**
      * Configura um {@link NumberAxis} para uso temporal e instala um listener de

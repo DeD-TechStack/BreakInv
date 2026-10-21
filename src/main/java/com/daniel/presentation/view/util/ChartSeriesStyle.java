@@ -12,14 +12,14 @@ import javafx.scene.Node;
  */
 public final class ChartSeriesStyle {
 
-    private static final String COLOR_ACCENT  = "#22c55e";
+    private static final String COLOR_ACCENT  = "#39cf8b";
     private static final String COLOR_MUTED   = "rgba(255,255,255,0.85)";
     private static final String COLOR_WARNING = "#f59e0b";
-    private static final String COLOR_INFO    = "#3b82f6";
+    private static final String COLOR_INFO    = "#8abfff";
 
     private ChartSeriesStyle() {}
 
-    /** Green accent line (#22c55e). Matches -color-accent design token. */
+    /** Green accent line (#39cf8b). Matches the -color-accent design token (E-V3). */
     public static void accent(Node node, double width) {
         apply(node, COLOR_ACCENT, width, null);
     }
@@ -39,7 +39,7 @@ public final class ChartSeriesStyle {
         apply(node, COLOR_WARNING, width, "8 4");
     }
 
-    /** Blue info line (#3b82f6). */
+    /** Blue info line (#8abfff). Matches the -color-info design token (E-V3). */
     public static void info(Node node, double width) {
         apply(node, COLOR_INFO, width, null);
     }

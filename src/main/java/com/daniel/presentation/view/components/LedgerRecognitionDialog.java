@@ -140,6 +140,7 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
             Label flag = new Label("Atenção: " + proposal.note() + ". O saldo ficará marcado como pendente de revisão até você confirmá-lo.");
             flag.getStyleClass().add("warning-banner");
             flag.setWrapText(true);
+            flag.setMaxWidth(Double.MAX_VALUE); // a banner spans the form like the fields (E-V2)
             content.getChildren().add(flag);
         } else if (proposal != null && proposal.note() != null) {
             Label n = new Label("Origem: " + proposal.note());
@@ -168,6 +169,7 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
 
         errorLabel.getStyleClass().add("warning-banner");
         errorLabel.setWrapText(true);
+        errorLabel.setMaxWidth(Double.MAX_VALUE);
         errorLabel.setVisible(false);
         errorLabel.setManaged(false);
         busy.setMaxSize(18, 18);
@@ -212,7 +214,7 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
     }
 
     private void fail(String message, Control focus) {
-        errorLabel.setText(message);
+        errorLabel.setText(MovementDialog.sentence(message));
         errorLabel.setVisible(true);
         errorLabel.setManaged(true);
         if (focus != null) focus.requestFocus();

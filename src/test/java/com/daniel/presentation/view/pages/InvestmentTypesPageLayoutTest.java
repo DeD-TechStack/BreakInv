@@ -217,11 +217,17 @@ class InvestmentTypesPageLayoutTest {
             assertTrue(flatten(workspace).contains(field("table")));
             Label count = (Label) flatten(workspace).stream().filter(n -> n.getStyleClass().contains("position-count"))
                     .findFirst().orElseThrow();
-            assertEquals("1 de 1 ativos", count.getText());
+            // R2-15: the noun agrees with the total, as the Extrato's "1 de 1 lançamento"
+            assertEquals("1 de 1 ativo", count.getText());
             ((TextField) field("searchField")).setText("inexistente");
-            assertEquals("0 de 1 ativos", count.getText());
+            assertEquals("0 de 1 ativo", count.getText());
             ((TextField) field("searchField")).clear();
-            assertEquals("1 de 1 ativos", count.getText());
+            assertEquals("1 de 1 ativo", count.getText());
+            InvestmentType second = new InvestmentType(2, "Tesouro Prefixado 2029", "RENDA_FIXA", "ALTA",
+                    java.time.LocalDate.of(2026, 7, 1), new java.math.BigDecimal("12.0"), new java.math.BigDecimal("500.00"),
+                    "PREFIXADO", null, null, null, null, null, null);
+            items.add(second);
+            assertEquals("2 de 2 ativos", count.getText());
         });
     }
 
@@ -252,6 +258,61 @@ class InvestmentTypesPageLayoutTest {
             search.clear();
             assertEquals(1, table.getItems().size());
             assertTrue(table.prefHeight(-1) <= 120);
+        });
+    }
+
+    @Test
+    void populatedReferenceWidthKeepsTickerAndCategoryTextUnabridged() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            TableView<?> table = field("table");
+            InvestmentType item = new InvestmentType(7, "Nome sintético de ativo muito longo para pressionar a identidade",
+                    "FUNDOS", "ALTA", LocalDate.of(2026, 10, 15), null, new BigDecimal("120.00"),
+                    "ACAO", null, null, "FICT11", new BigDecimal("20.00"), 6, null);
+            items.setAll(java.util.Collections.nCopies(75, item));
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            ((javafx.scene.layout.Region) view).resize(1060, 800);
+            page.onBreakpoint(Breakpoint.WIDE);
+            for (int pass = 0; pass < 8; pass++) { view.applyCss(); view.layout(); }
+            var labels = table.lookupAll(".label").stream().filter(Label.class::isInstance).map(Label.class::cast)
+                    .filter(l -> l.isVisible() && ("FICT11".equals(l.getText()) || "Fundos de Investimento".equals(l.getText()))).toList();
+            assertTrue(labels.size() >= 2);
+            for (Label label : labels) {
+                var rendered = label.lookupAll(".text").stream().filter(javafx.scene.text.Text.class::isInstance)
+                        .map(javafx.scene.text.Text.class::cast).map(javafx.scene.text.Text::getText).toList();
+                assertTrue(rendered.contains(label.getText()), "critical identity text truncated: " + label.getText() + " -> " + rendered);
+                assertTrue(label.getWidth() + 1 >= label.prefWidth(-1), "label lacks measured space: " + label.getText());
+            }
+        });
+    }
+
+    /**
+     * r1 populated (75 assets): back at 1280×800 after 600 and 960 the table came back with other
+     * columns than on the first wide pass (Ativo 242→220, Custo 131→110, Data 112→133, Qtd 76→101):
+     * the constrained policy redistributed the widths left by the narrow passes. The same width
+     * gives the same columns, whatever came before (P5 / J1 return to wide).
+     */
+    @Test
+    void returningToWideRestoresTheFirstWideColumns() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            TableView<InvestmentType> table = field("table");
+            items.setAll(java.util.Collections.nCopies(75, sample()));
+            var scene = new javafx.scene.Scene(view, 1060, 900);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            List<String> first = null;
+            List<String> problems = new java.util.ArrayList<>();
+            for (double width : new double[]{1060, 544, 740, 1060, 380, 1060}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                ((javafx.scene.layout.Region) view).resize(width, 900);
+                for (int pass = 0; pass < 8; pass++) { view.applyCss(); view.layout(); }
+                List<String> cols = table.getColumns().stream().filter(TableColumn::isVisible)
+                        .map(c -> c.getText() + "=" + Math.round(c.getWidth())).toList();
+                if (first == null) first = cols;
+                else if (width == 1060 && !cols.equals(first)) problems.add("back to wide: " + cols + " vs first " + first);
+            }
+            assertEquals(List.of(), problems);
         });
     }
 
@@ -324,6 +385,105 @@ class InvestmentTypesPageLayoutTest {
                 assertTrue(emptyBounds.getMaxY() <= tableBounds.getMaxY() + 1,
                         "empty state spills below table at " + width + ": " + emptyBounds + " / " + tableBounds);
             }
+        });
+    }
+
+    /** E1 residual: the no-result placeholder is contained like the empty one and its hint is never cut. */
+    @Test
+    void noSearchResultPlaceholderStaysInsideTheTableWithItsTextWhole() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(sample());
+            TableView<InvestmentType> table = field("table");
+            TextField search = field("searchField");
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            search.setText("zzz sem resultado");
+            List<String> problems = new ArrayList<>();
+            for (double width : new double[]{1060, 544, 380, 740, 1060}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                ((javafx.scene.layout.Region) view).resize(width, 800);
+                for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+                Node placeholder = table.getPlaceholder();
+                List<Label> texts = placeholder.lookupAll(".label").stream().filter(Label.class::isInstance).map(Label.class::cast).toList();
+                if (texts.stream().noneMatch(l -> l.getText().startsWith("Nenhum resultado"))) problems.add(width + ": not the no-result state");
+                var headerBounds = table.lookup(".column-header-background").localToScene(table.lookup(".column-header-background").getLayoutBounds());
+                var emptyBounds = placeholder.localToScene(placeholder.getLayoutBounds());
+                var tableBounds = table.localToScene(table.getLayoutBounds());
+                if (emptyBounds.getMinY() < headerBounds.getMaxY() - 1) problems.add(width + ": covers the header");
+                if (emptyBounds.getMaxY() > tableBounds.getMaxY() + 1) problems.add(width + ": spills below the table");
+                for (Label label : texts) {
+                    var shown = (javafx.scene.text.Text) label.lookup(".text");
+                    if (shown != null && !label.getText().equals(shown.getText())) problems.add(width + ": cut '" + shown.getText() + "'");
+                }
+            }
+            assertTrue(problems.isEmpty(), problems.toString());
+        });
+    }
+
+    /** H residual: the selection hint appears only when a row can be selected and none is. */
+    @Test
+    void selectionHintOnlyWhenThereIsARowToSelect() {
+        FxTestSupport.runAndWait(() -> {
+            Label hint = flatten(view).stream().filter(Label.class::isInstance).map(Label.class::cast)
+                    .filter(l -> l.getText() != null && l.getText().startsWith("Selecione um ativo")).findFirst().orElseThrow();
+            assertFalse(hint.isVisible() || hint.isManaged(), "0 assets: nothing to select");
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(sample());
+            assertTrue(hint.isVisible() && hint.isManaged(), "a row and no selection: say how to open it");
+            TableView<InvestmentType> table = field("table");
+            table.getSelectionModel().select(0);
+            assertFalse(hint.isVisible() || hint.isManaged(), "the detail is open: the hint is redundant");
+            table.getSelectionModel().clearSelection();
+            assertTrue(hint.isVisible());
+            ((TextField) field("searchField")).setText("zzz sem resultado");
+            assertFalse(hint.isVisible() || hint.isManaged(), "no visible row: nothing to select");
+        });
+    }
+
+    /** H-E4: the ticker badge is drawn with the embedded Plex face, not a locally installed Courier New. */
+    @Test
+    void tickerBadgeUsesTheEmbeddedFace() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(sample());
+            TableView<?> table = field("table");
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            ((javafx.scene.layout.Region) view).resize(1060, 800);
+            page.onBreakpoint(Breakpoint.WIDE);
+            for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+            Label ticker = table.lookupAll(".ticker-badge").stream().filter(Label.class::isInstance).map(Label.class::cast)
+                    .filter(l -> "FICT1".equals(l.getText())).findFirst().orElseThrow();
+            assertTrue(ticker.getFont().getFamily().startsWith("IBM Plex Sans"), "ticker face: " + ticker.getFont());
+        });
+    }
+
+    /** E-V4: the selected asset's leading action (Comprar) is a contained accent action, not a neutral button. */
+    @Test
+    void detailsLeadWithBuyAsTheContainedAccentAction() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            page.showDetails(sample());
+            DetailsPane details = field("details");
+            List<Button> buttons = flatten(details).stream().filter(Button.class::isInstance).map(Button.class::cast).toList();
+            Button buy = buttons.stream().filter(b -> "Comprar".equals(b.getText())).findFirst().orElseThrow();
+            Button sell = buttons.stream().filter(b -> "Vender".equals(b.getText())).findFirst().orElseThrow();
+            assertTrue(buy.getStyleClass().contains("secondary-btn"), "buy is the detail's accent action: " + buy.getStyleClass());
+            assertFalse(buy.getStyleClass().contains("primary-btn"), "the solid primary stays with the page action (Novo ativo)");
+            assertTrue(sell.getStyleClass().contains("sell-btn"));
+            assertTrue(buttons.indexOf(buy) < buttons.indexOf(sell), "buy leads the actions");
+        });
+    }
+
+    /** E-V2 class: the portfolio warning banner spans the page like the workspace under it, even with a short message. */
+    @Test
+    void warningBannerSpansItsContainerEvenWithAShortMessage() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.WIDE);
+            ((javafx.scene.layout.Region) view).resize(1060, 800);
+            assertEquals(java.util.List.of(), FxTestSupport.messageBoxesShortOfTheirContainer(view, ".warning-banner"));
         });
     }
 

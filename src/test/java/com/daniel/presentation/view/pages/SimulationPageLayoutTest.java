@@ -84,6 +84,48 @@ class SimulationPageLayoutTest {
         return -1;
     }
 
+    /**
+     * r1 at 1240×640 (150 %): in the wide pair the "Tipo" row was squeezed to "T...", "Prefixa...",
+     * "Pós-fixa...", "Híbri...", "Ação / ...". The options never shrink: below their width they move
+     * under the label, at every content width down to the expanded-sidebar minimum, inside the panel.
+     */
+    @Test
+    void typeSelectorKeepsTheLabelAndEveryOptionWholeAtEveryWidth() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1060, 900);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            ToggleButton first = field("prefixadoBtn");
+            List<String> problems = new ArrayList<>();
+            for (double width : new double[]{1060, 1040, 1020, 1000, 980, 960, 740, 640, 544, 380, 1060}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                ((javafx.scene.layout.Region) view).resize(width, 900);
+                for (int i = 0; i < 6; i++) { view.applyCss(); view.layout(); }
+                Node panel = first;
+                while (panel != null && !(panel instanceof Panel)) panel = panel.getParent();
+                assertNotNull(panel, "the type selector sits in the parameters panel");
+                FxTestSupport.cutTexts((Parent) panel).forEach(c -> problems.add(width + ": " + c));
+                double right = panel.localToScene(panel.getLayoutBounds()).getMaxX();
+                for (ToggleButton b : List.<ToggleButton>of(field("prefixadoBtn"), field("posfixadoBtn"), field("hibridoBtn"), field("acaoBtn"))) {
+                    if (b.localToScene(b.getLayoutBounds()).getMaxX() > right + 0.5)
+                        problems.add(width + ": '" + b.getText() + "' beyond the panel");
+                }
+            }
+            assertEquals(List.of(), problems);
+        });
+    }
+
+    /** E-V2 class, A-V9 note: the stale-curve note spans the result panel like the chart under it. */
+    @Test
+    void staleCurveNoteSpansTheResultPanel() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.WIDE);
+            ((javafx.scene.layout.Region) view).resize(1060, 800);
+            assertEquals(List.of(), FxTestSupport.messageBoxesShortOfTheirContainer(view, ".projection-stale-note"));
+        });
+    }
+
     @Test
     void uncalculatedResultHasGuidanceInsteadOfAnEmptyAxisAndSharesOneSurface() {
         FxTestSupport.runAndWait(() -> {
@@ -100,6 +142,70 @@ class SimulationPageLayoutTest {
             ((Button)field("calculateBtn")).fire();
             assertTrue(chart.getParent().isVisible());
             assertFalse(guidance.isVisible() || guidance.isManaged());
+        });
+    }
+
+    /**
+     * R3-05 (J1): "Valor inicial" had ~101 px beside "Período (meses)" with ~284 px and showed its
+     * example as "R$ 10.000,(" — the row gave the period combo what the amount field needed. The two
+     * fields share their row, and the amount's example is whole, at every width and on the way back.
+     */
+    @Test
+    void initialAmountAndPeriodShareTheirRow_andTheExampleIsWhole() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1060, 900);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            TextField initial = field("initialValueField");
+            ComboBox<Integer> months = field("monthsCombo");
+            List<String> problems = new ArrayList<>();
+            for (double width : new double[]{1060, 544, 576, 740, 1060, 380, 1060}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                ((javafx.scene.layout.Region) view).resize(width, 900);
+                for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+                var prompt = new javafx.scene.text.Text(initial.getPromptText());
+                prompt.setFont(initial.getFont());
+                double needs = prompt.getLayoutBounds().getWidth() + initial.snappedLeftInset() + initial.snappedRightInset();
+                if (initial.getWidth() + 0.5 < needs)
+                    problems.add(width + ": amount field " + Math.round(initial.getWidth()) + " px cuts its example (" + Math.round(needs) + ")");
+                var a = initial.getParent().localToScene(initial.getParent().getLayoutBounds());
+                var m = months.getParent().localToScene(months.getParent().getLayoutBounds());
+                boolean sameRow = Math.abs(a.getMinY() - m.getMinY()) < 1;
+                if (sameRow && Math.abs(a.getWidth() - m.getWidth()) > 2)
+                    problems.add(width + ": amount " + Math.round(a.getWidth()) + " px beside period " + Math.round(m.getWidth()) + " px");
+            }
+            assertEquals(List.of(), problems);
+        });
+    }
+
+    /**
+     * R3-05: after a 12-month projection the "Meses" axis read 0, 2, 3 … 11, 13 — no 1, no 12 (the
+     * end of the period) and a month 13 that is not projected. The axis runs from 0 to the period
+     * with whole-month ticks that name its end.
+     */
+    @Test
+    void projectionAxisRunsFromZeroToThePeriodInWholeMonths() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            TextField initial = field("initialValueField");
+            TextField rate = field("fixedRateField");
+            ComboBox<Integer> months = field("monthsCombo");
+            Button calc = field("calculateBtn");
+            LineChart<?, ?> chart = field("projectionChart");
+            var axis = (javafx.scene.chart.NumberAxis) chart.getXAxis();
+            initial.setText("10000");
+            rate.setText("12,5");
+            List<String> problems = new ArrayList<>();
+            for (int period : new int[]{12, 1, 24, 120}) {
+                months.setValue(period);
+                calc.fire();
+                double unit = axis.getTickUnit();
+                if (axis.isAutoRanging() || axis.getLowerBound() != 0 || axis.getUpperBound() != period)
+                    problems.add(period + " months: axis " + axis.getLowerBound() + ".." + axis.getUpperBound()
+                            + (axis.isAutoRanging() ? " (auto)" : ""));
+                if (unit < 1 || unit != Math.rint(unit) || period % (int) unit != 0)
+                    problems.add(period + " months: tick unit " + unit + " is not a whole divisor of the period");
+                if (period / unit > 12) problems.add(period + " months: " + (period / unit) + " ticks crowd the axis");
+            }
+            assertEquals(List.of(), problems);
         });
     }
 

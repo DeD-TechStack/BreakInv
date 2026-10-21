@@ -81,6 +81,81 @@ class ReportsPageLayoutTest {
                 legacy(9, "BUY", 10_000));
     }
 
+    /** E-V2 class: the error banner spans the list panel like the table under it, even with a short message. */
+    @Test
+    void warningBannerSpansItsContainerEvenWithAShortMessage() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(com.daniel.presentation.view.util.Breakpoint.WIDE);
+            ((javafx.scene.layout.Region) view).resize(1060, 800);
+            assertEquals(List.of(), FxTestSupport.messageBoxesShortOfTheirContainer(view, ".warning-banner"));
+        });
+    }
+
+    /**
+     * R3-01 (r3 J1, financial): back at 1280×800 after 600, 640 and 960 the Extrato came back with
+     * other columns than on the first wide pass — "Nº" cut to "..." at 100 % and "Detalhes" to
+     * "Detal..." at 150 %: the constrained policy redistributed the widths left by the narrow passes
+     * (the Carteira had the same defect in r1). The same width gives the same columns, no column title
+     * or action is cut at any step, and every "Detalhes" keeps a pixel to spare, which the 150 % grid
+     * (its button grows by one device pixel) needs.
+     */
+    @Test
+    void returningToWideRestoresTheFirstWideColumnsAndCutsNoTitleOrAction() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1052, 900);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.showEntries(sample(), 0, 0);
+            TableView<?> table = field("table");
+            List<String> first = null;
+            List<String> problems = new ArrayList<>();
+            for (double width : new double[]{1052, 536, 576, 732, 1052}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                ((javafx.scene.layout.Region) view).resize(width, 900);
+                for (int pass = 0; pass < 8; pass++) { view.applyCss(); view.layout(); }
+                List<String> cols = table.getColumns().stream().filter(TableColumn::isVisible)
+                        .map(c -> c.getText() + "=" + Math.round(c.getWidth())).toList();
+                if (first == null) first = cols;
+                else if (width == 1052 && !cols.equals(first)) problems.add("back to wide: " + cols + " vs first " + first);
+                List<Node> shown = new ArrayList<>(table.lookupAll(".column-header .label"));
+                shown.addAll(table.lookupAll(".button"));
+                for (Node n : shown) {
+                    if (!(n instanceof Labeled l) || !l.isVisible() || l.getText() == null || l.getText().isBlank()
+                            || l.getContentDisplay() == ContentDisplay.GRAPHIC_ONLY) continue;
+                    var text = (javafx.scene.text.Text) l.lookup(".text");
+                    if (text != null && !l.getText().equals(text.getText()))
+                        problems.add(Math.round(width) + ": '" + l.getText() + "' shown as '" + text.getText() + "' " + cols);
+                    if (n instanceof Button b) {
+                        Node cell = b;
+                        while (cell != null && !(cell instanceof TableCell<?, ?>)) cell = cell.getParent();
+                        if (cell instanceof TableCell<?, ?> c) {
+                            double room = c.getWidth() - c.snappedLeftInset() - c.snappedRightInset();
+                            if (room < b.prefWidth(-1) + 1)
+                                problems.add(Math.round(width) + ": '" + b.getText() + "' has " + room + " px of cell for "
+                                        + b.prefWidth(-1) + " — no pixel to spare at 150 % " + cols);
+                        }
+                    }
+                }
+            }
+            assertEquals(List.of(), problems);
+        });
+    }
+
+    /** R3-09 class: "Nº" and "Valor" headed the Extrato from the left over numbers aligned to the right. */
+    @Test
+    void numericColumnTitlesSitOverTheirNumbers() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1052, 900);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.showEntries(sample(), 0, 0);
+            page.onBreakpoint(Breakpoint.of(1052));
+            ((javafx.scene.layout.Region) view).resize(1052, 900);
+            for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+            assertEquals(List.of(), RankingPageLayoutTest.headersOffTheirValues(field("table")));
+        });
+    }
+
     @Test
     void filteredListReportsItsScopeAndDoesNotReserveEmptyRows() {
         FxTestSupport.runAndWait(() -> {

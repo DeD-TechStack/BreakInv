@@ -33,12 +33,12 @@
     -color-accent:        #39CF8B;
     -color-accent-strong: #31B77A;
     -color-accent-ink:    #06160C;
-    -color-accent-soft:   rgba(34,197,94,0.12);
-    -color-accent-a25:    rgba(34,197,94,0.25);
-    -color-accent-glow:   rgba(34,197,94,0.30);
-    -color-accent-a35:    rgba(34,197,94,0.35);
-    -color-accent-a40:    rgba(34,197,94,0.40);
-    -color-accent-a45:    rgba(34,197,94,0.45);
+    -color-accent-soft:   rgba(57,207,139,0.12);
+    -color-accent-a25:    rgba(57,207,139,0.25);
+    -color-accent-glow:   rgba(57,207,139,0.30);
+    -color-accent-a35:    rgba(57,207,139,0.35);
+    -color-accent-a40:    rgba(57,207,139,0.40);
+    -color-accent-a45:    rgba(57,207,139,0.45);
 
     /* Alpha variants for state colors */
     -color-white-a12:     rgba(255,255,255,0.12);
@@ -50,7 +50,7 @@
     -color-warning-a22:   rgba(245,158,11,0.22);
     -color-warning-a30:   rgba(245,158,11,0.30);
     -color-warning-a32:   rgba(245,158,11,0.32);
-    -color-info-a12:      rgba(59,130,246,0.12);
+    -color-info-a12:      rgba(138,191,255,0.12);
 
     /* Selection/focus is blue; brand and financial gain are distinct roles. */
     -color-success: #74D7A6;
@@ -222,7 +222,7 @@
 .wc-btn:hover    { -fx-background-color: rgba(255,255,255,0.09); }
 .wc-close:hover  { -fx-background-color: rgba(239,68,68,0.80); }
 .wc-min:hover    { -fx-background-color: rgba(234,179,8,0.30); }
-.wc-max:hover    { -fx-background-color: rgba(34,197,94,0.22); }
+.wc-max:hover    { -fx-background-color: rgba(57,207,139,0.22); }
 
 /* ═══════════════════════════════════════════════
    SHELL
@@ -316,8 +316,8 @@
     -fx-background-color: -color-surface-3;
 }
 .sidebar .nav-btn:focused {
-    -fx-border-color: transparent transparent transparent -color-success;
-    -fx-border-width: 0 0 0 3;
+    -fx-border-color: -color-info;
+    -fx-border-width: 1.5;
     -fx-background-color: -color-surface;
 }
 
@@ -557,7 +557,7 @@
 /* Focused: single-layer background prevents Modena accent bleed */
 .text-field:focused, .text-area:focused {
     -fx-background-color: -color-surface-2;
-    -fx-border-color: -color-accent;
+    -fx-border-color: -color-info;
     -fx-border-width: 1.5;
     -fx-effect: dropshadow(gaussian, -color-accent-glow, 8, 0, 0, 0);
 }
@@ -600,6 +600,17 @@
     -fx-background-color: transparent;
     -fx-border-color: transparent;
     -fx-effect: none;
+}
+/* Editable ComboBox: the editor is the field's text, not a second field inside it (A-V7). */
+.combo-box-base > .text-field,
+.combo-box-base > .text-field:focused,
+.dialog-pane .combo-box-base > .text-field,
+.dialog-pane .combo-box-base > .text-field:focused {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 0 4;
+    -fx-effect: null;
 }
 .date-picker .arrow-button {
     -fx-background-color: transparent;
@@ -991,7 +1002,7 @@
     -fx-border-color: transparent transparent -color-border transparent;
     -fx-border-width: 0 0 1 0;
 }
-.allocation-current .progress-bar .bar { -fx-background-color: -color-accent; }
+.allocation-current .progress-bar .bar { -fx-background-color: -color-text-2; }
 .allocation-target .progress-bar .bar { -fx-background-color: -color-info; }
 .allocation-comparison-row .progress-bar { -fx-pref-height: 5px; }
 
@@ -1030,19 +1041,30 @@
 /* Comparison chart series colors */
 .default-color0.chart-series-line      { -fx-stroke: -color-warning; -fx-stroke-width: 2.5px; }
 .default-color1.chart-series-line      { -fx-stroke: -color-accent;  -fx-stroke-width: 2px; }
-.default-color0.chart-legend-item-symbol { -fx-background-color: -color-warning, white; }
-.default-color1.chart-legend-item-symbol { -fx-background-color: -color-accent,  white; }
+/* Line-chart symbols only (legend and points): as .chart-legend-item-symbol these also painted the
+   PieChart legend dots amber/green whatever the slice colour (R2-21). */
+.default-color0.chart-line-symbol { -fx-background-color: -color-warning, white; }
+.default-color1.chart-line-symbol { -fx-background-color: -color-accent,  white; }
 
 /* Bar chart fill — cores aplicadas via inline style (verde/vermelho por código) */
 .default-color0.chart-bar { -fx-bar-fill: -color-accent-strong; }
+/* R2-11: "Valor por ativo" keeps one colour whatever default-colorN its recreated series receives */
+.value-chart .chart-bar { -fx-bar-fill: -color-accent-strong; }
+/* R2-01: Evolução — each legend symbol wears its line's colour (Carteira accent, benchmark muted white;
+   the lines are also set by ChartSeriesStyle). The global default-color0/1 symbols inverted the reading. */
+.evolution-chart .chart-series-line.series0 { -fx-stroke: -color-accent; -fx-stroke-width: 2px; }
+.evolution-chart .chart-series-line.series1 { -fx-stroke: rgba(255,255,255,0.85); -fx-stroke-width: 1.5px; }
+.evolution-chart .chart-legend-item-symbol.series0 { -fx-background-color: -color-accent; -fx-background-insets: 0; }
+.evolution-chart .chart-legend-item-symbol.series1 { -fx-background-color: rgba(255,255,255,0.85); -fx-background-insets: 0; }
 
-/* Temporal area chart (AssetAnalysisPage) — linha e preenchimento limpos */
+/* Temporal area chart (AssetAnalysisPage) — linha e preenchimento limpos. R3-08: the fill node is
+   `.chart-series-area-fill`; `.chart-series-area` matched nothing and the theme's orange filled the area. */
 .area-chart .chart-series-area-line {
     -fx-stroke: -color-accent;
     -fx-stroke-width: 2px;
 }
-.area-chart .chart-series-area {
-    -fx-fill: linear-gradient(to bottom, rgba(34,197,94,0.20) 0%, rgba(34,197,94,0.01) 100%);
+.area-chart .chart-series-area-fill {
+    -fx-fill: linear-gradient(to bottom, rgba(57,207,139,0.20) 0%, rgba(57,207,139,0.01) 100%);
     -fx-stroke: transparent;
 }
 
@@ -1136,6 +1158,12 @@
 .progress-bar.bar-danger > .bar { -fx-background-color: -color-danger; }
 .progress-bar.bar-warn   > .bar { -fx-background-color: -color-warning; }
 .progress-bar.bar-info   > .bar { -fx-background-color: -color-info; }
+/* R2-05: detailed tables as tall as their rows: one row size per breakpoint (cell padding 11 + share
+   label + 1 + bar 4 + 11 in wide/medium; 2.8em rows of the theme with the narrow 0-padding cells) */
+.table-view.fitted-table { -fx-fixed-cell-size: 46; }
+.bp-narrow .table-view.fitted-table { -fx-fixed-cell-size: 40; }
+/* R2-04: the share bar under a percentage in a 28 px table cell keeps 4 px (the 6 px bar was squeezed to 0) */
+.progress-bar.share-bar { -fx-pref-height: 4; -fx-min-height: 4; -fx-padding: 0; }
 
 .progress-indicator .percentage     { -fx-fill: -color-text-1; -fx-font-size: 12px; -fx-font-weight: 700; }
 .progress-indicator .progress       { -fx-background-color: -color-accent; }
@@ -1320,7 +1348,7 @@
    Add an explicit focused rule with higher specificity to restore the accent ring. */
 .dialog-pane .text-field:focused {
     -fx-background-color: -color-surface-2;
-    -fx-border-color: -color-accent;
+    -fx-border-color: -color-info;
     -fx-border-width: 1.5;
     -fx-effect: dropshadow(gaussian, -color-accent-glow, 8, 0, 0, 0);
 }
@@ -1585,6 +1613,7 @@
 }
 .empty-state .label        { -fx-text-fill: -color-text-3; -fx-font-size: 13px; }
 .empty-state .empty-icon   { -fx-font-size: 34px; -fx-opacity: 0.5; }
+.empty-state .empty-glyph  { -fx-icon-size: 28; -fx-icon-color: -color-text-3; }
 .empty-state .empty-title  { -fx-font-size: 15px; -fx-font-weight: 800; -fx-text-fill: -color-text-2; }
 .empty-state .empty-hint   { -fx-font-size: 12px; -fx-text-fill: -color-text-3; }
 
@@ -1619,9 +1648,8 @@
 
 .inv-row-name { -fx-font-weight: bold; -fx-font-size: 13px; -fx-text-fill: -color-text-1; }
 
-/* Ticker badge (monospace) */
+/* Ticker badge: embedded Plex face from typography.css, never a locally installed Courier (H-E4/R4) */
 .ticker-badge {
-    -fx-font-family: "Courier New", monospace;
     -fx-font-weight: bold;
     -fx-font-size: 12px;
     -fx-text-fill: -color-text-3;
@@ -1637,7 +1665,8 @@
 
 /* Rentability label states */
 .rent-value  { -fx-font-weight: bold; -fx-font-size: 12px; }
-.rent-dimmed { -fx-opacity: 0.45; -fx-font-size: 12px; }
+/* E4 (V7): a return that is not available reads secondary, not faded — 0.45 opacity gave 3.96:1 */
+.rent-dimmed { -fx-text-fill: -color-text-2; -fx-font-size: 12px; }
 
 /* Rank row (top movers list) */
 .rank-row {
@@ -1958,6 +1987,14 @@
     -fx-opacity: 0.45;
     -fx-cursor: default;
 }
+/* V8: a disabled ComboBox, DatePicker or Spinner dims once. Its editor is disabled with it and was
+   dimmed again (0.45 × 0.45 ≈ 0.2; Spinner 0.4 × 0.45): "20/10/2026", "9" and "21" read 1.5–1.8:1 and
+   the disabled state hid the value. Identifiable, not hidden. */
+.combo-box-base .text-field:disabled,
+.date-picker .text-field:disabled,
+.spinner .text-field:disabled {
+    -fx-opacity: 1;
+}
 
 /* DatePicker and ComboBox consistent hover state */
 .combo-box-base:hover {
@@ -2079,7 +2116,8 @@
 /* ── Page density per breakpoint ── */
 .bp-medium .page-root { -fx-padding: 20 24 24 24; -fx-spacing: 16; }
 .bp-narrow .page-root { -fx-padding: 12 16 16 16; -fx-spacing: 12; }
-.bp-narrow .page-title { -fx-font-size: 24px; }
+/* The page title keeps one size at every breakpoint (the .h1 alias, 20 px): a narrow window
+   reorganises, it does not shrink or enlarge text (r1: 24 px narrow against 20 px wide). */
 .bp-narrow .card, .bp-narrow .panel-block { -fx-padding: 12; }
 .bp-narrow .table-analytic .table-cell { -fx-padding: 0 10; }
 
@@ -2090,7 +2128,6 @@
 .dialog-confirm-body { -fx-padding: 16 20 12 20; }
 .dialog-question { -fx-font-size: 14px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
 .search-row { -fx-padding: 2 0; }
-.ranking-list .table-view { -fx-pref-height: 240; }
 .month-label { -fx-min-width: 150; -fx-alignment: CENTER; }
 .bp-narrow .hero-number { -fx-font-size: 30px; }
 .hero-value .hero-number.pos { -fx-text-fill: -color-success; }
@@ -2140,8 +2177,8 @@
 }
 .stat-cell {
     -fx-padding: 10 16;
-    -fx-border-color: transparent -color-border transparent transparent;
-    -fx-border-width: 0 1 0 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
 }
 .stat-label { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; }
 .stat-value { -fx-font-size: 18px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
@@ -2161,6 +2198,19 @@
 }
 .panel-title    { -fx-font-size: 17px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
 .panel-subtitle { -fx-font-size: 12px; -fx-text-fill: -color-text-3; }
+/* Ranking lists live inside the day panel: a titled table, not a box inside a box (A-V5). */
+.panel-block.ranking-list, .bp-narrow .panel-block.ranking-list {
+    -fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 0;
+}
+.panel-block.ranking-list .panel-title { -fx-font-size: 14px; }
+/* Empty ranking list: the message wraps inside the list at the body size (A-V5). */
+.ranking-list-empty { -fx-font-size: 13px; -fx-text-fill: -color-text-2; -fx-padding: 8 12; }
+/* Simulation: a curve kept under a form error is reference only (A-V9). */
+.projection-stale { -fx-opacity: 0.45; }
+.projection-stale-note {
+    -fx-text-fill: -color-text-2; -fx-background-color: -color-surface-2;
+    -fx-background-radius: 6; -fx-padding: 6 10;
+}
 .main-chart-panel { -fx-min-height: 360; }
 .rank-panel .rank-title { -fx-font-size: 13px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
 .rank-panel .rank-title.pos { -fx-text-fill: -color-success; }
@@ -2231,8 +2281,114 @@
 .hero-card, .hero-card:hover { -fx-effect: null; -fx-border-color: -color-border; -fx-border-width: 1; }
 .kpi-card:hover, .kpi-mini-card:hover { -fx-effect: null; -fx-border-color: -color-border-strong; }
 
-/* Focus rings via border, not glow */
-.ghost-btn:focused { -fx-effect: null; -fx-border-color: -color-success; }
 .primary-btn { -fx-background-color: -color-accent; -fx-text-fill: -color-accent-ink; }
-.primary-btn:focused { -fx-effect: null; -fx-border-color: -color-success; }
-.danger-btn:focused, .sell-btn:focused, .secondary-btn:focused { -fx-effect: null; -fx-border-color: -color-border-strong; }
+
+/* ── E-V3: one keyboard-focus cue — the declared blue perimeter (-color-info), never a glow ──
+   Green is brand, gain and the selected fill; a gray border or a faint white glow made focus
+   vanish. Selection keeps its own fill, so focus and selection never read alike. Last in the
+   sheet on purpose: it overrides the earlier variant rules at equal or lower specificity. */
+.button:focused, .radio-chip:focused,
+.ghost-btn:focused, .primary-btn:focused, .secondary-btn:focused,
+.danger-btn:focused, .sell-btn:focused, .danger-action-btn:focused,
+.icon-btn:focused, .icon-text-btn:focused,
+.link-btn:focused, .link-btn-accent:focused, .link-btn-danger:focused,
+.filter-toggle:focused, .filter-toggle:selected:focused,
+.bench-toggle:focused, .bench-toggle:selected:focused,
+.segmented .seg-btn:focused, .segmented .toggle-button:focused,
+.text-field:focused, .text-area:focused, .dialog-pane .text-field:focused,
+.combo-box-base:focused, .combo-box-base:showing, .date-picker:focused, .choice-box:focused,
+.radio-button:focused .radio,
+.dialog-pane > .button-bar .button:focused,
+.dark-dialog .button-bar .button.primary-btn:focused,
+.dark-dialog .button-bar .button.ghost-btn:focused {
+    -fx-border-color: -color-info;
+    -fx-effect: null;
+}
+.combo-box-base:focused .arrow, .combo-box-base:showing .arrow { -fx-background-color: -color-info; }
+/* E4 (V7, r3 audit): a focused table had no cue. The table takes the blue perimeter (its 1 px border:
+   nothing moves); inside an analytic table — every table of the app — the focused row is ringed by a blue
+   background layer under its own fill (layers, not a border: no cell moves). The selection keeps its fill
+   and its 3 px marker. */
+/* (JavaFX weighs a class above a pseudo-class: the Carteira's `.positions-workspace .table-view` needs its own) */
+.table-view:focused, .tree-table-view:focused,
+.positions-workspace .table-view:focused { -fx-border-color: -color-info; -fx-effect: null; }
+.table-analytic:focused .table-row-cell:filled:focused {
+    -fx-background-color: -color-info, -color-surface;
+    -fx-background-insets: 0, 1;
+}
+.table-analytic:focused .table-row-cell:filled:focused:odd { -fx-background-color: -color-info, derive(-color-surface, -4%); }
+.table-analytic:focused .table-row-cell:filled:focused:hover { -fx-background-color: -color-info, -color-surface-3; }
+.table-analytic:focused .table-row-cell:filled:focused:selected {
+    -fx-background-color: -color-info, -color-surface, -color-info-a12;
+    -fx-background-insets: 0, 1, 1;
+}
+
+/* ── E4 (r2 contrast/focus audit) ──
+   A press is always under the pointer: PrimerDark's `.button:hover` opacity 0.9 also dimmed the
+   pressed fill and its text ("Excluir" 4.33:1, primary 3.7:1). Pressed shows its colour at full opacity. */
+.primary-btn:pressed, .secondary-btn:pressed, .ghost-btn:pressed, .danger-btn:pressed, .sell-btn:pressed { -fx-opacity: 1; }
+.primary-btn:pressed { -fx-background-color: derive(-color-accent-strong, -10%); }
+/* the primary's icon wears its text's ink (the light default icon read 1.75:1 on the green) */
+.primary-btn .ikonli-font-icon { -fx-icon-color: -color-accent-ink; }
+/* The ACTIVE page's button shows focus too (`.sidebar .nav-btn.active` out-ranked `:focused`): the blue
+   perimeter outside, the green page marker kept inside it; padding absorbs the ring, nothing moves. */
+.sidebar .nav-btn.active:focused,
+.icon-compact .sidebar .nav-btn.active:focused {
+    -fx-border-color: -color-info, transparent transparent transparent -color-accent;
+    -fx-border-width: 1.5, 0 0 0 3;
+    -fx-border-insets: 0, 0 0 0 1.5;
+    -fx-border-radius: 0 8 8 0, 0;
+    -fx-effect: null;
+}
+.sidebar .nav-btn.active:focused { -fx-padding: 8.5 12.5 8.5 9.5; }
+/* CheckBox and Hyperlink had no focus cue: an outset ring, so nothing moves when focus arrives */
+.check-box:focused > .box {
+    -fx-border-color: -color-info;
+    -fx-border-width: 1.5;
+    -fx-border-insets: -3;
+    -fx-border-radius: 6;
+}
+.hyperlink, .text-link { -fx-border-width: 1.5; -fx-border-insets: -2 -4; }
+.hyperlink:focused, .text-link:focused { -fx-border-color: -color-info; -fx-border-radius: 4; }
+/* Spinner: one field like the others (surface-2, radius 10, strong border); the editor is its text,
+   not a second framed field inside it (R2-13, as the ComboBox editor A-V7); focus is the blue
+   perimeter (PrimerDark's accent-emphasis #315B85 read 2.29:1). */
+.spinner {
+    -fx-background-color: -color-surface-2;
+    -fx-background-radius: 10;
+    -fx-border-color: -color-border-strong;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+}
+.spinner > .increment-arrow-button { -fx-background-radius: 0 9 0 0; }
+.spinner > .decrement-arrow-button { -fx-background-radius: 0 0 9 0; }
+.spinner > .text-field,
+.spinner > .text-field:focused,
+.dialog-pane .spinner > .text-field,
+.dialog-pane .spinner > .text-field:focused {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-effect: null;
+}
+.spinner:focused { -fx-border-color: -color-info; -fx-effect: null; }
+/* R2-20: a value strip inside a panel is not a second box (the panel is the box) */
+.panel-block .stat-strip { -fx-background-color: transparent; -fx-border-color: transparent; }
+/* R2-19: a field whose value was refused keeps an amber edge until it is edited */
+.text-field.field-error, .combo-box-base.field-error, .date-picker.field-error,
+.dialog-pane .text-field.field-error, .dialog-pane .combo-box-base.field-error, .dialog-pane .date-picker.field-error {
+    -fx-border-color: -color-warning;
+}
+/* R3-07: focused, it keeps saying so — the blue perimeter outside, the amber edge inside it (focus used to
+   replace the amber). The padding gives back the inner edge's pixel: the content sits where it sits in the
+   same control focused without an error (1.5 px focus edge + 9 12; text fields in dialogs 8 12). */
+.text-field.field-error:focused, .combo-box-base.field-error:focused, .date-picker.field-error:focused,
+.dialog-pane .text-field.field-error:focused, .dialog-pane .combo-box-base.field-error:focused,
+.dialog-pane .date-picker.field-error:focused {
+    -fx-border-color: -color-info, -color-warning;
+    -fx-border-width: 1.5, 1;
+    -fx-border-insets: 0, 1.5;
+    -fx-border-radius: 10, 8.5;
+    -fx-padding: 8 11;
+}
+.dialog-pane .text-field.field-error:focused { -fx-padding: 7 11; }

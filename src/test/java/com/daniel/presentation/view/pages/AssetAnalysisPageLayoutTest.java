@@ -71,6 +71,75 @@ class AssetAnalysisPageLayoutTest {
     }
 
     @Test
+    void narrowSearchPreservesTheActualActionText() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 380, 720);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.NARROW);
+            ((javafx.scene.layout.Region)view).resize(380, 720);
+            for (int pass=0; pass<6; pass++) {view.applyCss();view.layout();}
+            Button search = field("searchBtn");
+            assertEquals("Buscar", ((javafx.scene.text.Text)search.lookup(".text")).getText());
+            assertTrue(search.getWidth()+1 >= search.prefWidth(-1));
+        });
+    }
+
+    static boolean paints(javafx.scene.paint.Paint paint) {
+        return paint != null && !(paint instanceof javafx.scene.paint.Color c && c.getOpacity() == 0);
+    }
+
+    /** A-V7: the editable ticker combo is ONE field: its editor draws no second frame or fill inside it. */
+    @Test
+    void editableTickerComboDrawsASingleFrameAlignedWithTheSearchButton() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1060, 720);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.WIDE);
+            ((javafx.scene.layout.Region) view).resize(1060, 720);
+            for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+            ComboBox<?> combo = field("tickerCombo");
+            Button search = field("searchBtn");
+            TextField editor = combo.getEditor();
+            assertTrue(Math.abs(combo.getHeight() - search.getHeight()) <= 2,
+                    "one field as tall as its button: combo " + combo.getHeight() + " vs button " + search.getHeight());
+            boolean innerBorder = editor.getBorder() != null && editor.getBorder().getStrokes().stream()
+                    .anyMatch(s -> paints(s.getTopStroke()) && s.getWidths().getTop() > 0);
+            assertFalse(innerBorder, "the editor draws a second border inside the combo");
+            boolean innerFill = editor.getBackground() != null && editor.getBackground().getFills().stream()
+                    .anyMatch(f -> paints(f.getFill()));
+            assertFalse(innerFill, "the editor paints a second field inside the combo");
+        });
+    }
+
+    /** A-V10: at medium width the summary stacks, so the day strip has the full row: one line of four, not 2×2. */
+    @Test
+    void mediumWidthDayStripUsesTheWholeRow() {
+        FxTestSupport.runAndWait(() -> {
+            page.renderQuote(petr());
+            var scene = new javafx.scene.Scene(view, 760, 720);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.MEDIUM);
+            ((javafx.scene.layout.Region) view).resize(760, 720);
+            for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+            StatStrip day = field("dayStrip");
+            assertEquals(4, day.columns(), "medium asks for four columns");
+            assertEquals(4, day.effectiveColumns(), "and four fit at 760 px");
+        });
+    }
+
+    /** E-V2 class: the search error banner spans the search panel like the field row, even with a short message. */
+    @Test
+    void warningBannerSpansItsContainerEvenWithAShortMessage() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1060, 720);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.WIDE);
+            ((javafx.scene.layout.Region) view).resize(1060, 720);
+            assertEquals(java.util.List.of(), FxTestSupport.messageBoxesShortOfTheirContainer(view, ".warning-banner"));
+        });
+    }
+
+    @Test
     void searchStatesAreIntegratedAndPriceSharesTheDaySummaryBeforeTheChart() {
         FxTestSupport.runAndWait(() -> {
             Node search = pageRoot().lookup(".asset-search-workspace");

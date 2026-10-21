@@ -192,7 +192,7 @@ public final class MovementForm {
         try {
             return new BigDecimal(s);
         } catch (NumberFormatException e) {
-            throw new LedgerException(field, "número inválido: " + text);
+            throw new LedgerException(field, "Digite só números, como 1.234,56."); // R2-19
         }
     }
 }

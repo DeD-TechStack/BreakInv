@@ -68,6 +68,11 @@ class ReportsPageStateTest {
 
     /** No ledger: the statement is the legacy transactions of the month; a month may be told to fail. */
     static DailyTrackingUseCase legacyDaily(Map<YearMonth, List<Transaction>> byMonth, YearMonth failing) {
+        return legacyDaily(byMonth, failing, 0L);
+    }
+
+    /** As above, with {@code cash} as the cash balance on any date — the wealth when there is no position. */
+    static DailyTrackingUseCase legacyDaily(Map<YearMonth, List<Transaction>> byMonth, YearMonth failing, long cash) {
         IInvestmentTypeRepository types = new IInvestmentTypeRepository() {
             @Override public List<InvestmentType> listAll() { return List.of(); }
             @Override public void save(String name) {}
@@ -81,6 +86,7 @@ class ReportsPageStateTest {
         };
         ISnapshotRepository snapshots = new ISnapshotRepository() {
             @Override public long getCash(LocalDate date) { return 0; }
+            @Override public long getCashOnOrBefore(LocalDate date) { return cash; }
             @Override public Map<Long, Long> getAllInvestimentsForDate(LocalDate date) { return Map.of(); }
             @Override public Map<String, Long> seriesForInvestiments(long id) { return Map.of(); }
         };
@@ -140,6 +146,77 @@ class ReportsPageStateTest {
         });
     }
 
+    // ── R2-18 / R2-17 (candidate-retomada-r2 review) ───────────────────────
+
+    /**
+     * R2-18: a month without movements said "Patrimônio — / sem lançamentos no mês" while the
+     * Diversificação showed R$ 21.695.487,50. Gain and wealth are values AT a date, not sums of the
+     * month's movements: the current month shows today's, a past month its end-of-month record (or why
+     * there is none), and only a month still to come has neither.
+     */
+    @Test
+    void aMonthWithoutMovementsStillShowsGainAndWealthAtItsDate() throws Exception {
+        DailyTrackingUseCase daily = legacyDaily(Map.of(), null, 2_169_548_750L);
+        FxTestSupport.runAndWait(() -> {
+            ReportsPage page = new ReportsPage(daily, worker::add, Runnable::run);
+            page.onShow();
+            drain();
+            StatStrip strip = field(page, "strip");
+            TableView<?> table = field(page, "table");
+            assertTrue(table.getItems().isEmpty(), "no movement this month");
+            assertEquals(daily.brl(2_169_548_750L), strip.valueLabel(ReportsPage.STAT_WEALTH).getText(), "today's wealth");
+            assertEquals("hoje", strip.qualifierLabel(ReportsPage.STAT_WEALTH).getText());
+            assertEquals(daily.brl(0), strip.valueLabel(ReportsPage.STAT_GAIN).getText(), "the gain to date is known");
+
+            ((Button) field(page, "btnPrevMonth")).fire();
+            drain();
+            assertEquals("\u2014", strip.valueLabel(ReportsPage.STAT_WEALTH).getText(), "no end-of-month record");
+            assertTrue(strip.qualifierLabel(ReportsPage.STAT_WEALTH).getText().contains("sem registro"),
+                    strip.qualifierLabel(ReportsPage.STAT_WEALTH).getText());
+
+            ((Button) field(page, "btnCurrentMonth")).fire();
+            drain();
+            ((Button) field(page, "btnNextMonth")).fire();
+            drain();
+            for (String stat : List.of(ReportsPage.STAT_GAIN, ReportsPage.STAT_WEALTH)) {
+                assertEquals("\u2014", strip.valueLabel(stat).getText(), stat + ": a month still to come has no value yet");
+                assertTrue(strip.qualifierLabel(stat).getText().contains("futuro"), strip.qualifierLabel(stat).getText());
+            }
+        });
+    }
+
+    /**
+     * R2-17: at 536 px (a 600×480 window beside the rail) the statement showed Data, Valor and a
+     * "Detalhes" text button and dropped Tipo — the kind of a movement was only in its details. The
+     * short date and the icon-only action come before losing the column.
+     */
+    @Test
+    void at536pxTheTypeKeepsItsColumn_theDateAndTheActionGoShortFirst() throws Exception {
+        DailyTrackingUseCase daily = legacyDaily(Map.of(), null);
+        FxTestSupport.runAndWait(() -> {
+            ReportsPage page = new ReportsPage(daily, worker::add, Runnable::run);
+            Parent view = page.view();
+            Scene scene = new Scene(view, 536, 440);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.NARROW);
+            page.showEntries(wideSample(), 0, 95_000L);
+            ((Region) view).resize(536, 440);
+            for (int pass = 0; pass < 3; pass++) { view.applyCss(); view.layout(); }
+            TableView<ReportsPage.ExtractRow> table = field(page, "table");
+            List<String> visible = table.getColumns().stream().filter(TableColumn::isVisible).map(TableColumn::getText).toList();
+            assertEquals(List.of("Data", "Tipo", "Valor", ""), visible, "the kind keeps its column");
+            for (Node sb : table.lookupAll(".scroll-bar"))
+                if (sb instanceof ScrollBar bar && bar.getOrientation() == javafx.geometry.Orientation.HORIZONTAL)
+                    assertFalse(bar.isVisible(), "no horizontal scrollbar in the statement");
+            List<Labeled> cells = new ArrayList<>();
+            for (Node n : table.lookupAll(".table-cell")) if (n instanceof Labeled l && l.getText() != null) cells.add(l);
+            Labeled big = cells.stream().filter(c -> c.getText().contains("1.234.567,89")).findFirst().orElseThrow();
+            assertEquals(big.getText(), rendered(big), "the value is never cut");
+            Labeled type = cells.stream().filter(c -> "Compra".equals(c.getText())).findFirst().orElseThrow();
+            assertEquals("Compra", rendered(type), "the kind is read whole");
+        });
+    }
+
     // ── L7 ─────────────────────────────────────────────────────────────────
 
     @Test
@@ -180,6 +257,92 @@ class ReportsPageStateTest {
             drain();
             assertFalse(error.isVisible(), "a successful load clears the failure");
             assertEquals(1, table.getItems().size());
+        });
+    }
+
+    // ── A-V8 ───────────────────────────────────────────────────────────────
+
+    static String placeholderText(TableView<?> table) {
+        List<String> texts = new ArrayList<>();
+        Node placeholder = table.getPlaceholder();
+        if (placeholder instanceof Labeled l) texts.add(l.getText());
+        if (placeholder instanceof Parent p) for (Node n : p.lookupAll(".label")) if (n instanceof Labeled l) texts.add(l.getText());
+        return String.join(" | ", texts);
+    }
+
+    static ToggleButton filter(ReportsPage page, String text) throws Exception {
+        javafx.scene.layout.FlowPane bar = field(page, "filterBar");
+        return bar.getChildren().stream().map(n -> (ToggleButton) n).filter(t -> t.getText().equals(text)).findFirst().orElseThrow();
+    }
+
+    /**
+     * A-V8: the table's own message agrees with the page state. A month being read or that
+     * failed to load is never "no movement in this period"; an empty filter names the filter;
+     * the counter says "lançamento" for one.
+     */
+    @Test
+    void placeholderAndCountFollowTheState_loadingFailureEmptyMonthAndEmptyFilter() throws Exception {
+        YearMonth now = YearMonth.now();
+        YearMonth prev = now.minusMonths(1);
+        DailyTrackingUseCase daily = legacyDaily(Map.of(now, List.of(tx(1, now.atDay(1), 20_000))), prev);
+        FxTestSupport.runAndWait(() -> {
+            ReportsPage page = new ReportsPage(daily, worker::add, Runnable::run);
+            TableView<?> table = field(page, "table");
+            Label count = field(page, "entryCount");
+
+            page.onShow(); // request in flight
+            String loading = placeholderText(table).toLowerCase();
+            assertTrue(loading.contains("carregando"), "loading says so: " + loading);
+            assertFalse(loading.contains("nenhum lançamento"), "a month being read is not an empty month: " + loading);
+
+            drain(); // one old record this month
+            assertEquals("1 de 1 lançamento", count.getText());
+            filter(page, "Caixa").fire(); // an old record is not a cash movement
+            assertEquals("0 de 1 lançamento", count.getText());
+            String filtered = placeholderText(table).toLowerCase();
+            assertTrue(filtered.contains("filtro"), "an empty filter names the filter: " + filtered);
+            assertFalse(filtered.contains("neste período"), "the month has a movement: " + filtered);
+            filter(page, "Tudo").fire();
+
+            ((Button) field(page, "btnPrevMonth")).fire();
+            drain(); // this month fails
+            String failed = placeholderText(table).toLowerCase();
+            assertFalse(failed.contains("nenhum lançamento"), "a month that was not read is not empty: " + failed);
+            assertTrue(failed.contains("indisponíve"), failed);
+
+            ((Button) field(page, "btnPrevMonth")).fire();
+            drain(); // a month read without movements
+            String empty = placeholderText(table).toLowerCase();
+            assertTrue(empty.contains("nenhum lançamento neste período"), empty);
+            assertEquals("0 de 0 lançamentos", count.getText());
+        });
+    }
+
+    /**
+     * r1 at 600×480 (544 px of page): the empty month's hint was cut to "…registrados neste mês ..."
+     * because the empty table kept a fixed 240 px. Every state message is whole at every width,
+     * including the expanded-sidebar minimum, and returning to wide keeps it whole.
+     */
+    @Test
+    void emptyMonthMessageIsWholeAtEveryWidth() throws Exception {
+        DailyTrackingUseCase daily = legacyDaily(Map.of(), null);
+        FxTestSupport.runAndWait(() -> {
+            ReportsPage page = new ReportsPage(daily, worker::add, Runnable::run);
+            Parent view = page.view();
+            Scene scene = new Scene(view, 1060, 900);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onShow();
+            drain(); // a month read without movements
+            TableView<?> table = field(page, "table");
+            assertTrue(placeholderText(table).toLowerCase().contains("nenhum lançamento neste período"), placeholderText(table));
+            List<String> problems = new ArrayList<>();
+            for (double width : new double[]{1060, 740, 584, 544, 380, 1060}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                ((Region) view).resize(width, 900);
+                for (int i = 0; i < 6; i++) { view.applyCss(); view.layout(); }
+                FxTestSupport.cutTexts(table).forEach(c -> problems.add(width + ": " + c));
+            }
+            assertEquals(List.of(), problems);
         });
     }
 

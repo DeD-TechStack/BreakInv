@@ -341,7 +341,7 @@ public final class ChartCrosshair {
 
     private static Circle makeDot() {
         Circle c = new Circle(5.0);
-        c.setFill(Color.rgb(34, 197, 94, 0.95));
+        c.setFill(Color.rgb(57, 207, 139, 0.95)); // -color-accent (#39CF8B), E-V3
         c.setStroke(Color.WHITE);
         c.setStrokeWidth(1.5);
         c.setMouseTransparent(true);

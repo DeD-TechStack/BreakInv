@@ -264,6 +264,9 @@ public final class AppShell {
         sidebarTexts.add(title);
         Region brandSpacer = new Region();
         HBox.setHgrow(brandSpacer, Priority.ALWAYS);
+        // On the rail the spacer still pushed the button against the divider (r1: x 13–55 of 56);
+        // it leaves with the logo and title, so the centred row centres the button on the icons.
+        sidebarGraphics.add(brandSpacer);
         toggleBtn.getStyleClass().addAll("icon-btn", "sidebar-toggle");
         toggleBtn.setOnAction(e -> onToggleSidebar());
         brandRow.getChildren().addAll(title, brandSpacer, toggleBtn);

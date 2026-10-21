@@ -16,9 +16,11 @@ import com.daniel.presentation.view.components.HeroValue;
 import com.daniel.presentation.view.components.Panel;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.layout.AdaptivePair;
+import com.daniel.presentation.view.layout.LineFlow;
 import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.ChartCrosshair;
 import com.daniel.presentation.view.util.Dialogs;
+import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.Motion;
 import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.viewmodel.ScenarioCardController;
@@ -106,6 +108,10 @@ public final class SimulationPage implements ResponsivePage {
     private static final String RESULT_IDLE = "Preencha os parâmetros e clique em Calcular — estimativa, sem efeito na carteira";
     private final HeroValue resultHero = new HeroValue("Valor final estimado");
     private final LineChart<Number, Number> projectionChart;
+    /** A-V9: a curve kept under a form error is the LAST VALID calculation, never the current fields'. */
+    private final Label staleCurveNote = new Label(
+            "Curva do último cálculo válido, mantida para referência. Corrija os campos e calcule de novo para atualizá-la.");
+    private javafx.scene.layout.StackPane projectionWrapper;
 
     private final Label ratesStatusLabel = new Label();
     private final Button refreshRatesBtn = new Button("Atualizar taxas (BCB)");
@@ -164,7 +170,7 @@ public final class SimulationPage implements ResponsivePage {
         projectionChart.setCreateSymbols(false);
 
         scenarioPanel = buildScenarioCard();
-        HBox typeSelector = buildTypeSelector();
+        LineFlow typeSelector = buildTypeSelector();
         VBox baseParams = buildBaseParamsCard();
         VBox rentability = buildRentabilityCard();
         VBox stock = buildStockCard();
@@ -188,7 +194,15 @@ public final class SimulationPage implements ResponsivePage {
         guidance.getStyleClass().addAll("text-secondary", "projection-guidance");
         guidance.visibleProperty().bind(noProjection);
         guidance.managedProperty().bind(guidance.visibleProperty());
-        chartPanel = new Panel("Resultado da simulação", resultHero, guidance, projWrapper);
+        projectionWrapper = projWrapper;
+        noProjection.addListener((obs, had, empty) -> { if (empty) markProjectionStale(false); });
+        staleCurveNote.setWrapText(true);
+        staleCurveNote.setMaxWidth(Double.MAX_VALUE); // a filled note spans the panel like the chart (E-V2)
+        staleCurveNote.getStyleClass().addAll("text-helper", "projection-stale-note");
+        staleCurveNote.setGraphic(Icons.info());
+        staleCurveNote.setGraphicTextGap(8);
+        markProjectionStale(false);
+        chartPanel = new Panel("Resultado da simulação", resultHero, guidance, staleCurveNote, projWrapper);
         chartPanel.getStyleClass().add("simulation-result");
         VBox resultColumn = new VBox(16, chartPanel);
         VBox.setVgrow(chartPanel, Priority.ALWAYS);
@@ -556,12 +570,16 @@ public final class SimulationPage implements ResponsivePage {
     // Form cards (existing layout)
     // =====================================================================
 
-    private HBox buildTypeSelector() {
-        HBox box = new HBox(12);
+    private LineFlow buildTypeSelector() {
+        // V5 (r1 at 1240×640: "T...", "Prefixa...", "Ação / ..."): the label and the options keep
+        // their text. A short row puts the options under the label; shorter still (expanded
+        // sidebar at the minimum window) the options themselves wrap, never cut.
+        LineFlow box = new LineFlow(12, 8);
         box.setAlignment(Pos.CENTER_LEFT);
 
         Label label = new Label("Tipo");
         label.getStyleClass().add("form-label");
+        label.setMinWidth(Region.USE_PREF_SIZE);
 
         ToggleGroup group = new ToggleGroup();
 
@@ -590,9 +608,10 @@ public final class SimulationPage implements ResponsivePage {
             updateInputsVisibility();
         });
 
-        HBox segmented = new HBox(0, prefixadoBtn, posfixadoBtn, hibridoBtn, acaoBtn);
+        LineFlow segmented = new LineFlow(0, 2, prefixadoBtn, posfixadoBtn, hibridoBtn, acaoBtn);
         segmented.getStyleClass().add("segmented");
         segmented.setAlignment(Pos.CENTER_LEFT);
+        segmented.maxWidthProperty().bind(box.widthProperty()); // a FlowPane gives a child its pref width
 
         box.getChildren().addAll(label, segmented);
         return box;
@@ -620,6 +639,14 @@ public final class SimulationPage implements ResponsivePage {
         HBox.setHgrow(initialBox, Priority.ALWAYS);
         HBox.setHgrow(monthsBox, Priority.ALWAYS);
         monthsCombo.setMaxWidth(Double.MAX_VALUE);
+        // R3-05 (J1): the two fields share their row by halves. An HBox splits only the spare width, so the
+        // combo's wider preferred size took it and "Valor inicial" kept ~101 px ("R$ 10.000,("); the amount
+        // field also fills its half (its own maximum stopped at its preferred width).
+        initialBox.setMinWidth(0);
+        initialBox.setPrefWidth(0);
+        monthsBox.setMinWidth(0);
+        monthsBox.setPrefWidth(0);
+        initialValueField.setMaxWidth(Double.MAX_VALUE);
         row.getChildren().addAll(initialBox, monthsBox);
         return new VBox(row);
     }
@@ -805,12 +832,24 @@ public final class SimulationPage implements ResponsivePage {
         return box;
     }
 
-    /** A form problem shown in the result block itself; the chart is left as it was. */
+    /**
+     * A form problem shown in the result block itself. A curve already drawn stays for reference,
+     * labelled and dimmed as the last valid calculation (A-V9); its values are not touched.
+     */
     private void showResultProblem(String title, String detail) {
         resultHero.setValue(title);
         resultHero.setSecondary(null, null);
         resultHero.setContext(detail);
         applyResultStyle(null);
+        markProjectionStale(!projectionChart.getData().isEmpty());
+    }
+
+    private void markProjectionStale(boolean stale) {
+        staleCurveNote.setVisible(stale);
+        staleCurveNote.setManaged(stale);
+        if (projectionWrapper == null) return;
+        projectionWrapper.getStyleClass().remove("projection-stale");
+        if (stale) projectionWrapper.getStyleClass().add("projection-stale");
     }
 
     private void updateInputsVisibility() {
@@ -956,6 +995,7 @@ public final class SimulationPage implements ResponsivePage {
             showResultProblem("Fora do intervalo calculável", e.getMessage());
             return;
         }
+        markProjectionStale(false); // the curve drawn below is the current fields' result
         Boolean gain = r.profitCents() == 0 ? null : r.profitCents() > 0;
         String tone = gain == null ? null : gain ? "pos" : "neg";
         String resultName = gain == null ? "Resultado" : gain ? "Lucro" : "Prejuízo";
@@ -972,6 +1012,7 @@ public final class SimulationPage implements ResponsivePage {
             series.setName("Ação");
             series.getData().add(new XYChart.Data<>(0, r.seriesCents().get(0) / 100.0));
             series.getData().add(new XYChart.Data<>(1, r.seriesCents().get(1) / 100.0));
+            showMonthAxis(1);
             projectionChart.getData().add(series);
             Motion.chartRefresh(projectionChart);
         } else {
@@ -1000,8 +1041,29 @@ public final class SimulationPage implements ResponsivePage {
             series.getData().add(new XYChart.Data<>(month, seriesCents.get(month) / 100.0));
         }
 
+        showMonthAxis(seriesCents.size() - 1);
         projectionChart.getData().add(series);
         Motion.chartRefresh(projectionChart);
+    }
+
+    /**
+     * R3-05: the "Meses" axis runs from 0 to the period in whole months and names its end (the automatic
+     * range read 0, 2 … 11, 13 for twelve months: no 1, no 12, and a month 13 that is not projected).
+     */
+    private void showMonthAxis(int months) {
+        int period = Math.max(1, months);
+        NumberAxis x = (NumberAxis) projectionChart.getXAxis();
+        x.setAutoRanging(false);
+        x.setLowerBound(0);
+        x.setUpperBound(period);
+        x.setTickUnit(monthStep(period));
+    }
+
+    /** The smallest of 1, 2, 3, 6, 12, 24 or 60 months that divides the period into at most 12 steps. */
+    static int monthStep(int months) {
+        for (int step : new int[]{1, 2, 3, 6, 12, 24, 60})
+            if (months % step == 0 && months / step <= 12) return step;
+        return Math.max(1, (int) Math.ceil(months / 12.0));
     }
 
     /** {@code null} = neutral (idle or a problem to fix), otherwise gain/loss tone on the number. */

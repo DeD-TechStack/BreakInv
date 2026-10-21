@@ -143,4 +143,85 @@ class AssetAnalysisPageAsyncTest {
             worker.pollFirst().run(); // the probe failing is non-critical and must not throw
         });
     }
+
+    /**
+     * R2-16: "Histórico de preço" had no dates on its time axis and no unit on its value axis — only
+     * the hover told when and how much. The axis names the dates; the hover still gives the exact point.
+     */
+    @Test
+    void priceHistoryShowsDatesOnItsTimeAxisAndTheCurrencyOnItsValueAxis() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            AssetAnalysisPage page = new AssetAnalysisPage(
+                    ticker -> new FetchResult.Success<>(petr()),
+                    (ticker, period) -> new HistoryResult(points(20), period.range, Set.of()),
+                    worker::add, Runnable::run);
+            ComboBox<?> combo = field(page, "tickerCombo");
+            ((ComboBox<Object>) combo).getEditor().setText("PETR4");
+            ((Button) field(page, "searchBtn")).fire();
+            worker.pollFirst().run();
+            worker.pollFirst().run();
+            javafx.scene.chart.NumberAxis x = field(page, "xAxis");
+            javafx.scene.chart.NumberAxis y = field(page, "yAxis");
+            assertTrue(x.isTickLabelsVisible() && x.isTickMarkVisible(), "dates are read on the time axis");
+            long jan2 = LocalDateTime.of(2026, 1, 2, 0, 0).toEpochSecond(java.time.ZoneOffset.UTC);
+            String label = x.getTickLabelFormatter().toString(jan2);
+            assertTrue(label != null && label.contains("02"), "a tick reads as a date: '" + label + "'");
+            assertTrue(y.getLabel() != null && y.getLabel().contains("R$"), "the value axis names its unit: " + y.getLabel());
+        });
+    }
+
+    static javafx.scene.paint.Color firstColor(javafx.scene.paint.Paint paint) {
+        if (paint instanceof javafx.scene.paint.Color c) return c;
+        if (paint instanceof javafx.scene.paint.LinearGradient g) return g.getStops().get(0).getColor();
+        throw new AssertionError("unexpected paint " + paint);
+    }
+
+    /**
+     * R3-08: under the green line the area came out brown-red — the stylesheet aimed at
+     * `.chart-series-area`, which no node carries, so the theme's first chart colour filled it — and the
+     * value axis read 34.704 / 33.856 / … (a sixth of the padded range). The fill wears the line's hue;
+     * the ticks are round steps (1, 2, 2.5 or 5 × 10ⁿ) on round bounds that hold every price.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void priceAreaWearsTheLineHueAndTheValueAxisStepsRoundly() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            AssetAnalysisPage page = new AssetAnalysisPage(
+                    ticker -> new FetchResult.Success<>(petr()),
+                    (ticker, period) -> new HistoryResult(points(20), period.range, Set.of()),
+                    worker::add, Runnable::run);
+            var scene = new javafx.scene.Scene(page.view(), 1060, 900);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            ComboBox<?> combo = field(page, "tickerCombo");
+            ((ComboBox<Object>) combo).getEditor().setText("PETR4");
+            ((Button) field(page, "searchBtn")).fire();
+            worker.pollFirst().run();
+            worker.pollFirst().run();
+            for (int pass = 0; pass < 3; pass++) { page.view().applyCss(); page.view().layout(); }
+            var fill = (javafx.scene.shape.Path) page.view().lookup(".chart-series-area-fill");
+            var line = (javafx.scene.shape.Path) page.view().lookup(".chart-series-area-line");
+            assertNotNull(fill);
+            assertNotNull(line);
+            double hueGap = Math.abs(firstColor(fill.getFill()).getHue() - firstColor(line.getStroke()).getHue());
+            assertTrue(Math.min(hueGap, 360 - hueGap) < 15, "area " + fill.getFill() + " under a line " + line.getStroke());
+            AreaChart<Number, Number> chart = field(page, "areaChart");
+            double min = chart.getData().get(0).getData().stream().mapToDouble(d -> d.getYValue().doubleValue()).min().orElseThrow();
+            double max = chart.getData().get(0).getData().stream().mapToDouble(d -> d.getYValue().doubleValue()).max().orElseThrow();
+            javafx.scene.chart.NumberAxis y = field(page, "yAxis");
+            assertRoundAxis(y, min, max);
+        });
+    }
+
+    static void assertRoundAxis(javafx.scene.chart.NumberAxis y, double min, double max) {
+        double unit = y.getTickUnit();
+        double mantissa = unit / Math.pow(10, Math.floor(Math.log10(unit)));
+        assertTrue(java.util.stream.DoubleStream.of(1, 2, 2.5, 5).anyMatch(m -> Math.abs(m - mantissa) < 1e-9), "round step: " + unit);
+        for (double bound : new double[]{y.getLowerBound(), y.getUpperBound()}) {
+            double steps = bound / unit;
+            assertTrue(Math.abs(steps - Math.rint(steps)) < 1e-6, "bound " + bound + " on the step " + unit);
+        }
+        assertTrue(y.getLowerBound() <= min && y.getUpperBound() >= max, "every price inside " + y.getLowerBound() + ".." + y.getUpperBound());
+        double ticks = (y.getUpperBound() - y.getLowerBound()) / unit;
+        assertTrue(ticks >= 3 && ticks <= 9, ticks + " intervals");
+    }
 }

@@ -188,6 +188,16 @@ public final class Motion {
 
     // ── Enter / leave ──────────────────────────────────────────────────────
 
+    /** Fades a node in (0 → 1). Cancellable through {@link #settle}; under reduced motion it is simply shown. */
+    public static void fadeIn(Node node, int ms) {
+        settle(node);
+        if (reduced) return;
+        node.setOpacity(0);
+        FadeTransition fade = new FadeTransition(Duration.millis(ms), node);
+        fade.setFromValue(0); fade.setToValue(1); fade.setInterpolator(Interpolator.EASE_OUT);
+        run(node, fade, null, null);
+    }
+
     /** Fades and slides a node in from {@code fromY} px below. Node must already be visible/managed. */
     public static void fadeSlideIn(Node node, int ms, double fromY) {
         settle(node);

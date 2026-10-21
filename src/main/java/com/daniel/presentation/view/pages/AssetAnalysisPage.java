@@ -148,6 +148,7 @@ public final class AssetAnalysisPage implements ResponsivePage {
         errorBanner.setGraphic(Icons.alertTriangle());
         errorBanner.setGraphicTextGap(8);
         errorBanner.setWrapText(true);
+        errorBanner.setMaxWidth(Double.MAX_VALUE); // a banner spans its panel, whatever the message length (E-V2)
         errorBanner.getStyleClass().add("warning-banner");
         hide(errorBanner);
 
@@ -207,7 +208,10 @@ public final class AssetAnalysisPage implements ResponsivePage {
     @Override
     public void onBreakpoint(Breakpoint bp) {
         boolean narrow = bp == Breakpoint.NARROW;
-        dayStrip.setColumns(2);
+        // Beside the quote (wide) the day figures form a 2×2 block; stacked under it at medium
+        // width they own the whole row, so one line of four (the strip still drops columns that
+        // would cut a value) instead of a 2×2 block twice as tall (A-V10).
+        dayStrip.setColumns(bp == Breakpoint.MEDIUM ? 4 : 2);
         summaryPair.onBreakpoint(bp);
         yearStrip.setColumns(narrow ? 2 : bp == Breakpoint.MEDIUM ? 3 : 5);
         // period toggles sit in the panel header when there is room, under the title otherwise
@@ -308,6 +312,7 @@ public final class AssetAnalysisPage implements ResponsivePage {
         tickerCombo.getEditor().setOnAction(e -> doSearch());
 
         searchBtn.getStyleClass().add("button");
+        searchBtn.setMinWidth(Region.USE_PREF_SIZE);
         searchBtn.setTooltip(new Tooltip("Buscar cotação e histórico (Enter)"));
         searchBtn.setAccessibleText("Buscar cotação");
         searchBtn.setOnAction(e -> doSearch());
@@ -344,7 +349,8 @@ public final class AssetAnalysisPage implements ResponsivePage {
 
         // Temporal axis: distribution proportional to the real interval between dates
         ChartAxisUtils.installTemporalAxis(xAxis, areaChart, () -> currentDateFmt, () -> lastEpochSecs);
-        ChartAxisUtils.hideTemporalAxisLabels(xAxis); // the crosshair is the reading mechanism
+        // R2-16: the axis names the dates and the unit; the crosshair gives the exact point
+        yAxis.setLabel("Preço (R$)");
 
         StackPane chartWrapper = ChartCrosshair.installTemporal(areaChart,
                 epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(currentDateFmt),
@@ -574,12 +580,8 @@ public final class AssetAnalysisPage implements ResponsivePage {
 
         if (series.getData().isEmpty()) return;
 
-        // Eixo Y com padding de 5% acima e abaixo do range real
-        double range   = maxPrice - minPrice;
-        double padding = range > 0 ? range * 0.05 : maxPrice * 0.02;
-        yAxis.setLowerBound(minPrice - padding);
-        yAxis.setUpperBound(maxPrice + padding);
-        yAxis.setTickUnit((range + 2 * padding) / 6.0);
+        // R3-08: round steps on round bounds around the prices (a sixth of the padded range read 34.704, 33.856…)
+        ChartAxisUtils.roundValueAxis(yAxis, minPrice, maxPrice);
 
         areaChart.getData().add(series);          // data first
         Motion.chartRefresh(areaChart);           // then the pulse that shows it changed

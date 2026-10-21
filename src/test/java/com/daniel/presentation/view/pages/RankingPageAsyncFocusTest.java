@@ -109,6 +109,66 @@ class RankingPageAsyncFocusTest {
         view.layout();
     }
 
+    // ── R2-08 (candidate-retomada-r2 review) ───────────────────────────────
+
+    /** The visible empty state in the panel that holds {@code chart}, or null. */
+    static javafx.scene.layout.VBox stateBeside(Node chart) {
+        Node panel = chart;
+        while (panel != null && !panel.getStyleClass().contains("panel-block")) panel = panel.getParent();
+        assertNotNull(panel, "chart inside a panel");
+        List<Node> all = new ArrayList<>();
+        java.util.function.Consumer<Node>[] walk = new java.util.function.Consumer[1];
+        walk[0] = n -> { all.add(n); if (n instanceof Parent p) p.getChildrenUnmodifiable().forEach(walk[0]); };
+        walk[0].accept(panel);
+        return (javafx.scene.layout.VBox) all.stream()
+                .filter(n -> n.getStyleClass().contains("empty-state") && n.isVisible() && n.isManaged())
+                .findFirst().orElse(null);
+    }
+
+    static String title(javafx.scene.layout.VBox state) {
+        assertNotNull(state, "an empty state is shown");
+        return ((Label) state.lookup(".empty-title")).getText();
+    }
+
+    /**
+     * R2-08 (Ranking): a period without history and the idle moving average drew bare 0–110 / 0–100
+     * grids under their messages. With no line, the chart is not drawn — its area stays (nothing
+     * jumps) and states why; a line brings the chart back.
+     */
+    @Test
+    void chartsWithoutALineStateWhyInsteadOfABareGrid() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            boolean[] history = {false};
+            RankingPage page = pageWith(t -> new FetchResult.Success<>(twoStocks()),
+                    (ticker, period) -> new HistoryResult(history[0] ? points(20) : List.<HistoryPoint>of(), period.range, Set.of()));
+            LineChart<?, ?> ma = field(page, "maChart");
+            assertFalse(ma.isVisible(), "no calculation yet: no grid");
+            assertEquals("Média móvel não calculada", title(stateBeside(ma)));
+
+            page.onShow();
+            drain();
+            LineChart<?, ?> ret = field(page, "returnChart");
+            assertTrue(ret.getData().isEmpty());
+            assertFalse(ret.isVisible(), "no history in the period: no grid");
+            assertEquals("Sem histórico no período", title(stateBeside(ret)));
+
+            history[0] = true;
+            toggle(page, Period.ONE_YEAR).fire();
+            drain();
+            assertTrue(ret.isVisible() && !ret.getData().isEmpty(), "a line brings the chart back");
+            assertNull(stateBeside(ret), "and the state goes");
+
+            var render = RankingPage.class.getDeclaredMethod("renderMAChart", List.class, String.class);
+            render.setAccessible(true);
+            render.invoke(page, points(30), "AAAA3");
+            assertTrue(ma.isVisible(), "a calculated average is drawn");
+            assertNull(stateBeside(ma));
+            render.invoke(page, List.of(), "AAAA3");
+            assertFalse(ma.isVisible(), "no data: no grid");
+            assertNotNull(stateBeside(ma), "the area states it");
+        });
+    }
+
     // ── L6 ─────────────────────────────────────────────────────────────────
 
     @Test

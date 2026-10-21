@@ -146,4 +146,43 @@ class DialogCloseDuringSubmitTest {
         });
         assertEquals(10_000L, daily.cashStatus().cashCents());
     }
+
+    /**
+     * The OS close (Alt+F4, the window's X) is a WINDOW_CLOSE_REQUEST on the dialog's window, not a
+     * DIALOG_CLOSE_REQUEST. JavaFX's dialog answers it by calling close() WITHOUT consuming the window
+     * event, and the window's default handler then hides the stage whatever the dialog decided: in the
+     * r2 JAR the Aporte vanished during "Gravando…" and with no exit motion. The frame takes the
+     * native close over before any window handler and routes it through the dialog's own close —
+     * the same path as the header's close button — where the busy veto and the exit motion apply.
+     */
+    @Test
+    void movementDialog_nativeWindowClose_isTheDialogsOwnClose_andNeverHidesTheWindowDuringTheWrite() {
+        AtomicInteger onSaved = new AtomicInteger();
+        FxTestSupport.runAndWait(() -> {
+            MovementDialog d = new MovementDialog("Aporte", null, MovementForm.deposit(), daily, m -> onSaved.incrementAndGet(),
+                    worker::add, Runnable::run);
+            javafx.stage.Window w = d.getDialogPane().getScene().getWindow();
+            assertNotNull(w, "the dialog has its window before it is shown");
+            AtomicInteger reachedWindowHandlers = new AtomicInteger();
+            AtomicInteger dialogCloses = new AtomicInteger();
+            w.addEventHandler(javafx.stage.WindowEvent.WINDOW_CLOSE_REQUEST, e -> reachedWindowHandlers.incrementAndGet());
+            d.addEventFilter(DialogEvent.DIALOG_CLOSE_REQUEST, e -> dialogCloses.incrementAndGet());
+
+            Event.fireEvent(w, new javafx.stage.WindowEvent(w, javafx.stage.WindowEvent.WINDOW_CLOSE_REQUEST));
+            assertEquals(1, dialogCloses.get(), "idle: the native close is the dialog's own close (its exit motion applies)");
+            assertEquals(0, reachedWindowHandlers.get(), "the window's default hide must not run behind the dialog's back");
+
+            d.amountField().setText("100,00");
+            d.submit();
+            assertEquals(1, worker.size(), "write queued");
+            Event.fireEvent(w, new javafx.stage.WindowEvent(w, javafx.stage.WindowEvent.WINDOW_CLOSE_REQUEST));
+            assertEquals(1, dialogCloses.get(), "during the write the close is refused before it reaches the dialog");
+            assertEquals(0, reachedWindowHandlers.get(), "and the window is not hidden");
+            assertEquals(0, onSaved.get());
+
+            drain();
+            assertEquals(1, onSaved.get(), "the write completes once, from its own success path");
+        });
+        assertEquals(10_000L, daily.cashStatus().cashCents());
+    }
 }

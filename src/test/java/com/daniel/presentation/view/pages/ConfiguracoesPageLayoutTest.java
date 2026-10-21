@@ -139,12 +139,64 @@ class ConfiguracoesPageLayoutTest {
             assertTrue(fresh.getText().toLowerCase().contains("nunca") || fresh.getText().toLowerCase().contains("atualizad"), fresh.getText());
             Button update = field("updateRatesBtn");
             assertNotNull(update.getTooltip());
-            page.onBreakpoint(Breakpoint.NARROW);
-            assertEquals(1, rates.columns());
+            // A-V6: three short rates are one row wherever they fit; the strip itself drops
+            // columns only when a value would not fit (it measures the real width).
+            for (Breakpoint bp : List.of(Breakpoint.NARROW, Breakpoint.WIDE, Breakpoint.MEDIUM)) {
+                page.onBreakpoint(bp);
+                assertEquals(3, rates.columns(), "three rates requested at " + bp);
+            }
+        });
+    }
+
+    /** A-V6: in the wide integration column the three rates sit on one line, not a 220 px stack of dashes. */
+    @Test
+    void wideIntegrationColumnShowsTheThreeRatesOnOneLine() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            var view = page.view();
+            var scene = new javafx.scene.Scene(view, 1060, 760);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
             page.onBreakpoint(Breakpoint.WIDE);
-            assertEquals(1, rates.columns(), "reference values stack in the narrower integration column");
-            page.onBreakpoint(Breakpoint.MEDIUM);
-            assertEquals(3, rates.columns(), "full-width integration panel can show three rates");
+            ((javafx.scene.layout.Region) view).resize(1060, 760);
+            for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+            StatStrip rates = field("ratesStrip");
+            assertEquals(3, rates.effectiveColumns(), "three rates fit beside the token column at 1060 px");
+            for (String label : rates.labels()) {
+                Label value = rates.valueLabel(label);
+                var shown = (javafx.scene.text.Text) value.lookup(".text");
+                assertEquals(value.getText(), shown == null ? null : shown.getText(), "rate value never cut: " + label);
+            }
+        });
+    }
+
+    /**
+     * R2-20: the rates strip drew its own box inside the rates panel (box in box), and the panel was
+     * stretched to its BRAPI neighbour's height — ~165 px empty under "Atualizar CDI, SELIC e IPCA".
+     */
+    @Test
+    void ratesPanelHasOneFrameAndItsOwnHeight() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            var view = page.view();
+            var scene = new javafx.scene.Scene(view, 1060, 900);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.WIDE);
+            ((javafx.scene.layout.Region) view).resize(1060, 900);
+            for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+            StatStrip rates = field("ratesStrip");
+            var pair = (com.daniel.presentation.view.layout.AdaptivePair) pageRoot().lookup(".settings-integrations");
+            assertTrue(pair.isSideBySide());
+            var ratesPanel = (javafx.scene.layout.Region) pair.second();
+            var brapiPanel = (javafx.scene.layout.Region) pair.first();
+            List<String> problems = new ArrayList<>();
+            if (rates.getBorder() != null && rates.getBorder().getStrokes().stream().anyMatch(s -> s.getWidths().getTop() > 0
+                    && s.getTopStroke() instanceof javafx.scene.paint.Color c && c.getOpacity() > 0))
+                problems.add("the strip draws its own frame inside the panel");
+            if (rates.getBackground() != null && rates.getBackground().getFills().stream()
+                    .anyMatch(f -> f.getFill() instanceof javafx.scene.paint.Color c && c.getOpacity() > 0))
+                problems.add("the strip paints its own box inside the panel");
+            double own = ratesPanel.prefHeight(ratesPanel.getWidth());
+            if (brapiPanel.getHeight() > own + 40 && ratesPanel.getHeight() > own + 1)
+                problems.add("rates panel stretched to " + ratesPanel.getHeight() + " for " + own + " of content");
+            assertEquals(List.of(), problems);
         });
     }
 }

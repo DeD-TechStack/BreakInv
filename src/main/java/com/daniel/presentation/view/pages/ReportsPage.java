@@ -22,6 +22,7 @@ import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import org.kordamp.ikonli.feather.Feather;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -72,6 +73,11 @@ public final class ReportsPage implements ResponsivePage {
     private TableColumn<ExtractRow, String> dateColRef;
     private TableColumn<ExtractRow, Void> actionColRef;
     private final javafx.beans.property.BooleanProperty compactActions = new javafx.beans.property.SimpleBooleanProperty();
+    // R3-01: the breakpoint and column set the widths were last restarted for (see resetColumnWidths)
+    private Breakpoint breakpoint = Breakpoint.WIDE;
+    private String columnLayout = "";
+    /** "Detalhes" at its widest scale (75.43 px at 100 %, 76.09 at 150 %) + cell padding + a spare pixel. */
+    private static final double ACTION_MIN = 104, ACTION_MAX = 124;
     private final FlowPane filterBar = new FlowPane(6, 6);
     private final ToggleGroup filterGroup = new ToggleGroup();
     private final Label loadingLabel = new Label("Carregando lançamentos\u2026");
@@ -81,6 +87,17 @@ public final class ReportsPage implements ResponsivePage {
             + "o estorno aponta de volta para o original. Registros antigos vêm do cadastro anterior e não entram no caixa.");
 
     private List<ExtractRow> allRows = List.of();
+    /** What the table's own message must agree with (A-V8): a month not read is never "empty". */
+    private enum MonthState { LOADING, FAILED, LOADED }
+    private MonthState monthState = MonthState.LOADED;
+    private final javafx.scene.layout.VBox emptyMonthState = EmptyState.of(Feather.FILE_TEXT, "Nenhum lançamento neste período",
+            "Aportes, compras, vendas, ajustes e estornos registrados neste mês aparecem aqui.", true);
+    private final javafx.scene.layout.VBox loadingMonthState = EmptyState.of(Feather.CLOCK, "Carregando lançamentos do mês…",
+            "As linhas aparecem quando a leitura terminar.", true);
+    private final javafx.scene.layout.VBox failedMonthState = EmptyState.of(Feather.ALERT_TRIANGLE, "Lançamentos indisponíveis",
+            "Este mês não foi lido; o aviso acima diz o motivo. Nada foi apagado.", true);
+    private final javafx.scene.layout.VBox filteredOutState = EmptyState.of(Feather.FILTER, "Nenhum lançamento neste filtro",
+            "Escolha \"Tudo\" para ver todos os lançamentos do mês.", true);
     private YearMonth currentMonth = YearMonth.now();
     private final AtomicLong reloadEpoch = new AtomicLong(0);
 
@@ -141,13 +158,13 @@ public final class ReportsPage implements ResponsivePage {
 
         buildFilters();
         buildTable();
-        VBox.setVgrow(table, Priority.ALWAYS);
 
         loadingLabel.getStyleClass().add("text-helper");
         hide(loadingLabel);
         errorBanner.setGraphic(Icons.alertTriangle());
         errorBanner.setGraphicTextGap(8);
         errorBanner.setWrapText(true);
+        errorBanner.setMaxWidth(Double.MAX_VALUE); // a banner spans its panel, whatever the message length (E-V2)
         errorBanner.getStyleClass().add("warning-banner");
         hide(errorBanner);
 
@@ -184,6 +201,7 @@ public final class ReportsPage implements ResponsivePage {
 
     @Override
     public void onBreakpoint(Breakpoint bp) {
+        breakpoint = bp;
         boolean narrow = bp == Breakpoint.NARROW;
         strip.setColumns(narrow ? 2 : 4);
         updateTableColumns();
@@ -205,17 +223,42 @@ public final class ReportsPage implements ResponsivePage {
             }
         }
         double usable = table.getWidth() - table.getInsets().getLeft() - table.getInsets().getRight() - scrollbar;
-        boolean compact = usable < 96 + 150 + 100;
+        // R2-17: the kind of a movement keeps its column before the date keeps its year and the action
+        // its text (at 536 px the statement showed a full date and "Detalhes" and dropped Tipo). Order:
+        // full with Tipo, short date + icon with Tipo, full without Tipo, short without Tipo.
+        double typeMin = typeColRef.getMinWidth();
+        boolean fullWithType = usable >= 96 + typeMin + 150 + ACTION_MIN;
+        boolean shortWithType = usable >= 64 + typeMin + 150 + 44;
+        boolean compact = !fullWithType && (shortWithType || usable < 96 + 150 + ACTION_MIN);
         compactActions.set(compact);
         dateColRef.setMaxWidth(compact ? 80 : 110);
         dateColRef.setMinWidth(compact ? 64 : 96);
-        actionColRef.setMaxWidth(compact ? 44 : 120);
-        actionColRef.setMinWidth(compact ? 44 : 100);
+        actionColRef.setMaxWidth(compact ? 44 : ACTION_MAX);
+        actionColRef.setMinWidth(compact ? 44 : ACTION_MIN);
         double fullMin = table.getColumns().stream().mapToDouble(TableColumn::getMinWidth).sum();
         boolean full = usable >= fullMin;
         numberColRef.setVisible(full);
         descColRef.setVisible(full);
         typeColRef.setVisible(usable >= fullMin - numberColRef.getMinWidth() - descColRef.getMinWidth());
+        // R3-01 (r3 J1): the constrained policy redistributes from the widths it finds, so the narrow passes
+        // left the wide table other columns ("Nº" cut to "...", "Detalhes" to "Detal..." at 150 %). The widths
+        // restart from the preferred ones whenever the table's width, the breakpoint or the column set changes
+        // (a restart at the width the breakpoint arrived with still left a pixel's difference): the same width
+        // gives the same columns, whatever came before. A column the user resized keeps its width until then.
+        String layout = breakpoint + "|" + compact + "|" + full + "|" + typeColRef.isVisible() + "|" + table.getWidth();
+        if (!layout.equals(columnLayout)) {
+            columnLayout = layout;
+            resetColumnWidths();
+        }
+    }
+
+    /** Applies each column's preferred width again (a changed prefWidth resets the width). */
+    private void resetColumnWidths() {
+        for (TableColumn<ExtractRow, ?> column : table.getColumns()) {
+            double pref = column.getPrefWidth();
+            column.setPrefWidth(pref + 1);
+            column.setPrefWidth(pref);
+        }
     }
 
     private static String monthText(YearMonth month) {
@@ -244,13 +287,37 @@ public final class ReportsPage implements ResponsivePage {
         Flow f = t == null ? Flow.ALL : (Flow) t.getUserData();
         ExtractRow selected = table.getSelectionModel().getSelectedItem();
         table.setItems(FXCollections.observableArrayList(allRows.stream().filter(f.keep).toList()));
-        entryCount.setText(table.getItems().size() + " de " + allRows.size() + " lançamentos");
-        table.setPrefHeight(table.getItems().isEmpty() ? 240 : 44 + 42 * Math.min(10, table.getItems().size()));
+        entryCount.setText(table.getItems().size() + " de " + allRows.size() + (allRows.size() == 1 ? " lançamento" : " lançamentos"));
+        table.setPlaceholder(switch (monthState) {
+            case LOADING -> loadingMonthState;
+            case FAILED -> failedMonthState;
+            case LOADED -> allRows.isEmpty() ? emptyMonthState : filteredOutState;
+        });
+        sizeTable();
         if (selected != null && table.getItems().contains(selected)) table.getSelectionModel().select(selected);
         if (detailedRow != null && !table.getItems().contains(detailedRow)) {
             detailedRow = null;
             details.hide(); // filtering/loading must not steal focus or leave a stale financial action
         }
+    }
+
+    /**
+     * Height by volume. Without rows the table holds its state message (A-V8): at least 240 px and
+     * whatever that message needs at the table's actual width — a fixed 240 px cut the empty
+     * month's hint at 544 px of page (r1: "…registrados neste mês ...").
+     */
+    private void sizeTable() {
+        int rows = table.getItems().size();
+        if (rows > 0) {
+            table.setPrefHeight(44 + 42 * Math.min(10, rows));
+            return;
+        }
+        double height = 240;
+        if (table.getPlaceholder() instanceof Region message && table.getWidth() > 0) {
+            double inside = table.getWidth() - table.snappedLeftInset() - table.snappedRightInset();
+            height = Math.max(height, Math.ceil(44 + message.prefHeight(inside) + 32));
+        }
+        if (table.getPrefHeight() != height) table.setPrefHeight(height);
     }
 
     private void buildTable() {
@@ -260,6 +327,7 @@ public final class ReportsPage implements ResponsivePage {
         table.setMinHeight(Region.USE_PREF_SIZE);
         table.setMaxHeight(Region.USE_PREF_SIZE);
         table.setPrefHeight(240);
+        table.widthProperty().addListener((o, a, b) -> sizeTable()); // the message wraps by width
 
         TableColumn<ExtractRow, String> dateCol = new TableColumn<>("Data");
         dateColRef = dateCol;
@@ -274,9 +342,10 @@ public final class ReportsPage implements ResponsivePage {
         TableColumn<ExtractRow, String> numberCol = new TableColumn<>("Nº");
         numberColRef = numberCol;
         numberCol.setCellValueFactory(v -> new SimpleStringProperty(v.getValue().number()));
-        numberCol.setMinWidth(48);
+        numberCol.setMinWidth(56); // R3-01: the "Nº" title with its header padding (48 cut it to "...")
         numberCol.setMaxWidth(64);
         numberCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+        numberCol.getStyleClass().add("num-col"); // R3-09: its title sits over its numbers (.table-dense .num-col)
         numberCol.setCellFactory(col -> new TableCell<>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
@@ -327,6 +396,7 @@ public final class ReportsPage implements ResponsivePage {
         valueCol.setMinWidth(150); // "+ R$ 1.234.567,89" at the table font plus cell padding, never cut
         valueCol.setMaxWidth(190);
         valueCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+        valueCol.getStyleClass().add("num-col"); // R3-09: its title sits over its numbers (.table-dense .num-col)
         valueCol.setCellFactory(col -> new TableCell<>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
@@ -343,8 +413,8 @@ public final class ReportsPage implements ResponsivePage {
 
         TableColumn<ExtractRow, Void> actionCol = new TableColumn<>("");
         actionColRef = actionCol;
-        actionCol.setMinWidth(100);
-        actionCol.setMaxWidth(120);
+        actionCol.setMinWidth(ACTION_MIN);
+        actionCol.setMaxWidth(ACTION_MAX);
         actionCol.setSortable(false);
         actionCol.setCellFactory(col -> new TableCell<>() {
             private final Button detailsBtn = new Button("Detalhes");
@@ -374,8 +444,7 @@ public final class ReportsPage implements ResponsivePage {
             }
         });
 
-        table.setPlaceholder(EmptyState.of("📋", "Nenhum lançamento neste período",
-                "Aportes, compras, vendas, ajustes e estornos registrados neste mês aparecem aqui.", true));
+        table.setPlaceholder(emptyMonthState);
 
         table.getColumns().add(dateCol);
         table.getColumns().add(numberCol);
@@ -401,8 +470,11 @@ public final class ReportsPage implements ResponsivePage {
         CompletableFuture.supplyAsync(() -> {
             List<StatementEntry> entries = daily.hasLedger() ? daily.statement(month) : legacyOnly(month);
             long lucroTotal = 0;
-            Long patrimony = 0L;
-            if (!entries.isEmpty()) {
+            Long patrimony = null;
+            // R2-18: gain and wealth are values AT a date, not sums of the month's movements — a month
+            // without movements has them too (it said "— / sem lançamentos no mês" beside a known
+            // wealth). Only a month still to come has neither (showEntries says so).
+            if (!month.isAfter(YearMonth.now())) {
                 lucroTotal = daily.getTotalProfit(refDate);
                 if (isCurrentMonth) {
                     patrimony = daily.getTotalPatrimony(LocalDate.now());
@@ -425,6 +497,7 @@ public final class ReportsPage implements ResponsivePage {
 
     /** Loading state: the previous month's rows and figures leave the screen before the new label is read with them. */
     void showLoading() {
+        monthState = MonthState.LOADING;
         allRows = List.of();
         applyFilter();
         entryCount.setText("Carregando…");
@@ -435,6 +508,7 @@ public final class ReportsPage implements ResponsivePage {
 
     /** Failure state for THIS month: the message stays on the page; no rows and no figures are shown under it. */
     void showFailure(String message) {
+        monthState = MonthState.FAILED;
         allRows = List.of();
         applyFilter();
         entryCount.setText("Indisponível");
@@ -447,7 +521,8 @@ public final class ReportsPage implements ResponsivePage {
     /**
      * Renders the month: rows newest first, deposits/buys summed from the entries exactly as
      * before (reversed movements excluded; old BUY records counted as buys), gain and wealth as
-     * given. An empty month shows "—" for gain/wealth (unknown), zero for the sums.
+     * given — values at the month's date, with or without movements (R2-18). A month still to come
+     * shows "—" for gain/wealth; an empty month shows zero for the sums.
      */
     void showEntries(List<StatementEntry> entries, long lucroTotal, long patrimony) {
         showEntries(entries, lucroTotal, Long.valueOf(patrimony));
@@ -469,14 +544,15 @@ public final class ReportsPage implements ResponsivePage {
             }
             if (e.legacy() && "BUY".equals(e.legacyType())) buys += e.amountCents();
         }
+        monthState = MonthState.LOADED;
         allRows = rows;
         applyFilter();
 
         strip.set(STAT_DEPOSITS, daily.brl(deposits), deposits == 0 ? "muted" : null);
         strip.set(STAT_BUYS, daily.brl(buys), buys == 0 ? "muted" : null);
-        if (entries.isEmpty()) {
-            strip.set(STAT_GAIN, "—", "muted", "sem lançamentos no mês");
-            strip.set(STAT_WEALTH, "—", "muted", "sem lançamentos no mês");
+        if (currentMonth.isAfter(YearMonth.now())) {
+            strip.set(STAT_GAIN, "—", "muted", "mês futuro");
+            strip.set(STAT_WEALTH, "—", "muted", "mês futuro");
         } else {
             String gain = lucroTotal > 0 ? "+ " + daily.brl(lucroTotal) : lucroTotal < 0 ? "- " + daily.brl(Math.abs(lucroTotal)) : daily.brl(0);
             strip.set(STAT_GAIN, gain, lucroTotal > 0 ? "pos" : lucroTotal < 0 ? "neg" : "muted", "realizado + não realizado");

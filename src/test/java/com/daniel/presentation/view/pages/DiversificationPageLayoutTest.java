@@ -1,5 +1,6 @@
 package com.daniel.presentation.view.pages;
 
+import com.daniel.core.domain.entity.InvestmentType;
 import com.daniel.infrastructure.persistence.repository.SavedAnalysisRepository;
 import com.daniel.presentation.view.FxStubs;
 import com.daniel.presentation.view.FxTestSupport;
@@ -17,11 +18,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.lang.reflect.Field;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDate;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -42,6 +45,7 @@ class DiversificationPageLayoutTest {
     Path tempDir;
 
     final Deque<Runnable> worker = new ArrayDeque<>();
+    SavedAnalysisRepository plans;
     DiversificationPage page;
     Parent view;
 
@@ -55,7 +59,7 @@ class DiversificationPageLayoutTest {
             st.execute("CREATE TABLE allocation_selection (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
                     + "plan_id INTEGER REFERENCES allocation_plan(id) ON DELETE SET NULL)");
         }
-        SavedAnalysisRepository plans = new SavedAnalysisRepository(SavedAnalysisRepository.sqliteFactory(jdbcUrl));
+        plans = new SavedAnalysisRepository(SavedAnalysisRepository.sqliteFactory(jdbcUrl));
         FxTestSupport.runAndWait(() -> {
             page = new DiversificationPage(FxStubs.emptyDaily(), plans, worker::add, Runnable::run);
             view = page.view();
@@ -107,7 +111,11 @@ class DiversificationPageLayoutTest {
             assertTrue(controls.isSideBySide());
             assertTrue(comparison.isSideBySide());
             page.onBreakpoint(Breakpoint.MEDIUM);
-            assertTrue(controls.isSideBySide(), "two small control panels fit at medium width");
+            // Changed with evidence (candidate-retomada-r1 at 960×720): at medium the 0.42 share left
+            // the calculation options ~250 px and cut them ("Rebalancear por ...", "Patrimôn...").
+            // The controls stack until wide; DiversificationPageReadabilityTest
+            // #calculationTypeOptionsAreWholeAtEveryWidth measures the rendered text.
+            assertFalse(controls.isSideBySide(), "the control panels stack at medium width");
             assertFalse(comparison.isSideBySide(), "two tables with three columns each do not fit at medium width");
             page.onBreakpoint(Breakpoint.NARROW);
             assertFalse(controls.isSideBySide());
@@ -156,5 +164,76 @@ class DiversificationPageLayoutTest {
             Label total = field("totalAporteLabel");
             assertTrue(flatten(suggestions).contains(total));
         });
+    }
+
+    /**
+     * R4-02: the detailed tables measure their columns at the end of their own layout. As in the app, the page
+     * is laid out empty and the data arrive afterwards: the pass that receives them measures before the rows
+     * exist (Valor and % on their 72 px floors), the rows are created later in that same pass, and the layout
+     * they request never reaches the table — its parents are laying out — so it stayed cut, closed or open,
+     * until a resize ("R$ 1…" and "100,…" in the r4 capture at 150 %; the CP3 probe reproduced it at 100 % and
+     * 150 % on the financial fixture, with and without the R3-10 max height, which is not the cause). Within a
+     * pulse of opening "Ver tabelas detalhadas", "R$ 150,00" and "100,0%" are whole.
+     */
+    @Test
+    void detailedTablesFitTheirRowsWhenTheDataArriveAfterTheFirstLayout() throws Exception {
+        var types = List.of(new InvestmentType(1, "Ativo sintético TEST3", "ACOES", "ALTA", LocalDate.of(2026, 10, 15), null,
+                new BigDecimal("150"), "ACAO", null, null, "TEST3", new BigDecimal("25"), 6, null));
+        FxTestSupport.runAndWait(() -> {
+            page = new DiversificationPage(FxStubs.dailyWithTypes(types), plans, worker::add, Runnable::run);
+            view = page.view();
+            com.daniel.presentation.view.util.UiTheme.applyFont(view);
+            var scene = new javafx.scene.Scene(view, 1020, 640);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.of(1020));
+            ((javafx.scene.layout.Region) view).resize(1020, 640);
+            view.applyCss();
+            view.layout(); // shown empty, as when the page opens
+            page.onShow();
+            while (!worker.isEmpty()) worker.removeFirst().run(); // the data arrive
+            TableView<?> current = field("currentTable");
+            assertEquals(1, current.getItems().size(), "one category held: Ações");
+            view.applyCss();
+            view.layout(); // the pulse that receives them, tables still closed
+        });
+        FxTestSupport.runAndWait(() -> {
+            view.applyCss();
+            view.layout();
+            TitledPane tables = (TitledPane) pageRoot().lookup(".allocation-tables");
+            assertFalse(tables.isExpanded(), "the detailed tables start closed");
+            tables.setExpanded(true);
+            view.applyCss();
+            view.layout(); // the pulse that opens them
+        });
+        FxTestSupport.runAndWait(() -> {
+            view.applyCss();
+            view.layout(); // the next pulse: nothing resized
+            assertEquals(List.of(), cutAmounts(), "a pulse after opening");
+        });
+        FxTestSupport.runAndWait(() -> {
+            for (int i = 0; i < 3; i++) { view.applyCss(); view.layout(); }
+            assertEquals(List.of(), cutAmounts(), "settled");
+        });
+    }
+
+    /** What the current table's rows fail to show whole, plus a note when the expected amounts are missing. */
+    List<String> cutAmounts() throws Exception {
+        TableView<?> current = field("currentTable");
+        List<String> cut = new ArrayList<>();
+        List<String> shown = new ArrayList<>();
+        for (Node rowNode : current.lookupAll(".table-row-cell")) {
+            if (!(rowNode instanceof TableRow<?> row) || row.isEmpty() || !row.isVisible()) continue;
+            for (Node n : flatten(row)) {
+                if (!(n instanceof Labeled l) || !n.isVisible() || l.getText() == null || l.getText().isBlank()) continue;
+                for (Node c : l.getChildrenUnmodifiable()) {
+                    if (!(c instanceof javafx.scene.text.Text s)) continue;
+                    shown.add(s.getText());
+                    if (!l.getText().equals(s.getText())) cut.add("'" + s.getText() + "' instead of '" + l.getText() + "'");
+                }
+            }
+        }
+        if (shown.stream().noneMatch(s -> s.contains("150,"))) cut.add("no R$ 150,00 among " + shown);
+        if (shown.stream().noneMatch(s -> s.startsWith("100,"))) cut.add("no 100,0% among " + shown);
+        return cut;
     }
 }

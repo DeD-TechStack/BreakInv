@@ -16,6 +16,7 @@ import com.daniel.presentation.view.components.HeroValue;
 import com.daniel.presentation.view.components.Panel;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.layout.AdaptivePair;
+import com.daniel.presentation.view.layout.LineFlow;
 import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.Dialogs;
 import com.daniel.presentation.viewmodel.AllocationPlanCardController;
@@ -25,6 +26,7 @@ import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
@@ -88,9 +90,9 @@ public final class DiversificationPage implements ResponsivePage {
     private final Button cancelPlanBtn = new Button("Cancelar");
     private Long editingPlanId = null;
 
-    private final TableView<AllocationRow> currentTable = new TableView<>();
-    private final TableView<AllocationRow> idealTable = new TableView<>();
-    private final TableView<SuggestionRow> suggestionsTable = new TableView<>();
+    private final TableView<AllocationRow> currentTable = fittedTable();
+    private final TableView<AllocationRow> idealTable = fittedTable();
+    private final TableView<SuggestionRow> suggestionsTable = fittedTable();
 
     private final HeroValue hero = new HeroValue("Patrimônio atual");
     /** Distinguishes current positions, the strategy's ideal base, and contribution suggestions. */
@@ -137,15 +139,21 @@ public final class DiversificationPage implements ResponsivePage {
 
         Panel currentPanel = buildCurrentAllocationTable();
         idealPanel = buildIdealAllocationTable();
+        // R3-10: side by side each detailed panel keeps its own height — stretched to the taller target,
+        // "Distribuição atual" left ~270 px of empty surface under its table (as R2-20 in Configurações)
+        currentPanel.setMaxHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        idealPanel.setMaxHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         Panel calculationPanel = buildCalculationType();
         planPanel = buildMethodSelector();
         suggestionsPanel = buildSuggestionsTable();
 
         // two small control panels fit from medium width on; two tables only when wide
-        controlsPair = new AdaptivePair(calculationPanel, planPanel, Breakpoint.NARROW, 0.42, 16);
+        // V5 (r1 at 960×720: "Rebalancear por ...", "Patrimôn..."): side by side only when wide;
+        // a 0.42 share of the medium page left the calculation options 250 px.
+        controlsPair = new AdaptivePair(calculationPanel, planPanel, Breakpoint.MEDIUM, 0.42, 16);
         comparisonPair = new AdaptivePair(currentPanel, idealPanel, Breakpoint.MEDIUM, 0.5, 16);
         comparisonSummary = new Panel("Atual × alvo", alignedComparison)
-                .subtitle("Cada categoria reúne as duas bases; as barras representam percentuais, não dinheiro disponível.");
+                .subtitle("Barras e percentuais na mesma base, o patrimônio ideal: a diferença positiva entre alvo e atual é o aporte sugerido.");
         comparisonSummary.setVisible(false);
         comparisonSummary.setManaged(false);
         TitledPane detailedTables = new TitledPane("Ver tabelas detalhadas", comparisonPair);
@@ -197,7 +205,7 @@ public final class DiversificationPage implements ResponsivePage {
         rebalanceByContributionRadio.setTooltip(new Tooltip("Sugere aportes para equilibrar a carteira sem vender nada"));
         rebalanceByTargetRadio.setTooltip(new Tooltip("Sugere quanto aportar em cada categoria para chegar a um valor total"));
 
-        HBox segCalc = new HBox(2, rebalanceByContributionRadio, rebalanceByTargetRadio);
+        LineFlow segCalc = new LineFlow(2, 2, rebalanceByContributionRadio, rebalanceByTargetRadio);
         segCalc.getStyleClass().add("segmented");
 
         Label hint = new Label("Calcula o patrimônio alvo a partir da categoria mais pesada da carteira e sugere aportes para equilibrar — sem vender nenhum ativo.");
@@ -522,10 +530,173 @@ public final class DiversificationPage implements ResponsivePage {
         hero.setTrailing(impliedTargetBox);
     }
 
+    // Detailed tables (A-V4/A-L2; r1 populated: "R$ 20.226.800,..." and "Fundos Imo..." in three
+    // equal 144 px columns). Amounts and percentages keep what their widest rendered cell asks for;
+    // the category takes the rest down to CATEGORY_FLOOR (below it the whole name stays in the
+    // tooltip) and, if even that does not fit, the table scrolls sideways instead of cutting a value.
+    // A function of the width and the rows alone, so a return to wide restores the same columns.
+    static final double CATEGORY_FLOOR = 120;
+    static final double AMOUNT_FLOOR = 72;
+    static final double HEADER_PADDING = 24;
+    private static final double BAR_PREF_WIDTH = 40;
+    /** R2-05: a detailed table shows every row up to this many (category lists stay below it). */
+    static final int MAX_TABLE_ROWS = 10;
+    /** A-V3: one track for every current/target bar, so their lengths compare (was each text's width). */
+    static final double SHARE_TRACK = 140;
+
+    private static <T> TableView<T> fittedTable() {
+        TableView<T> table = new TableView<>() {
+            // R4-02: the rows of new items, or of a new size, are built after this measure, later in the same pass,
+            // and the relayout they then ask for does not propagate past the table while its parents are still
+            // laying out, so no later pulse came back to it: data arriving after the first layout left Valor and %
+            // on their 72 px floors ("R$ 1…", "100,…") until a resize. The first pass that sees new items or a new
+            // size therefore measures again on the next pulse — once, so it never loops.
+            private int itemsVersion, fittedVersion = -1;
+            private double fittedWidth = -1, fittedHeight = -1;
+            {
+                javafx.collections.ListChangeListener<T> changed = c -> itemsVersion++;
+                getItems().addListener(changed);
+                itemsProperty().addListener((o, a, b) -> {
+                    itemsVersion++;
+                    if (a != null) a.removeListener(changed);
+                    if (b != null) b.addListener(changed);
+                });
+            }
+            @Override protected void layoutChildren() {
+                super.layoutChildren();
+                fitColumns(this); // measures the rows built so far
+                if (fittedVersion != itemsVersion || fittedWidth != getWidth() || fittedHeight != getHeight()) {
+                    fittedVersion = itemsVersion;
+                    fittedWidth = getWidth();
+                    fittedHeight = getHeight();
+                    Platform.runLater(this::requestLayout); // the rows built after this measure, on the next pulse
+                }
+            }
+            @Override protected double computePrefHeight(double width) {
+                double fitted = fittedHeight(this, width);
+                return fitted > 0 ? fitted : super.computePrefHeight(width);
+            }
+            @Override protected double computeMinHeight(double width) {
+                double fitted = fittedHeight(this, width);
+                return fitted > 0 ? fitted : super.computeMinHeight(width);
+            }
+            // the height depends on the width: below the column budget a horizontal bar is reserved
+            @Override public javafx.geometry.Orientation getContentBias() { return javafx.geometry.Orientation.HORIZONTAL; }
+        };
+        table.getStyleClass().add("fitted-table");
+        // the height is a function of the row count and of the breakpoint's row size (CSS)
+        table.itemsProperty().addListener((o, a, b) -> table.requestLayout());
+        table.fixedCellSizeProperty().addListener((o, a, b) -> table.requestLayout());
+        return table;
+    }
+
+    static void fitColumns(TableView<?> table) {
+        var columns = table.getColumns();
+        if (table.getWidth() <= 0 || columns.size() < 2) return;
+        double[] need = columnNeeds(table);
+        double bar = 0;
+        for (Node n : table.lookupAll(".scroll-bar")) {
+            if (n instanceof ScrollBar sb && sb.getOrientation() == javafx.geometry.Orientation.VERTICAL && sb.isVisible())
+                bar = Math.ceil(sb.getWidth());
+        }
+        double available = Math.floor(table.getWidth() - table.snappedLeftInset() - table.snappedRightInset() - bar);
+        double fixed = 0;
+        for (int i = 1; i < columns.size(); i++) fixed += Math.max(AMOUNT_FLOOR, need[i]);
+        setColumnWidth(columns.get(0), Math.max(CATEGORY_FLOOR, available - fixed));
+        for (int i = 1; i < columns.size(); i++) setColumnWidth(columns.get(i), Math.max(AMOUNT_FLOOR, need[i]));
+    }
+
+    /** What each column's cells and title ask for, with the current CSS padding of the cells. */
+    static double[] columnNeeds(TableView<?> table) {
+        var columns = table.getColumns();
+        double[] need = new double[columns.size()];
+        for (Node n : table.lookupAll(".table-cell")) {
+            if (n instanceof TableCell<?, ?> cell && !cell.isEmpty() && cell.isVisible()) {
+                int i = columns.indexOf(cell.getTableColumn());
+                if (i >= 0) need[i] = Math.max(need[i], contentWidth(cell));
+            }
+        }
+        for (Node n : table.lookupAll(".column-header")) {
+            if (n instanceof javafx.scene.control.skin.TableColumnHeader header && header.lookup(".label") instanceof Label title) {
+                int i = columns.indexOf(header.getTableColumn());
+                if (i >= 0) need[i] = Math.max(need[i], Math.ceil(title.prefWidth(-1)) + HEADER_PADDING);
+            }
+        }
+        return need;
+    }
+
+    /**
+     * R2-05: the table is as tall as its header and rows (up to {@link #MAX_TABLE_ROWS}) — a fixed
+     * 220/200 px left two-row tables half empty and pushed the 4th row of five under a scroll.
+     * Rows have one fixed size per breakpoint ({@code .fitted-table} in app.css), so the height is
+     * known when the parent lays the table out; heights measured on rows a pass later never reached
+     * a parent already laid out (first wide view and the narrow padding kept the old height).
+     */
+    static double fittedHeight(TableView<?> table, double width) {
+        double row = table.getFixedCellSize();
+        Node header = table.lookup(".column-header-background");
+        if (row <= 0 || !(header instanceof Region h)) return -1;
+        // At the expanded-sidebar minimum the amounts keep their width and the columns can exceed the
+        // table (as the Ranking lists, A-V5): the horizontal bar then gets its own height under the rows.
+        double w = width > 0 ? width : table.getWidth();
+        double hbar = 0;
+        if (w > 0 && table.getColumns().size() > 1) {
+            double[] need = columnNeeds(table);
+            double budget = CATEGORY_FLOOR;
+            for (int i = 1; i < need.length; i++) budget += Math.max(AMOUNT_FLOOR, need[i]);
+            if (budget > Math.floor(w - table.snappedLeftInset() - table.snappedRightInset())) {
+                for (Node n : table.lookupAll(".scroll-bar")) {
+                    if (n instanceof ScrollBar sb && sb.getOrientation() == javafx.geometry.Orientation.HORIZONTAL)
+                        hbar = Math.max(hbar, Math.ceil(sb.prefHeight(-1)));
+                }
+            }
+        }
+        int rows = Math.max(1, Math.min(table.getItems().size(), MAX_TABLE_ROWS)); // one row for the placeholder
+        // exact: one spare pixel makes the flow add an empty filler row, and a filler row plus a
+        // horizontal bar turns the vertical bar on (VirtualFlow.computeBarVisiblity)
+        return Math.ceil(table.snappedTopInset() + h.prefHeight(-1) + row * rows + hbar + table.snappedBottomInset());
+    }
+
+    /** The % cell: the share above a thin bar that keeps its 4 px (the generic 6 px bar overflowed 28 px). */
+    private static VBox shareCell(String item, ProgressBar bar) {
+        try { bar.setProgress(Double.parseDouble(item.replace("%", "").replace(',', '.').trim()) / 100.0); }
+        catch (Exception ignored) { bar.setProgress(0); }
+        Label lbl = new Label(item);
+        VBox cell = new VBox(1, lbl, bar);
+        cell.setMinHeight(Region.USE_PREF_SIZE);
+        return cell;
+    }
+
+    private static ProgressBar shareBar() {
+        ProgressBar bar = new ProgressBar(0);
+        bar.getStyleClass().add("share-bar");
+        bar.setMinWidth(0);
+        bar.setPrefWidth(BAR_PREF_WIDTH);
+        bar.setMaxWidth(Double.MAX_VALUE);
+        return bar;
+    }
+
+    /** What a cell's content asks for: a TableCell reports its column's width as its own pref width. */
+    private static double contentWidth(TableCell<?, ?> cell) {
+        double width = 0;
+        String text = cell.getText();
+        if (text != null && !text.isEmpty()) {
+            javafx.scene.text.Text probe = new javafx.scene.text.Text(text);
+            probe.setFont(cell.getFont());
+            width += probe.getLayoutBounds().getWidth();
+        }
+        Node graphic = cell.getGraphic();
+        if (graphic != null) width += graphic.prefWidth(-1) + (width > 0 ? cell.getGraphicTextGap() : 0);
+        return Math.ceil(width + cell.snappedLeftInset() + cell.snappedRightInset()) + 2;
+    }
+
+    private static void setColumnWidth(TableColumn<?, ?> column, double width) {
+        if (Math.abs(column.getPrefWidth() - width) >= 0.5) column.setPrefWidth(width);
+    }
+
     private Panel buildCurrentAllocationTable() {
         currentTable.getStyleClass().add("table-analytic");
-        currentTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        currentTable.setPrefHeight(220);
+        currentTable.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY); // budget: fitColumns
 
         TableColumn<AllocationRow, String> catCol = new TableColumn<>("Categoria");
         catCol.setCellValueFactory(c -> c.getValue().categoryProperty());
@@ -555,17 +726,12 @@ public final class DiversificationPage implements ResponsivePage {
         TableColumn<AllocationRow, String> percentCol = new TableColumn<>("%");
         percentCol.setCellValueFactory(c -> c.getValue().percentageProperty());
         percentCol.setCellFactory(col -> new TableCell<>() {
-            private final ProgressBar bar = new ProgressBar(0);
-            { bar.setPrefHeight(4); bar.setMaxWidth(Double.MAX_VALUE); }
+            private final ProgressBar bar = shareBar();
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setGraphic(null); } else {
-                    try { bar.setProgress(Double.parseDouble(item.replace("%","").trim()) / 100.0); }
-                    catch (Exception ignored) { bar.setProgress(0); }
-                    Label lbl = new Label(item);
-                    VBox cell = new VBox(2, lbl, bar);
-                    setGraphic(cell); setText(null);
+                    setGraphic(shareCell(item, bar)); setText(null);
                 }
             }
         });
@@ -582,8 +748,7 @@ public final class DiversificationPage implements ResponsivePage {
 
     private Panel buildIdealAllocationTable() {
         idealTable.getStyleClass().add("table-analytic");
-        idealTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        idealTable.setPrefHeight(220);
+        idealTable.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY); // budget: fitColumns
 
         TableColumn<AllocationRow, String> catCol = new TableColumn<>("Categoria");
         catCol.setCellValueFactory(c -> c.getValue().categoryProperty());
@@ -613,17 +778,12 @@ public final class DiversificationPage implements ResponsivePage {
         TableColumn<AllocationRow, String> percentCol = new TableColumn<>("%");
         percentCol.setCellValueFactory(c -> c.getValue().percentageProperty());
         percentCol.setCellFactory(col -> new TableCell<>() {
-            private final ProgressBar bar = new ProgressBar(0);
-            { bar.setPrefHeight(4); bar.setMaxWidth(Double.MAX_VALUE); }
+            private final ProgressBar bar = shareBar();
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setGraphic(null); } else {
-                    try { bar.setProgress(Double.parseDouble(item.replace("%","").trim()) / 100.0); }
-                    catch (Exception ignored) { bar.setProgress(0); }
-                    Label lbl = new Label(item);
-                    VBox cell = new VBox(2, lbl, bar);
-                    setGraphic(cell); setText(null);
+                    setGraphic(shareCell(item, bar)); setText(null);
                 }
             }
         });
@@ -640,8 +800,7 @@ public final class DiversificationPage implements ResponsivePage {
 
     private Panel buildSuggestionsTable() {
         suggestionsTable.getStyleClass().add("table-analytic");
-        suggestionsTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        suggestionsTable.setPrefHeight(200);
+        suggestionsTable.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY); // budget: fitColumns
 
         TableColumn<SuggestionRow, String> catCol = new TableColumn<>("Categoria");
         catCol.setCellValueFactory(c -> c.getValue().categoryProperty());
@@ -782,7 +941,7 @@ public final class DiversificationPage implements ResponsivePage {
             rows.add(new AllocationRow(
                     alloc.category(),
                     daily.brl(alloc.valueCents()),
-                    String.format("%.1f%%", alloc.percentage())
+                    String.format(java.util.Locale.forLanguageTag("pt-BR"), "%.1f%%", alloc.percentage())
             ));
         }
 
@@ -830,15 +989,19 @@ public final class DiversificationPage implements ResponsivePage {
             idealRows.add(new AllocationRow(
                     sug.category(),
                     daily.brl(sug.idealCents()),
-                    String.format("%.1f%%", targetPct)
+                    String.format(java.util.Locale.forLanguageTag("pt-BR"), "%.1f%%", targetPct)
             ));
         }
         idealTable.setItems(idealRows);
-        updateAlignedComparison(currentData, idealRows, profile);
+        Map<CategoryEnum, Long> contributions = new java.util.EnumMap<>(CategoryEnum.class);
+        suggestions.forEach(s -> contributions.put(s.category(), s.aporteNecessarioCents()));
+        updateAlignedComparison(currentData, idealRows, profile, contributions, idealBase);
 
         var suggestionRows = FXCollections.<SuggestionRow>observableArrayList();
         for (var sug : suggestions) {
-            if (sug.aporteNecessarioCents() > 100_00) {
+            // R2-03: every contribution the total counts (and Atual × alvo names) is listed; a R$ 100
+            // cut made the rows add up to less than "Aporte total sugerido".
+            if (sug.aporteNecessarioCents() > 0) {
                 String action = "Aportar " + daily.brl(sug.aporteNecessarioCents());
                 suggestionRows.add(new SuggestionRow(sug.category(), action));
             }
@@ -854,43 +1017,54 @@ public final class DiversificationPage implements ResponsivePage {
         totalAporteLabel.setText(totalAporte > 0 ? "Aporte total sugerido: " + daily.brl(totalAporte) : "");
     }
 
+    /**
+     * One row per category with its current and target amounts. A-V3: both bars and both
+     * percentages use ONE base, the ideal patrimony, so the gap between the bars is the suggested
+     * contribution; a share of current positions (100% when there is a single category) beside a
+     * share of the ideal base (30%) made a pending contribution read as an excess.
+     */
     private void updateAlignedComparison(DiversificationData currentData, List<AllocationRow> idealRows,
-                                         Map<CategoryEnum, Double> profile) {
+                                         Map<CategoryEnum, Double> profile, Map<CategoryEnum, Long> contributions,
+                                         long idealBase) {
         alignedComparison.getChildren().clear();
         categoryRows.clear();
-        for (AllocationRow ideal : idealRows) {
+        for (AllocationRow ideal : idealRows.stream().sorted(java.util.Comparator.comparing(AllocationRow::getCategory)).toList()) {
             CategoryEnum category = ideal.getCategory();
-            double currentPercentage = currentData.allocations().stream()
-                    .filter(a -> a.category() == category).mapToDouble(CategoryAllocation::percentage).findFirst().orElse(0);
+            long currentCents = currentData.valuesCents().getOrDefault(category, 0L);
+            double targetShare = profile.getOrDefault(category, 0.0);
+            if (currentCents == 0 && targetShare == 0) continue;
+            double currentShare = idealBase > 0 ? (double) currentCents / idealBase : 0;
             Label name = new Label(category.getDisplayName());
             name.getStyleClass().add("text-strong");
             name.setWrapText(true);
             name.setMinWidth(0);
-            VBox current = allocationMetric("Atual · posições",
-                    daily.brl(currentData.valuesCents().getOrDefault(category, 0L)),
-                    String.format("%.1f%%", currentPercentage), currentPercentage / 100.0, "allocation-current");
+            VBox current = allocationMetric("Atual · posições", daily.brl(currentCents),
+                    shareOfIdealBase(currentShare), currentShare, "allocation-current");
             VBox target = allocationMetric("Alvo · base ideal", ideal.valueProperty().get(),
-                    ideal.percentageProperty().get(), profile.getOrDefault(category, 0.0), "allocation-target");
-            GridPane metrics = new GridPane();
-            metrics.setHgap(16);
+                    shareOfIdealBase(targetShare), targetShare, "allocation-target");
+            FlowPane metrics = new FlowPane(16, 8, current, target);
             metrics.setMinWidth(0);
-            for (int i = 0; i < 2; i++) {
-                ColumnConstraints col = new ColumnConstraints();
-                col.setPercentWidth(50);
-                col.setMinWidth(0);
-                metrics.getColumnConstraints().add(col);
-            }
-            metrics.add(current, 0, 0);
-            metrics.add(target, 1, 0);
-            AdaptivePair row = new AdaptivePair(name, metrics, Breakpoint.MEDIUM, 0.27, 12);
-            row.setUserData(category);
-            row.getStyleClass().add("allocation-comparison-row");
+            metrics.setPrefWrapLength(400);
+            long contribution = contributions.getOrDefault(category, 0L);
+            Label action = new Label(contribution > 0 ? "Aporte sugerido · " + daily.brl(contribution) : "Sem aporte sugerido");
+            action.setWrapText(true);
+            action.getStyleClass().add("text-helper");
+            VBox identity = new VBox(5, name, action);
+            identity.setMinWidth(0);
+            AdaptivePair row = new AdaptivePair(identity, metrics, Breakpoint.MEDIUM, 0.27, 12);
+            VBox padded = new VBox(row);
+            padded.setUserData(category);
+            padded.getStyleClass().add("allocation-comparison-row");
             row.onBreakpoint(currentBreakpoint);
             categoryRows.add(row);
-            alignedComparison.getChildren().add(row);
+            alignedComparison.getChildren().add(padded);
         }
         comparisonSummary.setVisible(true);
         comparisonSummary.setManaged(true);
+    }
+
+    private static String shareOfIdealBase(double fraction) {
+        return String.format(java.util.Locale.forLanguageTag("pt-BR"), "%.1f%% da base ideal", fraction * 100.0);
     }
 
     private VBox allocationMetric(String caption, String value, String percentage, double fraction, String style) {
@@ -899,14 +1073,16 @@ public final class DiversificationPage implements ResponsivePage {
         title.setWrapText(true);
         Label amount = new Label(value);
         amount.getStyleClass().addAll("text-strong", "allocation-value");
-        amount.setWrapText(true);
+        amount.setMinWidth(Region.USE_PREF_SIZE);
         Label share = new Label(percentage);
         share.getStyleClass().add("text-secondary");
         ProgressBar bar = new ProgressBar(Math.max(0, Math.min(1, fraction)));
-        bar.setMaxWidth(Double.MAX_VALUE);
+        bar.setMinWidth(SHARE_TRACK);
+        bar.setPrefWidth(SHARE_TRACK);
+        bar.setMaxWidth(SHARE_TRACK);
         bar.setAccessibleText(caption + ": " + percentage);
         VBox metric = new VBox(3, title, amount, bar, share);
-        metric.setMinWidth(0);
+        metric.setMinWidth(Region.USE_PREF_SIZE);
         metric.getStyleClass().add(style);
         return metric;
     }

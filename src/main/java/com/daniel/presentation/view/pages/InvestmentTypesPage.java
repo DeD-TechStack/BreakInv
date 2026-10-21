@@ -75,6 +75,10 @@ public final class InvestmentTypesPage implements ResponsivePage {
 
     private final ObservableList<InvestmentType> allItems = FXCollections.observableArrayList();
     private FilteredList<InvestmentType> filteredItems;
+    private final VBox emptyPortfolioState = EmptyState.of(Feather.FOLDER, "Nenhum investimento cadastrado",
+            "Use \"Novo ativo\" para cadastrar o primeiro e acompanhar patrimônio e distribuição.", true);
+    private final VBox noResultState = EmptyState.of(Feather.SEARCH, "Nenhum resultado encontrado",
+            "Tente outros termos ou remova os filtros ativos.", true);
     private final Map<Long, InvestmentStatus> statusById = new HashMap<>();
     private CashStatus cashStatus;
     private Breakpoint breakpoint = Breakpoint.WIDE;
@@ -142,6 +146,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         warningBanner.setGraphic(Icons.alertTriangle());
         warningBanner.setGraphicTextGap(8);
         warningBanner.setWrapText(true);
+        warningBanner.setMaxWidth(Double.MAX_VALUE); // a banner spans the content, whatever the message length (E-V2)
         warningBanner.getStyleClass().add("warning-banner");
         warningBanner.setVisible(false);
         warningBanner.setManaged(false);
@@ -232,7 +237,8 @@ public final class InvestmentTypesPage implements ResponsivePage {
         Label positionCount = new Label();
         positionCount.getStyleClass().addAll("position-count", "text-secondary");
         positionCount.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(
-                () -> filteredItems.size() + " de " + allItems.size() + " ativos", filteredItems, allItems));
+                () -> filteredItems.size() + " de " + allItems.size() + (allItems.size() == 1 ? " ativo" : " ativos"), // R2-15
+                filteredItems, allItems));
         Region countSpacer = new Region();
         HBox.setHgrow(countSpacer, Priority.ALWAYS);
         HBox positionsHeading = new HBox(12, positionsTitle, countSpacer, positionCount);
@@ -240,6 +246,14 @@ public final class InvestmentTypesPage implements ResponsivePage {
         Label selectionHint = new Label("Selecione um ativo para ver posição, situação e ações.");
         selectionHint.getStyleClass().add("text-secondary");
         selectionHint.setWrapText(true);
+        // Only when there is a visible row to select and none is selected (0 assets, an empty
+        // filter or an open detail make the hint wrong or redundant).
+        var hintNeeded = javafx.beans.binding.Bindings.createBooleanBinding(
+                () -> !filteredItems.isEmpty() && table.getSelectionModel().getSelectedItem() == null,
+                filteredItems, table.getSelectionModel().selectedItemProperty());
+        selectionHint.visibleProperty().bind(hintNeeded);
+        selectionHint.managedProperty().bind(hintNeeded);
+        allItems.addListener((javafx.collections.ListChangeListener<InvestmentType>) c -> updateEmptyState());
         VBox workspace = new VBox(12, positionsHeading, filterRow, body, selectionHint);
         workspace.setMinWidth(0);
         workspace.getStyleClass().addAll("panel", "positions-workspace");
@@ -288,6 +302,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         if (dateColRef != null) dateColRef.setVisible(wide);
         if (catColRef  != null) catColRef.setVisible(!narrow);
         updateTableColumns();
+        resetColumnWidths();
         strip.setColumns(narrow ? 2 : 3);
         placeDetails();
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
@@ -331,6 +346,9 @@ public final class InvestmentTypesPage implements ResponsivePage {
             {
                 name.getStyleClass().add("cell-primary");
                 ticker.getStyleClass().add("ticker-badge");
+                ticker.setMinWidth(Region.USE_PREF_SIZE);
+                name.setMinWidth(0);
+                HBox.setHgrow(name, Priority.ALWAYS);
                 identity.setAlignment(Pos.CENTER_LEFT);
                 box.setAlignment(Pos.CENTER_LEFT);
             }
@@ -339,6 +357,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
                 if (empty || item == null) { setGraphic(null); setText(null); setAccessibleText(null); return; }
                 InvestmentType inv = getTableView().getItems().get(getIndex());
                 name.setText(inv.name());
+                name.setTooltip(new Tooltip(inv.name()));
                 boolean hasTicker = inv.ticker() != null && !inv.ticker().isBlank();
                 ticker.setText(hasTicker ? inv.ticker() : "");
                 ticker.setVisible(hasTicker && !compactRows); ticker.setManaged(hasTicker && !compactRows);
@@ -372,7 +391,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
             }
         });
         catCol.setPrefWidth(150);
-        catCol.setMinWidth(90);
+        catCol.setMinWidth(200);
 
         liqColRef = new TableColumn<>("Liquidez");
         TableColumn<InvestmentType, String> liqCol = liqColRef;
@@ -463,8 +482,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         });
         actionsColRef = actionsCol;
 
-        table.setPlaceholder(EmptyState.of("📂", "Nenhum investimento cadastrado",
-                "Use \"Novo ativo\" para cadastrar o primeiro e acompanhar patrimônio e distribuição.", true));
+        table.setPlaceholder(emptyPortfolioState);
 
         table.getColumns().add(nameCol);
         table.getColumns().add(catCol);
@@ -480,17 +498,36 @@ public final class InvestmentTypesPage implements ResponsivePage {
     /** Keep status in the row, not in a clipped column, when the actual table is narrow. */
     private void updateTableColumns() {
         if (statusColRef == null || table.getWidth() <= 0) return;
-        // Six priority columns need683px plus the skin/scrollbar reserve.
-        boolean compact = table.getWidth() < 700;
+        List<Boolean> shownBefore = table.getColumns().stream().map(TableColumn::isVisible).toList();
+        // Reserve identity/category text and the skin before admitting optional columns.
+        boolean compact = table.getWidth() < 820;
         boolean changed = compactRows != compact;
         compactRows = compact;
         table.getColumns().getFirst().setMinWidth(compact ? 110 : 220);
         statusColRef.setVisible(!compact);
         qtyColRef.setVisible(!compact);
         catColRef.setVisible(!compact && breakpoint != Breakpoint.NARROW);
-        liqColRef.setVisible(table.getWidth() >= 960 && breakpoint == Breakpoint.WIDE);
-        dateColRef.setVisible(table.getWidth() >= 960 && breakpoint == Breakpoint.WIDE);
+        double completeBudget = table.getColumns().stream().mapToDouble(TableColumn::getMinWidth).sum() + 50;
+        boolean complete = table.getWidth() >= completeBudget && breakpoint == Breakpoint.WIDE;
+        liqColRef.setVisible(complete);
+        dateColRef.setVisible(!compact && breakpoint == Breakpoint.WIDE
+                && table.getWidth() >= completeBudget - liqColRef.getMinWidth());
         if (changed) table.refresh();
+        if (!shownBefore.equals(table.getColumns().stream().map(TableColumn::isVisible).toList())) resetColumnWidths();
+    }
+
+    /**
+     * The same width gives the same columns (P5/J1; r1 populated: back at 1280×800 the table kept
+     * Ativo 220/Custo 110/Data 133/Qtd 101 instead of 242/131/112/76). The constrained policy
+     * redistributes from the current widths, so whenever the breakpoint or the column set changes
+     * they restart from the preferred ones (TableColumn applies a changed prefWidth to its width).
+     */
+    private void resetColumnWidths() {
+        for (TableColumn<InvestmentType, ?> column : table.getColumns()) {
+            double pref = column.getPrefWidth();
+            column.setPrefWidth(pref + 1);
+            column.setPrefWidth(pref);
+        }
     }
 
     private HBox compactStatusBadge(InvestmentStatus st) {
@@ -597,10 +634,15 @@ public final class InvestmentTypesPage implements ResponsivePage {
             return matchesSearch && matchesCat;
         });
 
-        if (filterActive && filteredItems.isEmpty() && !allItems.isEmpty()) {
-            table.setPlaceholder(EmptyState.of("🔍", "Nenhum resultado encontrado",
-                    "Tente outros termos ou remova os filtros ativos."));
-        }
+        updateEmptyState();
+    }
+
+    /** E1 residual: the no-result state is contained and wrapped like the empty portfolio, and they never swap stale. */
+    private void updateEmptyState() {
+        String search = searchField.getText() == null ? "" : searchField.getText();
+        String catSel = categoryFilter.getValue();
+        boolean filterActive = !search.isBlank() || (catSel != null && !catSel.equals("Todas categorias"));
+        table.setPlaceholder(filterActive && !allItems.isEmpty() ? noResultState : emptyPortfolioState);
     }
 
     private HBox createBadge(String text, String hexColor) {
@@ -694,7 +736,9 @@ public final class InvestmentTypesPage implements ResponsivePage {
         edit.getStyleClass().add("ghost-btn");
         edit.setOnAction(e -> onEdit());
         Button buy = new Button("Comprar", Icons.trendingUp());
-        buy.getStyleClass().add("button");
+        // E-V4: the selection's leading action is a contained accent button; the solid primary
+        // stays with the page action (Novo ativo), Vender keeps its own amber semantics.
+        buy.getStyleClass().add("secondary-btn");
         buy.setOnAction(e -> onBuy());
         Button sell = new Button("Vender", Icons.sell());
         sell.getStyleClass().add("sell-btn");

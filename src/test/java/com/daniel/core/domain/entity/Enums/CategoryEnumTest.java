@@ -93,6 +93,34 @@ class CategoryEnumTest {
         assertEquals("#ec4899", CategoryEnum.CRIPTOMOEDAS.getColor());
     }
 
+    /** Hue in degrees of a #rrggbb colour, and whether it is coloured at all (grey has no hue). */
+    static double[] hueAndSaturation(String hex) {
+        int rgb = Integer.parseInt(hex.substring(1), 16);
+        double r = ((rgb >> 16) & 0xFF) / 255.0, g = ((rgb >> 8) & 0xFF) / 255.0, b = (rgb & 0xFF) / 255.0;
+        double max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b)), d = max - min;
+        double hue = d == 0 ? 0 : max == r ? 60 * (((g - b) / d) % 6) : max == g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+        return new double[]{(hue + 360) % 360, max == 0 ? 0 : d / max};
+    }
+
+    /**
+     * R3-11: Ações (#22c55e) and Fundos Imobiliários (#10b981) showed as two close greens in the
+     * Composição slices and legend — 18° apart. Every two coloured categories are at least 30° apart.
+     */
+    @Test
+    void everyTwoCategoryColoursAreApartInHue() {
+        java.util.List<String> close = new java.util.ArrayList<>();
+        CategoryEnum[] all = CategoryEnum.values();
+        for (int i = 0; i < all.length; i++)
+            for (int j = i + 1; j < all.length; j++) {
+                double[] a = hueAndSaturation(all[i].getColor()), b = hueAndSaturation(all[j].getColor());
+                if (a[1] < 0.3 || b[1] < 0.3) continue; // grey (Outros) is told apart by its lack of colour
+                double gap = Math.abs(a[0] - b[0]);
+                gap = Math.min(gap, 360 - gap);
+                if (gap < 30) close.add(all[i] + " " + all[i].getColor() + " / " + all[j] + " " + all[j].getColor() + ": " + Math.round(gap) + "°");
+            }
+        assertEquals(java.util.List.of(), close);
+    }
+
     // ===== Enum completeness =====
 
     @Test

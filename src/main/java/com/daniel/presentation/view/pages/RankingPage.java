@@ -34,6 +34,7 @@ import javafx.scene.chart.*;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.util.StringConverter;
+import org.kordamp.ikonli.feather.Feather;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -62,6 +63,22 @@ public final class RankingPage implements ResponsivePage {
     private static final Logger LOG = Logger.getLogger(RankingPage.class.getName());
     private static final DateTimeFormatter MA_DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yy");
 
+    // Day-change lists (A-V5): minimum widths that keep the ticker, a four-digit quote and the
+    // column title whole; the change column takes what is left. Below the full budget the title
+    // shortens, and the lists stack before two of them would have to share a cut row.
+    static final String CHANGE_TITLE = "Variação do dia";
+    static final String CHANGE_SHORT_TITLE = "Var. do dia";
+    static final double LIST_TICKER_MIN = 72;
+    static final double LIST_PRICE_MIN = 96;
+    static final double LIST_CHANGE_MIN = 124;
+    static final double LIST_CHANGE_SHORT_MIN = 100;
+    private static final double LIST_GAP = 16;
+    private static final int LIST_VISIBLE_ROWS = 5;
+    private static final double LIST_HEADER_HEIGHT = 44;
+    private static final double LIST_ROW_HEIGHT = 42;
+    private static final double LIST_EMPTY_HEIGHT = 128;
+    private static final double SCROLLBAR_FALLBACK = 14;
+
     /** Batch quote source (BRAPI in production); the page must survive it throwing. */
     @FunctionalInterface
     interface QuoteSource {
@@ -88,7 +105,9 @@ public final class RankingPage implements ResponsivePage {
     private final TableView<RankingRow> losersTable  = new TableView<>();
     private final Label gainersPlaceholder = new Label("Nenhum ativo nesta lista");
     private final Label losersPlaceholder = new Label("Nenhum ativo nesta lista");
+    private final Panel gainersPanel;
     private final AdaptivePair listsPair;
+    private Breakpoint breakpoint = Breakpoint.WIDE;
     private final Panel dayPanel;
     private final Label freshnessChip = new Label();
     private final CategoryAxis barXAxis = new CategoryAxis();
@@ -109,7 +128,12 @@ public final class RankingPage implements ResponsivePage {
     private final FlowPane returnPeriodBar = new FlowPane(6, 6);
     private final Panel returnPanel;
     private final Label returnLoadingLabel = new Label("Carregando histórico…");
-    private final Label returnEmptyLabel = new Label();
+    // R2-08 (V9): without a line to draw, a chart keeps its area (nothing below jumps) and the area
+    // states why — a period without history and the idle moving average drew bare 0–110 / 0–100 grids.
+    private final VBox returnEmpty = EmptyState.of(Feather.TRENDING_UP, "", "", true);
+    private final VBox maEmpty = EmptyState.of(Feather.ACTIVITY, MA_IDLE_TITLE, MA_IDLE_HINT, true);
+    static final String MA_IDLE_TITLE = "Média móvel não calculada";
+    static final String MA_IDLE_HINT = "Escolha o ticker, o período e as janelas e clique em Calcular.";
     /** One epoch per period-chart request (period × selection): the last REQUEST wins, not the last answer. */
     private final AtomicLong returnEpoch = new AtomicLong();
     /** Epoch seconds of the last render of returnChart. */
@@ -129,7 +153,8 @@ public final class RankingPage implements ResponsivePage {
     private final FlowPane maInputBar = new FlowPane(8, 8);
     private final Button maCalcBtn = new Button("Calcular");
     private final Label maLoadingLabel = new Label("Calculando médias móveis…");
-    private final Label maCrossLabel = new Label("Sem cruzamento recente detectado.");
+    // R2-09: empty until a calculation (or a validation) has something to say
+    private final Label maCrossLabel = new Label();
     /** Epoch seconds of the last render of maChart. */
     private List<Long> lastMAEpochSecs = List.of();
 
@@ -166,6 +191,8 @@ public final class RankingPage implements ResponsivePage {
         errorBanner.setGraphic(Icons.alertTriangle());
         errorBanner.setGraphicTextGap(8);
         errorBanner.setWrapText(true);
+        errorBanner.setMinHeight(Region.USE_PREF_SIZE); // R3-02: a wrapped explanation is never squeezed to one line ("…")
+        errorBanner.setMaxWidth(Double.MAX_VALUE); // a banner spans the content, whatever the message length (E-V2)
         errorBanner.getStyleClass().add("warning-banner");
         hide(errorBanner);
 
@@ -180,9 +207,13 @@ public final class RankingPage implements ResponsivePage {
         emptyState = EmptyState.of("🏆", "Nenhum ativo com ticker",
                 "Cadastre ativos com ticker na Carteira para comparar a variação das cotações.");
 
-        Panel gainersPanel = buildListPanel("Maiores altas", gainersTable);
+        gainersPanel = buildListPanel("Maiores altas", gainersTable);
         Panel losersPanel  = buildListPanel("Maiores baixas", losersTable);
-        listsPair = new AdaptivePair(gainersPanel, losersPanel, Breakpoint.NARROW, 0.5, 16);
+        listsPair = new AdaptivePair(gainersPanel, losersPanel, Breakpoint.NARROW, 0.5, LIST_GAP);
+        // R4-01: the pair picks side by side × stacked from the width it is measured at, so the day panel reserves
+        // the stacked height in the same pass that stacks the lists (a width listener decided it after the panel
+        // had kept the side-by-side height, and the chart was drawn over "Maiores baixas").
+        listsPair.setSideBySideRule(this::listsSideBySide);
 
         dayPanel = buildDayPanel();
         returnPanel = buildReturnPanel();
@@ -223,7 +254,8 @@ public final class RankingPage implements ResponsivePage {
     @Override
     public void onBreakpoint(Breakpoint bp) {
         boolean narrow = bp == Breakpoint.NARROW;
-        listsPair.onBreakpoint(bp);
+        breakpoint = bp;
+        listsPair.onBreakpoint(bp); // the width rule re-decides the lists at the next layout
         // period toggles sit in the panel header when there is room, under the title otherwise
         returnPanel.body().getChildren().remove(returnPeriodBar);
         if (narrow) {
@@ -236,6 +268,68 @@ public final class RankingPage implements ResponsivePage {
         root.getStyleClass().add(bp.styleClass());
     }
 
+    /**
+     * The lists sit side by side only when both keep their full columns; otherwise they stack (A-V5). Asked by
+     * the pair for the width it is measured and laid out at (R4-01), never after the panel reserved its height.
+     */
+    private boolean listsSideBySide(double pair) {
+        if (breakpoint == Breakpoint.NARROW) return false;
+        boolean scrolls = Math.max(gainersTable.getItems().size(), losersTable.getItems().size()) > LIST_VISIBLE_ROWS;
+        double list = LIST_TICKER_MIN + LIST_PRICE_MIN + LIST_CHANGE_MIN
+                + gainersPanel.snappedLeftInset() + gainersPanel.snappedRightInset()
+                + gainersTable.snappedLeftInset() + gainersTable.snappedRightInset()
+                + (scrolls ? scrollBarWidth(gainersTable) : 0);
+        return pair <= 0 || pair >= 2 * list + LIST_GAP;
+    }
+
+    /**
+     * Deterministic budget of a day-change list. FLEX_LAST kept stale widths after a narrow pass
+     * and let three columns overflow a 230 px list, cutting the change column and its title; here
+     * the minimums are reserved first and the change column takes the remainder. The table height
+     * follows the rows actually listed (not only a replaced list) and, if even the short budget
+     * cannot fit, reserves the horizontal bar so it never covers the last row.
+     */
+    private static void sizeList(TableView<RankingRow> table) {
+        int rows = table.getItems() == null ? 0 : table.getItems().size();
+        // A vertical bar shown for one pass (old height, new rows) must shrink the columns too:
+        // otherwise the horizontal bar appears and each bar keeps justifying the other.
+        boolean scrolls = rows > LIST_VISIBLE_ROWS || verticalBar(table) != null && verticalBar(table).isVisible();
+        boolean overflow = false;
+        if (table.getWidth() > 0 && table.getColumns().size() == 3) {
+            double available = Math.floor(table.getWidth() - table.snappedLeftInset() - table.snappedRightInset()
+                    - (scrolls ? scrollBarWidth(table) : 0));
+            TableColumn<RankingRow, ?> ticker = table.getColumns().get(0);
+            TableColumn<RankingRow, ?> price = table.getColumns().get(1);
+            TableColumn<RankingRow, ?> change = table.getColumns().get(2);
+            boolean full = available >= LIST_TICKER_MIN + LIST_PRICE_MIN + LIST_CHANGE_MIN;
+            double changeMin = full ? LIST_CHANGE_MIN : LIST_CHANGE_SHORT_MIN;
+            change.setText(full ? CHANGE_TITLE : CHANGE_SHORT_TITLE);
+            change.setMinWidth(changeMin);
+            double extra = Math.max(0, available - LIST_TICKER_MIN - LIST_PRICE_MIN - changeMin);
+            double tickerWidth = LIST_TICKER_MIN + Math.floor(extra * 0.3);
+            double priceWidth = LIST_PRICE_MIN + Math.floor(extra * 0.3);
+            ticker.setPrefWidth(tickerWidth);
+            price.setPrefWidth(priceWidth);
+            change.setPrefWidth(Math.max(changeMin, available - tickerWidth - priceWidth));
+            overflow = available < LIST_TICKER_MIN + LIST_PRICE_MIN + changeMin;
+        }
+        double height = rows == 0 ? LIST_EMPTY_HEIGHT : LIST_HEADER_HEIGHT + LIST_ROW_HEIGHT * Math.min(LIST_VISIBLE_ROWS, rows);
+        table.setPrefHeight(height + (overflow ? SCROLLBAR_FALLBACK : 0));
+    }
+
+    private static ScrollBar verticalBar(TableView<?> table) {
+        for (Node node : table.lookupAll(".scroll-bar")) {
+            if (node instanceof ScrollBar bar && bar.getOrientation() == javafx.geometry.Orientation.VERTICAL) return bar;
+        }
+        return null;
+    }
+
+    private static double scrollBarWidth(TableView<?> table) {
+        ScrollBar bar = verticalBar(table);
+        double w = bar == null ? 0 : bar.getWidth() > 0 ? bar.getWidth() : bar.prefWidth(-1);
+        return w > 0 ? Math.ceil(w) : SCROLLBAR_FALLBACK;
+    }
+
     private static void hide(Node n) { n.setVisible(false); n.setManaged(false); }
     private static void show(Node n) { n.setVisible(true); n.setManaged(true); }
 
@@ -244,6 +338,9 @@ public final class RankingPage implements ResponsivePage {
     private Panel buildDayPanel() {
         barChart.setAnimated(false);
         barChart.setLegendVisible(false);
+        // R3-04: one series, one bar per ticker — the gap between bars of a category would put each bar
+        // half a gap off its ticker (JavaFX offsets every bar by it)
+        barChart.setBarGap(0);
         barChart.setMinHeight(240);
         barChart.setCategoryGap(30);
         barChart.getStyleClass().add("bar-chart");
@@ -256,6 +353,7 @@ public final class RankingPage implements ResponsivePage {
         Label chartHint = new Label("Selecione linhas nas listas para comparar só esses ativos; sem seleção, até 8 ativos.");
         chartHint.getStyleClass().add("text-helper");
         chartHint.setWrapText(true);
+        chartHint.setMinHeight(Region.USE_PREF_SIZE); // R3-02: a wrapped explanation is never squeezed to one line ("…")
 
         freshnessChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
         // The panel's wrapped subtitle asks for the whole row; the status must not be the one that
@@ -265,6 +363,7 @@ public final class RankingPage implements ResponsivePage {
 
         barEmptyLabel.getStyleClass().add("text-secondary");
         barEmptyLabel.setWrapText(true);
+        barEmptyLabel.setMinHeight(Region.USE_PREF_SIZE); // R3-02: a wrapped explanation is never squeezed to one line ("…")
         barEmptyLabel.setText("Aguardando cotações para montar o gráfico.");
         show(barEmptyLabel);
 
@@ -277,7 +376,7 @@ public final class RankingPage implements ResponsivePage {
     private Panel buildListPanel(String title, TableView<RankingRow> table) {
         TableColumn<RankingRow, String> tickerCol = new TableColumn<>("Ativo");
         tickerCol.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().ticker()));
-        tickerCol.setMinWidth(72);
+        tickerCol.setMinWidth(LIST_TICKER_MIN);
 
         TableColumn<RankingRow, Number> priceCol = new TableColumn<>("Cotação");
         priceCol.setCellValueFactory(c -> new SimpleDoubleProperty(c.getValue().price()));
@@ -291,10 +390,11 @@ public final class RankingPage implements ResponsivePage {
                 getStyleClass().add("num");
             }
         });
-        priceCol.setMinWidth(90);
+        priceCol.setMinWidth(LIST_PRICE_MIN);
         priceCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+        priceCol.getStyleClass().add("num-col"); // R3-09: its title sits over its numbers (.table-dense .num-col)
 
-        TableColumn<RankingRow, Number> chgCol = new TableColumn<>("Variação do dia");
+        TableColumn<RankingRow, Number> chgCol = new TableColumn<>(CHANGE_TITLE);
         chgCol.setCellValueFactory(c -> new SimpleDoubleProperty(c.getValue().changePct()));
         chgCol.setCellFactory(col -> new TableCell<>() {
             @Override
@@ -307,20 +407,40 @@ public final class RankingPage implements ResponsivePage {
                 getStyleClass().addAll("num", v >= 0 ? "pos" : "neg");
             }
         });
-        chgCol.setMinWidth(110);
+        chgCol.setMinWidth(LIST_CHANGE_MIN);
         chgCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+        chgCol.getStyleClass().add("num-col"); // R3-09: its title sits over its numbers (.table-dense .num-col)
 
         table.getColumns().add(tickerCol);
         table.getColumns().add(priceCol);
         table.getColumns().add(chgCol);
-        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        table.setFixedCellSize(42);
+        // The page owns the budget (sizeList): a constrained policy would fight it.
+        table.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
+        table.setFixedCellSize(LIST_ROW_HEIGHT);
         table.getStyleClass().addAll("table-analytic", "table-dense");
-        table.prefHeightProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
-                () -> table.getItems().isEmpty() ? 128.0 : 44.0 + 42 * Math.min(5, table.getItems().size()), table.itemsProperty()));
+        javafx.beans.InvalidationListener resize = o -> sizeList(table);
+        table.widthProperty().addListener(resize);
+        table.getItems().addListener(resize);
+        table.itemsProperty().addListener((obs, old, now) -> {
+            if (old != null) old.removeListener(resize);
+            if (now != null) now.addListener(resize);
+            sizeList(table);
+        });
+        table.skinProperty().addListener((obs, old, skin) -> {
+            ScrollBar bar = verticalBar(table);
+            if (bar != null) bar.visibleProperty().addListener(resize);
+        });
+        sizeList(table);
         table.setMinHeight(Region.USE_PREF_SIZE);
         table.setMaxHeight(Region.USE_PREF_SIZE);
-        table.setPlaceholder(table == gainersTable ? gainersPlaceholder : losersPlaceholder);
+        Label emptyMessage = table == gainersTable ? gainersPlaceholder : losersPlaceholder;
+        // A-V5: the empty-list message wraps inside its list at the body size; the theme's larger
+        // placeholder font on one line was cut at 640–730 px of page ("…cotação obt…").
+        emptyMessage.setWrapText(true);
+        emptyMessage.setMinHeight(Region.USE_PREF_SIZE); // R3-02: a wrapped explanation is never squeezed to one line ("…")
+        emptyMessage.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        emptyMessage.getStyleClass().add("ranking-list-empty");
+        table.setPlaceholder(emptyMessage);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.setAccessibleText(title);
         // Esc with the focus on the list closes the detail (same as Carteira); the detail's own Esc still works.
@@ -425,7 +545,8 @@ public final class RankingPage implements ResponsivePage {
         show(errorBanner);
         if (lastStocks.isEmpty()) {
             hide(contentArea);
-            show(emptyState);
+            // R2-07: the portfolio has tickers, only the lookup failed — not "Nenhum ativo com ticker"
+            hide(emptyState);
         }
     }
 
@@ -440,9 +561,10 @@ public final class RankingPage implements ResponsivePage {
         quotesObtainedAtMs = lastStocks.isEmpty() ? 0 : System.currentTimeMillis();
         gainersTable.setItems(FXCollections.observableArrayList(RankingViewModel.topGainers(lastStocks)));
         losersTable.setItems(FXCollections.observableArrayList(RankingViewModel.topLosers(lastStocks)));
+        listsPair.requestLayout(); // more than five rows adds a vertical bar to the side-by-side budget: re-decided at layout
         // Empty lists are a RESULT, not a missing one: say what was obtained and what was not found.
         long obtained = lastStocks.values().stream().filter(StockData::isValid).count();
-        String among = obtained == 1 ? "entre a 1 cotação obtida" : "entre as " + obtained + " cotações obtidas";
+        String among = obtained == 1 ? "na única cotação obtida" : "entre as " + obtained + " cotações obtidas";
         gainersPlaceholder.setText(obtained == 0 ? "Nenhuma cotação obtida" : "Nenhuma alta " + among);
         losersPlaceholder.setText(obtained == 0 ? "Nenhuma cotação obtida" : "Nenhuma baixa " + among);
         hide(errorBanner);
@@ -530,6 +652,10 @@ public final class RankingPage implements ResponsivePage {
         barChart.setCategoryGap(n <= 3 ? 60 : n <= 6 ? 30 : 12);
 
         boolean anyChange = false;
+        // R3-04: ONE series. A series per ticker gave every category one slot per series: each bar sat
+        // off its ticker and, with 8 quotes, became a hairline. Colour and tooltip are set per bar below.
+        XYChart.Series<String, Number> series = new XYChart.Series<>();
+        series.setName("Variação do dia");
         for (String ticker : tickers) {
             StockData d = lastStocks.get(ticker);
             if (d == null || !d.isValid()) continue;
@@ -537,11 +663,8 @@ public final class RankingPage implements ResponsivePage {
             double pct = d.regularMarketChangePercent();
             if (pct != 0) anyChange = true;
 
-            XYChart.Series<String, Number> series = new XYChart.Series<>();
-            series.setName(ticker);
             XYChart.Data<String, Number> bar = new XYChart.Data<>(ticker, pct);
             series.getData().add(bar);
-            barChart.getData().add(series);
 
             final double finalPct = pct;
             final StockData finalD  = d;
@@ -556,6 +679,7 @@ public final class RankingPage implements ResponsivePage {
                 }
             });
         }
+        if (!series.getData().isEmpty()) barChart.getData().add(series);
         // A chart of zero-height bars reads as "no data": say that the quotes came but did not move.
         if (!anyChange) {
             barEmptyLabel.setText("Sem variação do dia nas cotações obtidas — as barras ficam em zero.");
@@ -593,23 +717,21 @@ public final class RankingPage implements ResponsivePage {
 
         // Temporal axis: distribution proportional to the real interval between dates
         ChartAxisUtils.installTemporalAxis(retXAxis, returnChart, () -> currentReturnFmt, () -> lastReturnEpochSecs);
-        ChartAxisUtils.hideTemporalAxisLabels(retXAxis); // the crosshair is the reading mechanism
 
         returnLoadingLabel.getStyleClass().add("text-helper");
         hide(returnLoadingLabel);
-        returnEmptyLabel.getStyleClass().add("text-secondary");
-        returnEmptyLabel.setWrapText(true);
-        hide(returnEmptyLabel);
-
         StackPane returnWrapper = ChartCrosshair.installTemporal(returnChart,
                 epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(currentReturnFmt),
                 y -> signedPct(y));
+        StackPane returnArea = new StackPane(returnWrapper, returnEmpty);
+        waiting(returnChart, returnEmpty);
 
         Label chartHint = new Label("Selecione ativos nas listas para comparar; sem seleção, até 5 ativos.");
         chartHint.getStyleClass().add("text-helper");
         chartHint.setWrapText(true);
+        chartHint.setMinHeight(Region.USE_PREF_SIZE); // R3-02: a wrapped explanation is never squeezed to one line ("…")
 
-        return new Panel("Variação do preço no período", chartHint, returnLoadingLabel, returnEmptyLabel, returnWrapper)
+        return new Panel("Variação do preço no período", chartHint, returnLoadingLabel, returnArea)
                 .subtitle("Preço de fechamento em relação ao início do período (BRAPI). "
                         + "Não considera aportes, dividendos nem o seu preço de compra.");
     }
@@ -620,15 +742,15 @@ public final class RankingPage implements ResponsivePage {
         returnChart.getData().clear();
         lastReturnEpochSecs = List.of();
         hide(returnLoadingLabel);
-        hide(returnEmptyLabel);
         if (tickers.isEmpty()) {
-            returnEmptyLabel.setText("Sem cotações válidas para consultar o histórico.");
-            show(returnEmptyLabel);
+            stated(returnChart, returnEmpty, "Sem cotações para comparar",
+                    "O gráfico aparece quando houver ativos com cotação válida.");
             return;
         }
 
         AssetHistoryClient.Period period = getSelectedReturnPeriod();
         currentReturnFmt = DateTimeFormatter.ofPattern(period.datePattern);
+        waiting(returnChart, returnEmpty);
         show(returnLoadingLabel);
 
         List<CompletableFuture<Map.Entry<String, List<HistoryPoint>>>> futures = tickers.stream()
@@ -660,11 +782,10 @@ public final class RankingPage implements ResponsivePage {
         returnChart.getData().clear();
 
         if (allHistories.isEmpty()) {
-            returnEmptyLabel.setText("Sem histórico disponível para estes ativos. Verifique a conexão ou o token BRAPI em Configurações.");
-            show(returnEmptyLabel);
+            stated(returnChart, returnEmpty, "Sem histórico no período",
+                    "Não foi possível obter o histórico destes ativos. Verifique a conexão ou o token BRAPI em Configurações.");
             return;
         }
-        hide(returnEmptyLabel);
 
         List<Long> refEpochSecs = new ArrayList<>();
 
@@ -695,6 +816,12 @@ public final class RankingPage implements ResponsivePage {
         }
 
         lastReturnEpochSecs = refEpochSecs;
+        if (returnChart.getData().isEmpty()) {
+            stated(returnChart, returnEmpty, "Sem histórico no período",
+                    "O histórico obtido não tem preços válidos para comparar.");
+            return;
+        }
+        drawn(returnChart, returnEmpty);
         Motion.chartRefresh(returnChart);
         Platform.runLater(() -> ChartAxisUtils.refreshTemporalAxis(retXAxis, lastReturnEpochSecs, returnChart.getWidth()));
     }
@@ -738,16 +865,7 @@ public final class RankingPage implements ResponsivePage {
         String baseStyle  = "-fx-background-color: " + color + "; -fx-background-radius: 3 3 0 0;";
 
         node.setStyle(baseStyle);
-
-        if (node instanceof StackPane sp
-                && sp.getChildren().stream().noneMatch(c -> c instanceof Label)) {
-            Label lbl = new Label(bar.getXValue());
-            lbl.setStyle("-fx-text-fill: white; -fx-font-size: 12px; -fx-font-weight: bold;");
-            lbl.setRotate(-90);
-            lbl.setMouseTransparent(true);
-            StackPane.setAlignment(lbl, Pos.CENTER);
-            sp.getChildren().add(lbl);
-        }
+        // R2-06: no ticker inside the bar (cut to "T1" on a flat bar, "⋮" on thin ones): the axis names each bar
 
         Tooltip tp = new Tooltip(
                 bar.getXValue()
@@ -773,6 +891,7 @@ public final class RankingPage implements ResponsivePage {
                 + "Cruzamento para cima da curta sobre a longa é lido como sinal de alta; para baixo, de baixa.");
         hintLegend.getStyleClass().add("text-helper");
         hintLegend.setWrapText(true);
+        hintLegend.setMinHeight(Region.USE_PREF_SIZE); // R3-02: a wrapped explanation is never squeezed to one line ("…")
 
         // ── Input fields ──
         maTickerCombo.setEditable(true);
@@ -894,7 +1013,7 @@ public final class RankingPage implements ResponsivePage {
         maYAxis.setAutoRanging(false);
 
         ChartAxisUtils.installTemporalAxis(maXAxis, maChart, () -> MA_DATE_FMT, () -> lastMAEpochSecs);
-        ChartAxisUtils.hideTemporalAxisLabels(maXAxis); // the crosshair is the reading mechanism
+        maYAxis.setLabel("Preço (R$)"); // R2-16 class: dates on the axis, unit on the values
 
         StackPane chartWrapper = ChartCrosshair.installTemporal(maChart,
                 epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(MA_DATE_FMT),
@@ -902,10 +1021,34 @@ public final class RankingPage implements ResponsivePage {
 
         maCrossLabel.getStyleClass().add("text-secondary");
         maCrossLabel.setWrapText(true);
+        maCrossLabel.setMinHeight(Region.USE_PREF_SIZE); // R3-02: a wrapped explanation is never squeezed to one line ("…")
+        maCrossLabel.visibleProperty().bind(maCrossLabel.textProperty().isNotEmpty());
+        maCrossLabel.managedProperty().bind(maCrossLabel.visibleProperty());
 
-        return new Panel("Média móvel", maInputBar, hintLegend, maLoadingLabel, chartWrapper, maCrossLabel)
+        StackPane maArea = new StackPane(chartWrapper, maEmpty);
+        stated(maChart, maEmpty, MA_IDLE_TITLE, MA_IDLE_HINT);
+        return new Panel("Média móvel", maInputBar, hintLegend, maLoadingLabel, maArea, maCrossLabel)
                 .subtitle("Preço de fechamento e duas médias móveis simples de um ticker. "
                         + "A média longa exige pelo menos esse número de pregões no intervalo (ex.: 200 ≈ 10 meses).");
+    }
+
+    /** R2-08: the chart has a line — it is drawn and its state goes. */
+    private static void drawn(Node chart, VBox state) {
+        chart.setVisible(true);
+        state.setVisible(false);
+    }
+
+    /** R2-08: loading — no grid and no message in the area (the loading label above says it). */
+    private static void waiting(Node chart, VBox state) {
+        chart.setVisible(false);
+        state.setVisible(false);
+    }
+
+    /** R2-08: no line — the chart is not drawn; its area (kept, so nothing jumps) states why. */
+    private static void stated(Node chart, VBox state, String title, String hint) {
+        EmptyState.setText(state, title, hint);
+        chart.setVisible(false);
+        state.setVisible(true);
     }
 
     private static HBox labelled(String text, Control control) {
@@ -936,6 +1079,7 @@ public final class RankingPage implements ResponsivePage {
         }
 
         maChart.getData().clear();
+        waiting(maChart, maEmpty);
         show(maLoadingLabel);
 
         final LocalDate fFrom = from;
@@ -955,6 +1099,10 @@ public final class RankingPage implements ResponsivePage {
     private void renderMAChart(List<HistoryPoint> points, String ticker) {
         hide(maLoadingLabel);
         maChart.getData().clear();
+        // no line until the end of this method draws one: the area says the calculation gave no chart
+        // (the reason is the message under it)
+        stated(maChart, maEmpty, "Sem gráfico para este cálculo",
+                "O motivo aparece logo abaixo. Ajuste o ticker, o período ou as janelas e calcule de novo.");
 
         if (points.isEmpty()) {
             maCrossLabel.setText("Sem dados para " + ticker + " no intervalo informado. Confira o ticker, a conexão ou o token BRAPI em Configurações.");
@@ -1015,16 +1163,13 @@ public final class RankingPage implements ResponsivePage {
 
         lastMAEpochSecs = epochSecs;
 
-        // Eixo Y com padding de 5%
-        double range   = maxPrice - minPrice;
-        double padding = range > 0 ? range * 0.05 : maxPrice * 0.02;
-        maYAxis.setLowerBound(minPrice - padding);
-        maYAxis.setUpperBound(maxPrice + padding);
-        maYAxis.setTickUnit((range + 2 * padding) / 6.0);
+        // R3-08: round steps on round bounds around the prices (a sixth of the padded range read 29.006, 30.384…)
+        ChartAxisUtils.roundValueAxis(maYAxis, minPrice, maxPrice);
 
         maChart.getData().add(priceSeries);
         maChart.getData().add(maShortSeries);
         maChart.getData().add(maLongSeries);
+        drawn(maChart, maEmpty);
 
         // Detectar cruzamento nos dois últimos pontos sobrepostos
         int shortSize = maShortSeries.getData().size();

@@ -59,6 +59,10 @@ public final class MovementDialog extends Dialog<Movement> {
     private final Label helperLabel = new Label();
     private final ProgressIndicator busy = new ProgressIndicator();
     private final Map<String, Control> fieldByName = new LinkedHashMap<>();
+    /** R2-19: each field's box, where its own message is shown. */
+    private final Map<String, VBox> fieldBoxByName = new LinkedHashMap<>();
+    private VBox formBox;
+    private javafx.scene.Node footerRow;
     private final ButtonType confirmType;
 
     public MovementDialog(String title, String subtitle, MovementForm form,
@@ -85,12 +89,14 @@ public final class MovementDialog extends Dialog<Movement> {
         getDialogPane().getButtonTypes().addAll(confirmType, ButtonType.CANCEL);
 
         VBox content = new VBox(16);
+        formBox = content;
         content.getStyleClass().add("movement-form");
         content.setPadding(new Insets(16));
         if (subtitle != null) {
             Label sub = new Label(subtitle);
             sub.getStyleClass().addAll("text-secondary", "movement-context");
             sub.setWrapText(true);
+            sub.setMaxWidth(Double.MAX_VALUE); // a filled note spans the form like the fields (E-V2)
             content.getChildren().add(sub);
         }
 
@@ -158,6 +164,7 @@ public final class MovementDialog extends Dialog<Movement> {
 
         errorLabel.getStyleClass().add("warning-banner");
         errorLabel.setWrapText(true);
+        errorLabel.setMaxWidth(Double.MAX_VALUE);
         errorLabel.setVisible(false);
         errorLabel.setManaged(false);
         helperLabel.getStyleClass().add("text-helper");
@@ -168,6 +175,7 @@ public final class MovementDialog extends Dialog<Movement> {
         busy.setManaged(false);
         HBox footer = new HBox(8, busy, helperLabel);
         footer.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        footerRow = footer;
         content.getChildren().addAll(errorLabel, footer);
 
         // Shared frame: header (title + close, draggable) and a body that scrolls on its own, so the
@@ -231,6 +239,11 @@ public final class MovementDialog extends Dialog<Movement> {
         if (input instanceof Control c) fieldByName.put(name, c);
         VBox box = new VBox(4, l, input);
         if (input instanceof Region r) r.setMaxWidth(Double.MAX_VALUE);
+        fieldBoxByName.put(name, box);
+        // a refused value stays marked until the field is edited
+        if (input instanceof TextInputControl t) t.textProperty().addListener((o, a, v) -> t.getStyleClass().remove("field-error"));
+        if (input instanceof ComboBoxBase<?> cb) cb.valueProperty().addListener((o, a, v) -> cb.getStyleClass().remove("field-error"));
+        if (input instanceof DatePicker dp) dp.getEditor().textProperty().addListener((o, a, v) -> dp.getStyleClass().remove("field-error"));
         return box;
     }
 
@@ -245,27 +258,49 @@ public final class MovementDialog extends Dialog<Movement> {
     }
 
     private void showError(LedgerException ex) {
-        errorLabel.setText(ex.getMessage());
+        String name = fieldByName.containsKey(ex.field()) ? ex.field() : "cash".equals(ex.field()) ? "amount" : null;
+        showMessage(ex.getMessage(), name);
+    }
+
+    /**
+     * R2-19: the message is a sentence, right under the field it is about (above the footer when it
+     * is about no field), and the field stays marked until it is edited — "número inválido: abc"
+     * came out lowercase in a banner ~188 px below Valor, with nothing on the field.
+     */
+    private void showMessage(String message, String fieldName) {
+        errorLabel.setText(sentence(message));
+        if (errorLabel.getParent() instanceof javafx.scene.layout.Pane p) p.getChildren().remove(errorLabel);
+        VBox box = fieldName == null ? null : fieldBoxByName.get(fieldName);
+        if (box != null) box.getChildren().add(errorLabel);
+        else formBox.getChildren().add(Math.max(0, formBox.getChildren().indexOf(footerRow)), errorLabel);
         errorLabel.setVisible(true);
         errorLabel.setManaged(true);
-        Control c = fieldByName.get(ex.field());
-        if (c == null && "cash".equals(ex.field())) c = fieldByName.get("amount");
-        if (c != null) c.requestFocus();
+        Control c = fieldName == null ? null : fieldByName.get(fieldName);
+        if (c != null) {
+            if (!c.getStyleClass().contains("field-error")) c.getStyleClass().add("field-error");
+            c.requestFocus();
+        }
         DialogChrome.resizeToContent(this);
+    }
+
+    /** A message as a sentence: capital first letter, final full stop. */
+    static String sentence(String text) {
+        if (text == null || text.isBlank()) return "";
+        String s = text.strip();
+        s = Character.toUpperCase(s.charAt(0)) + s.substring(1);
+        char last = s.charAt(s.length() - 1);
+        return last == '.' || last == '!' || last == '?' || last == ')' ? s : s + ".";
     }
 
     void submit() {
         if (form.submitting()) return;
         errorLabel.setVisible(false);
         errorLabel.setManaged(false);
+        fieldByName.values().forEach(c -> c.getStyleClass().remove("field-error"));
         MovementRequest req;
         LocalDate date = UiDates.commitEditor(datePicker);
         if (date == null) {
-            errorLabel.setText("Informe uma data válida (dd/mm/aaaa ou aaaa-mm-dd).");
-            errorLabel.setVisible(true);
-            errorLabel.setManaged(true);
-            datePicker.requestFocus();
-            DialogChrome.resizeToContent(this);
+            showMessage("Informe uma data válida (dd/mm/aaaa ou aaaa-mm-dd).", "date");
             return;
         }
         form.setDate(date);
@@ -294,10 +329,7 @@ public final class MovementDialog extends Dialog<Movement> {
                     if (cause instanceof LedgerException le) {
                         showError(le);
                     } else {
-                        errorLabel.setText("Falha ao gravar: " + cause.getMessage());
-                        errorLabel.setVisible(true);
-                        errorLabel.setManaged(true);
-                        DialogChrome.resizeToContent(this);
+                        showMessage("Falha ao gravar: " + cause.getMessage(), null);
                     }
                 }));
     }

@@ -20,8 +20,11 @@ import com.daniel.presentation.view.components.HeroValue;
 import com.daniel.presentation.view.components.Panel;
 import com.daniel.presentation.view.components.StatStrip;
 import com.daniel.presentation.view.layout.AdaptivePair;
+import com.daniel.presentation.view.layout.LineFlow;
 import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.ChartSeriesStyle;
+import com.daniel.presentation.view.components.EmptyState;
+import org.kordamp.ikonli.feather.Feather;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiSpacer;
 
@@ -29,6 +32,7 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.geometry.Side;
+import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.chart.*;
 import javafx.scene.control.*;
@@ -96,6 +100,16 @@ public final class DashboardPage implements ResponsivePage {
     private final Label metricBenchmarkLabel = new Label("—");
     private final Label metricBenchmarkTitleLabel = new Label("Rent. CDI");
 
+    // R2-08 (V9): an empty chart states why instead of drawing a bare 0–110 grid or a blank square.
+    private static final String VALUE_EMPTY = "Nenhuma posição com valor";
+    private static final String VALUE_EMPTY_HINT = "Cada ativo aparece aqui com o seu valor atual assim que houver posições.";
+    private static final String PIE_EMPTY = "Sem posições para compor";
+    private static final String PIE_EMPTY_HINT = "A composição por categoria aparece quando houver posições com valor.";
+    private final VBox valueEmpty = EmptyState.of(Feather.BAR_CHART_2, VALUE_EMPTY, VALUE_EMPTY_HINT, true);
+    private final VBox pieEmpty = EmptyState.of(Feather.PIE_CHART, PIE_EMPTY, PIE_EMPTY_HINT, true);
+    // R3-03 (R2-08 while loading): until the first result no chart draws its default grid; each panel says so.
+    private final Label evolutionLoading = new Label("Carregando a evolução da carteira…");
+    private boolean firstLoad = true;
     private final Label noComparisonHint = new Label(
             "Cadastre seus primeiros investimentos para desbloquear o gráfico de performance, benchmarks e indicadores de rentabilidade.");
     private final Label sparseChartHint = new Label(
@@ -131,11 +145,17 @@ public final class DashboardPage implements ResponsivePage {
         waterfallXAxis.setLabel("Investimentos");
         yAxis.setLabel("Valor (R$)");
         waterfallChart = new BarChart<>(waterfallXAxis, yAxis);
-        waterfallChart.setTitle("Composição do Patrimônio");
+        // R2-21: the panel title ("Valor por ativo") names this chart; an inner title competed with it.
+        waterfallChart.setTitle(null);
         waterfallChart.setLegendVisible(false);
+        // R2-11: the bars take their colour from this class, never from default-colorN, which JavaFX
+        // keeps advancing each time a refresh recreates the series (orange first, green later).
+        waterfallChart.getStyleClass().add("value-chart");
         ChartAxisUtils.installSmartAxis(waterfallXAxis, waterfallChart);
 
         comparisonChart.setTitle(null);
+        // R2-01: legend symbols follow the same series colours as the lines (app.css .evolution-chart).
+        comparisonChart.getStyleClass().add("evolution-chart");
         comparisonChart.setMinHeight(280);
         comparisonChart.setCreateSymbols(false);
         comparisonChart.setAnimated(false);
@@ -151,6 +171,7 @@ public final class DashboardPage implements ResponsivePage {
         tokenWarningBanner.setGraphic(Icons.alertTriangle());
         tokenWarningBanner.setGraphicTextGap(8);
         tokenWarningBanner.setWrapText(true);
+        tokenWarningBanner.setMaxWidth(Double.MAX_VALUE); // a banner spans the content, whatever the message length (E-V2)
         tokenWarningBanner.getStyleClass().add("warning-banner");
         tokenWarningBanner.setVisible(false);
         tokenWarningBanner.setManaged(false);
@@ -174,6 +195,13 @@ public final class DashboardPage implements ResponsivePage {
         pieChart.setMinHeight(240);
         pieChart.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
         pieChart.setLegendSide(Side.BOTTOM);
+        // R2-12: labels drawn around the pie took the width of a half-row card and left a ~45 px pie;
+        // the legend already gives category and share, the tooltip the value.
+        pieChart.setLabelsVisible(false);
+        pieEmpty.setVisible(false);
+        pieEmpty.setManaged(false);
+        valueEmpty.setVisible(false);
+        valueEmpty.setManaged(false);
         VBox.setVgrow(pieChart, Priority.ALWAYS);
         healthBar.setMaxWidth(Double.MAX_VALUE);
         healthScoreLabel.getStyleClass().addAll("text-bold", "num");
@@ -181,7 +209,7 @@ public final class DashboardPage implements ResponsivePage {
         healthDescLabel.setWrapText(true);
         HBox healthRow = new HBox(10, new Label("Saúde da carteira"), UiSpacer.hGrow(), healthScoreLabel);
         healthRow.setAlignment(Pos.CENTER_LEFT);
-        Panel compositionPanel = new Panel("Composição", pieChart, healthRow, healthBar, healthDescLabel)
+        Panel compositionPanel = new Panel("Composição", pieChart, pieEmpty, healthRow, healthBar, healthDescLabel)
                 .subtitle("Por categoria, sobre o valor das posições");
         recentActivityList.setFillWidth(true);
         Label emptyActivity = new Label("Nenhum lançamento este mês");
@@ -203,7 +231,7 @@ public final class DashboardPage implements ResponsivePage {
         rankBlock.getStyleClass().add("rank-panel");
         waterfallChart.setMinHeight(240);
         VBox.setVgrow(waterfallChart, Priority.ALWAYS);
-        Panel waterfallPanel = new Panel("Valor por ativo", waterfallChart).subtitle("Posições ordenadas pelo valor atual");
+        Panel waterfallPanel = new Panel("Valor por ativo", waterfallChart, valueEmpty).subtitle("Posições ordenadas pelo valor atual");
         secondPair = new AdaptivePair(rankBlock, waterfallPanel, Breakpoint.MEDIUM, 0.45, 16);
 
         root.getChildren().addAll(headerRow, tokenWarningBanner, summary, chartPanel,
@@ -213,6 +241,46 @@ public final class DashboardPage implements ResponsivePage {
         scrollPane.setFitToWidth(true);
         scrollPane.getStyleClass().add("page-scroll");
         onBreakpoint(Breakpoint.WIDE);
+        showFirstLoad();
+    }
+
+    /** R3-03: before the first result (populated: ~5 s) no default 0–110 grid and no blank panel. */
+    private void showFirstLoad() {
+        EmptyState.setText(valueEmpty, "Carregando posições…", "O valor de cada ativo aparece assim que a carteira for lida.");
+        EmptyState.setText(pieEmpty, "Carregando composição…", "A composição por categoria aparece assim que a carteira for lida.");
+        showChart(waterfallChart, valueEmpty, false);
+        showChart(pieChart, pieEmpty, false);
+        noComparisonHint.setVisible(false);
+        noComparisonHint.setManaged(false);
+        sparseChartHint.setVisible(false);
+        sparseChartHint.setManaged(false);
+        compWrapper.setVisible(false);
+        compWrapper.setManaged(false);
+        evolutionLoading.setVisible(true);
+        evolutionLoading.setManaged(true);
+        // the composition's own empty state says it is loading: no second "Carregando..." under it
+        healthDescLabel.setVisible(false);
+        healthDescLabel.setManaged(false);
+        showRankPlaceholder("Carregando cotações…");
+    }
+
+    /** The first result (or a later one after a failed first load) gives every panel back its own states. */
+    private void endFirstLoad() {
+        firstLoad = false;
+        EmptyState.setText(valueEmpty, VALUE_EMPTY, VALUE_EMPTY_HINT);
+        EmptyState.setText(pieEmpty, PIE_EMPTY, PIE_EMPTY_HINT);
+        evolutionLoading.setVisible(false);
+        evolutionLoading.setManaged(false);
+        healthDescLabel.setVisible(true);
+        healthDescLabel.setManaged(true);
+    }
+
+    /** A first load that fails says so instead of loading forever (later refreshes keep their data). */
+    private void showFirstLoadFailure() {
+        evolutionLoading.setText("Não foi possível carregar a carteira. Abra a página de novo para tentar outra vez.");
+        EmptyState.setText(valueEmpty, "Não foi possível carregar", "Abra a página de novo para tentar outra vez.");
+        EmptyState.setText(pieEmpty, "Não foi possível carregar", "Abra a página de novo para tentar outra vez.");
+        showRankPlaceholder("Cotações indisponíveis");
     }
 
     @Override
@@ -365,6 +433,12 @@ public final class DashboardPage implements ResponsivePage {
                 if (refreshEpoch.get() != epoch) return;
                 applyDashData(data, today);
             });
+        }).exceptionally(err -> {
+            // R3-03: only the first load had no answer for a failure (it would read "Carregando…" forever)
+            Platform.runLater(() -> {
+                if (refreshEpoch.get() == epoch && firstLoad) showFirstLoadFailure();
+            });
+            return null;
         });
     }
 
@@ -426,6 +500,7 @@ public final class DashboardPage implements ResponsivePage {
     }
 
     private void applyDashData(DashData data, LocalDate today) {
+        if (firstLoad) endFirstLoad();
         List<InvestmentType> investments = data.investments();
 
         if (investments.isEmpty()) {
@@ -438,6 +513,10 @@ public final class DashboardPage implements ResponsivePage {
             pieChart.getData().clear();
             waterfallChart.getData().clear();
             comparisonChart.getData().clear();
+            showChart(pieChart, pieEmpty, false);
+            showChart(waterfallChart, valueEmpty, false);
+            showComparisonEmpty();
+            showRankPlaceholder("Nenhum ativo com cotação");
             investmentsByCategoryContainer.getChildren().clear();
             healthBar.setProgress(0);
             healthScoreLabel.setText("—");
@@ -525,13 +604,13 @@ public final class DashboardPage implements ResponsivePage {
         );
 
         pieChart.getData().clear();
+        pieChart.setTitle(null);
 
         if (data.totalCents() == 0) {
-            pieChart.setTitle("Sem dados de diversificação");
+            showChart(pieChart, pieEmpty, false);
             return;
         }
-
-        pieChart.setTitle(null);
+        showChart(pieChart, pieEmpty, true);
 
         List<CategoryAllocation> validAllocs = new ArrayList<>();
         for (CategoryAllocation alloc : data.allocations()) {
@@ -559,7 +638,46 @@ public final class DashboardPage implements ResponsivePage {
         });
     }
 
+    /** R2-21: the legend dot wears its slice colour (it fell back to the theme's default-colorN). */
+    private void styleLegendSymbol(PieChart.Data slice, String color) {
+        for (javafx.scene.Node item : pieChart.lookupAll(".chart-legend-item")) {
+            if (item instanceof Label l && slice.getName().equals(l.getText()) && l.getGraphic() != null) {
+                l.getGraphic().setStyle("-fx-pie-color: " + color + ";");
+            }
+        }
+    }
+
+    /** One of a chart and its empty state is shown, never a bare grid. */
+    private static void showChart(javafx.scene.Node chart, javafx.scene.Node empty, boolean hasData) {
+        chart.setVisible(hasData);
+        chart.setManaged(hasData);
+        empty.setVisible(!hasData);
+        empty.setManaged(!hasData);
+    }
+
+    /** No investment to compare: the reason, without the evolution grid or the sparse-history hint. */
+    private void showComparisonEmpty() {
+        noComparisonHint.setVisible(true);
+        noComparisonHint.setManaged(true);
+        sparseChartHint.setVisible(false);
+        sparseChartHint.setManaged(false);
+        compWrapper.setVisible(false);
+        compWrapper.setManaged(false);
+    }
+
+    /** Both rank lists say why they are empty (\"Maiores baixas\" used to stay blank). */
+    private void showRankPlaceholder(String text) {
+        for (VBox list : List.of(rankPanelAltas, rankPanelBaixas)) {
+            list.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
+            Label empty = new Label(text);
+            empty.getStyleClass().add("muted");
+            empty.setWrapText(true);
+            list.getChildren().add(empty);
+        }
+    }
+
     private void applyPieStyle(PieChart.Data slice, String color, String tipText) {
+        styleLegendSymbol(slice, color);
         javafx.scene.Node n = slice.getNode();
         if (n != null) {
             n.setStyle("-fx-pie-color: " + color + ";");
@@ -584,25 +702,32 @@ public final class DashboardPage implements ResponsivePage {
         XYChart.Series<String, Number> series = new XYChart.Series<>();
         series.setName("Valores");
 
-        // Agrupar por nome, somando os valores (evita duplicatas para o mesmo ativo)
+        // One bar per asset, as in the position list: lots of one ticker add up; an asset without
+        // ticker is its name. The tooltip keeps the whole name.
         Map<String, Long> grouped = new LinkedHashMap<>();
+        Map<String, String> names = new HashMap<>();
         for (InvestmentType inv : investments) {
             long value = currentValues.getOrDefault((long) inv.id(), 0L);
             if (value > 0) {
-                grouped.merge(inv.name(), value, Long::sum);
+                String key = assetKey(inv);
+                grouped.merge(key, value, Long::sum);
+                names.putIfAbsent(key, inv.name());
             }
         }
 
         List<InvestmentValue> invValues = grouped.entrySet().stream()
-                .map(e -> new InvestmentValue(e.getKey(), e.getValue()))
+                .map(e -> new InvestmentValue(names.get(e.getKey()), e.getKey(), e.getValue()))
                 .sorted((a, b) -> Long.compare(b.valueCents, a.valueCents))
                 .toList();
 
+        Set<String> used = new HashSet<>();
         for (InvestmentValue iv : invValues) {
-            series.getData().add(new XYChart.Data<>(truncateName(iv.name, 15), iv.valueCents / 100.0));
+            boolean ticker = !iv.key.equals(iv.name);
+            series.getData().add(new XYChart.Data<>(axisLabel(iv.key, ticker, used), iv.valueCents / 100.0));
         }
 
         waterfallChart.getData().add(series);
+        showChart(waterfallChart, valueEmpty, !series.getData().isEmpty());
 
         // Atualiza densidade de labels do eixo X após renderização
         Platform.runLater(() -> ChartAxisUtils.refreshLabels(waterfallXAxis, waterfallChart.getWidth()));
@@ -659,7 +784,8 @@ public final class DashboardPage implements ResponsivePage {
 
         // Configurar gráfico
         compXAxis.setLabel(null);
-        compYAxis.setLabel("Rentabilidade %");
+        // R2-02: the line is the variation of the positions' value, not a return (the note says so).
+        compYAxis.setLabel("Variação (%)");
         comparisonChart.setAnimated(false);
         comparisonChart.setCreateSymbols(false);
         comparisonChart.setLegendVisible(true);
@@ -693,7 +819,10 @@ public final class DashboardPage implements ResponsivePage {
         comparisonMethodHint.getStyleClass().add("text-secondary");
         comparisonMethodHint.setWrapText(true);
 
-        Panel panel = new Panel("Evolução da carteira", filterBar, datePickerBox, benchBar, noComparisonHint, sparseChartHint, chartPair, comparisonMethodHint)
+        evolutionLoading.getStyleClass().add("text-secondary");
+        evolutionLoading.setWrapText(true);
+        evolutionLoading.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        Panel panel = new Panel("Evolução da carteira", filterBar, datePickerBox, benchBar, noComparisonHint, evolutionLoading, sparseChartHint, chartPair, comparisonMethodHint)
                 .subtitle("Variação do valor das posições no período, comparada ao benchmark");
         panel.getStyleClass().add("main-chart-panel");
         return panel;
@@ -795,8 +924,7 @@ public final class DashboardPage implements ResponsivePage {
         // ── Empty state ──────────────────────────────────────────────────────
         long totalInvestido = calcTotalInvestido(investments);
         if (investments.isEmpty() || totalInvestido == 0) {
-            noComparisonHint.setVisible(true);
-            noComparisonHint.setManaged(true);
+            showComparisonEmpty();
             return;
         }
         noComparisonHint.setVisible(false);
@@ -965,12 +1093,8 @@ public final class DashboardPage implements ResponsivePage {
 
     private void updateRankPanel(List<InvestmentType> investments, Map<Long, Long> currentValues) {
         final long rankEpoch = refreshEpoch.get();
-        // Keep the titles, show loading
-        rankPanelAltas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
-        rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
-        Label loading = new Label("Carregando...");
-        loading.getStyleClass().add("muted");
-        rankPanelAltas.getChildren().add(loading);
+        // Keep the titles; R3-03: both lists say the quotes are loading ("Maiores baixas" stood blank meanwhile)
+        showRankPlaceholder("Carregando cotações…");
 
         CompletableFuture.supplyAsync(() -> {
             List<RankEntry> entries = new ArrayList<>();
@@ -1031,9 +1155,7 @@ public final class DashboardPage implements ResponsivePage {
             rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
 
             if (entries.isEmpty()) {
-                Label empty = new Label("Nenhum ativo");
-                empty.getStyleClass().add("muted");
-                rankPanelAltas.getChildren().add(empty);
+                showRankPlaceholder("Sem cotação do dia para comparar");
                 return;
             }
 
@@ -1235,8 +1357,31 @@ public final class DashboardPage implements ResponsivePage {
         }
 
         section.getChildren().addAll(header, new Separator(), investmentsList);
+        // R2-22: the populated base's 75 positions became 75 cards and a 10 694 px page. A category
+        // shows its first positions and offers the others on demand (every row is still built: the
+        // same data and requests as before, only fewer on screen until asked).
+        List<Node> rows = new ArrayList<>(investmentsList.getChildren());
+        if (rows.size() > CATEGORY_ROWS) {
+            Button more = new Button();
+            more.getStyleClass().add("ghost-btn");
+            boolean[] all = {false};
+            Runnable apply = () -> {
+                for (int i = CATEGORY_ROWS; i < rows.size(); i++) {
+                    rows.get(i).setVisible(all[0]);
+                    rows.get(i).setManaged(all[0]);
+                }
+                more.setText(all[0] ? "Mostrar só as " + CATEGORY_ROWS + " primeiras"
+                        : "Mostrar todas as " + rows.size() + " posições");
+            };
+            more.setOnAction(e -> { all[0] = !all[0]; apply.run(); });
+            apply.run();
+            section.getChildren().add(more);
+        }
         return section;
     }
+
+    /** R2-22: positions a category shows before "Mostrar todas". */
+    static final int CATEGORY_ROWS = 5;
 
     private VBox buildGroupedStockRow(String ticker, List<InvestmentType> investments,
                                       long totalValueCents, long totalPatrimony) {
@@ -1281,9 +1426,10 @@ public final class DashboardPage implements ResponsivePage {
         primary.setAlignment(Pos.CENTER_LEFT);
         Label nameLabel = new Label(ticker);
         nameLabel.getStyleClass().add("inv-row-name");
-        primary.getChildren().addAll(nameLabel, UiSpacer.hGrow(),
+        nameLabel.setMinWidth(Region.USE_PREF_SIZE); // the ticker names the row: never cut
+        primary.getChildren().addAll(nameLabel, UiSpacer.hGrow(), metrics(
                 createInfoBox("Posição Atual", posicaoLabel),
-                createInfoBox("Rentabilidade", rentLabel));
+                createInfoBox("Rentabilidade", rentLabel)));
 
         // Secondary row: static metadata
         HBox secondary = new HBox(12);
@@ -1292,13 +1438,14 @@ public final class DashboardPage implements ResponsivePage {
         Label metaLabel = new Label("Qtd: " + qtdFinal
                 + "  ·  PM: R$ " + String.format("%.2f", precoMedioFinal));
         metaLabel.getStyleClass().add("text-dim");
-        secondary.getChildren().addAll(metaLabel, UiSpacer.hGrow(),
+        LineFlow secondaryMetrics = metrics(
                 createInfoBox("Investido", daily.brl(totalInvestido)),
                 createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
         if (dataInvestimento != null) {
-            secondary.getChildren().add(createInfoBox("Data",
+            secondaryMetrics.getChildren().add(createInfoBox("Data",
                     dataInvestimento.format(DateTimeFormatter.ofPattern("dd/MM/yy"))));
         }
+        secondary.getChildren().addAll(wrapLead(metaLabel), UiSpacer.hGrow(), secondaryMetrics);
 
         VBox row = new VBox(8);
         row.getStyleClass().add("inv-row-card");
@@ -1347,17 +1494,17 @@ public final class DashboardPage implements ResponsivePage {
         primary.setAlignment(Pos.CENTER_LEFT);
         Label nameLabel = new Label(inv.name());
         nameLabel.getStyleClass().add("inv-row-name");
-        primary.getChildren().add(nameLabel);
+        primary.getChildren().add(wrapLead(nameLabel));
 
         if (isStock) {
             Label tickerBadge = new Label(inv.ticker());
             tickerBadge.getStyleClass().add("ticker-badge");
+            tickerBadge.setMinWidth(Region.USE_PREF_SIZE);
             primary.getChildren().add(tickerBadge);
         }
 
-        primary.getChildren().add(UiSpacer.hGrow());
-
-        primary.getChildren().add(createInfoBox("Posição Atual", daily.brl(currentValueCents)));
+        LineFlow primaryMetrics = metrics(createInfoBox("Posição Atual", daily.brl(currentValueCents)));
+        primary.getChildren().addAll(UiSpacer.hGrow(), primaryMetrics);
 
         if (isStock && inv.quantity() != null && inv.purchasePrice() != null) {
             double precoMedio = inv.purchasePrice().doubleValue();
@@ -1371,13 +1518,13 @@ public final class DashboardPage implements ResponsivePage {
                 rentLabel = new Label(String.format("%+.2f%%", rent));
                 applyRentStyle(rentLabel, rent);
             }
-            primary.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
+            primaryMetrics.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
         } else if (!isStock && inv.investedValue() != null) {
             long investido = inv.investedValue().multiply(java.math.BigDecimal.valueOf(100)).longValue();
             double rent = investido > 0 ? ((currentValueCents - investido) * 100.0) / investido : 0;
             Label rentLabel = new Label(String.format("%+.2f%%", rent));
             applyRentStyle(rentLabel, rent);
-            primary.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
+            primaryMetrics.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
         }
 
         // ── Secondary row ──
@@ -1388,30 +1535,29 @@ public final class DashboardPage implements ResponsivePage {
         if (inv.typeOfInvestment() != null) {
             Label typeLabel = new Label(getTypeDisplayName(inv.typeOfInvestment()));
             typeLabel.getStyleClass().add("text-dim");
-            secondary.getChildren().add(typeLabel);
+            secondary.getChildren().add(wrapLead(typeLabel));
         }
 
-        secondary.getChildren().add(UiSpacer.hGrow());
-
-        secondary.getChildren().add(createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
+        LineFlow secondaryMetrics = metrics(createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
+        secondary.getChildren().addAll(UiSpacer.hGrow(), secondaryMetrics);
 
         if (isStock && inv.quantity() != null && inv.purchasePrice() != null) {
             long valorInvestido = (long)(inv.purchasePrice().doubleValue() * inv.quantity() * 100);
-            secondary.getChildren().add(createInfoBox("Investido", daily.brl(valorInvestido)));
-            secondary.getChildren().add(createInfoBox("PM", String.format("R$ %.2f",
+            secondaryMetrics.getChildren().add(createInfoBox("Investido", daily.brl(valorInvestido)));
+            secondaryMetrics.getChildren().add(createInfoBox("PM", String.format("R$ %.2f",
                     inv.purchasePrice().doubleValue())));
         } else if (!isStock && inv.investedValue() != null) {
             long investido = inv.investedValue().multiply(java.math.BigDecimal.valueOf(100)).longValue();
-            secondary.getChildren().add(createInfoBox("Investido", daily.brl(investido)));
+            secondaryMetrics.getChildren().add(createInfoBox("Investido", daily.brl(investido)));
         }
 
         if (inv.profitability() != null) {
-            secondary.getChildren().add(createInfoBox("Taxa",
+            secondaryMetrics.getChildren().add(createInfoBox("Taxa",
                     String.format("%.2f%% a.a.", inv.profitability())));
         }
 
         if (inv.investmentDate() != null) {
-            secondary.getChildren().add(createInfoBox("Data",
+            secondaryMetrics.getChildren().add(createInfoBox("Data",
                     inv.investmentDate().format(DateTimeFormatter.ofPattern("dd/MM/yy"))));
         }
 
@@ -1438,9 +1584,11 @@ public final class DashboardPage implements ResponsivePage {
 
         Label valueLabel = new Label(value);
         valueLabel.getStyleClass().add("info-box-value");
+        valueLabel.setMinWidth(Region.USE_PREF_SIZE);
 
         Label labelLabel = new Label(label);
         labelLabel.getStyleClass().add("info-box-label");
+        labelLabel.setMinWidth(Region.USE_PREF_SIZE);
 
         box.getChildren().addAll(valueLabel, labelLabel);
         return box;
@@ -1452,9 +1600,11 @@ public final class DashboardPage implements ResponsivePage {
         box.getStyleClass().add("info-box");
 
         customLabel.getStyleClass().add("text-sm");
+        customLabel.setMinWidth(Region.USE_PREF_SIZE); // the async value never shrinks below its text
 
         Label labelLabel = new Label(label);
         labelLabel.getStyleClass().add("info-box-label");
+        labelLabel.setMinWidth(Region.USE_PREF_SIZE);
 
         box.getChildren().addAll(customLabel, labelLabel);
         return box;
@@ -1584,6 +1734,10 @@ public final class DashboardPage implements ResponsivePage {
             valLabel.getStyleClass().addAll("text-sm", outflow ? "neg" : "pos");
             Label dateLabel = new Label(tx.date().format(fmt));
             dateLabel.getStyleClass().add("text-dim-xs");
+            // V5 (r1 at 740 px of page: "- R$ 200,...", "15/..."): sign, amount and date keep their
+            // width; the description is what yields, by wrapping.
+            for (Label fixed : List.of(typeIcon, valLabel, dateLabel)) fixed.setMinWidth(Region.USE_PREF_SIZE);
+            wrapLead(nameLabel);
             row.getChildren().addAll(typeIcon, nameLabel, UiSpacer.hGrow(), valLabel, dateLabel);
             recentActivityList.getChildren().add(row);
         });
@@ -1604,12 +1758,46 @@ public final class DashboardPage implements ResponsivePage {
         return date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
     }
 
-    private String truncateName(String name, int maxLength) {
-        if (name.length() <= maxLength) return name;
-        return name.substring(0, maxLength - 3) + "...";
+    /** The asset a bar or a position stands for: its normalized ticker, or its name when it has none. */
+    private static String assetKey(InvestmentType inv) {
+        return inv.ticker() != null && !inv.ticker().isBlank() ? inv.ticker().trim().toUpperCase() : inv.name();
     }
 
-    private record InvestmentValue(String name, long valueCents) {}
+    static final int AXIS_NAME_MAX = 24;
+
+    /**
+     * V9/V5 (r1 populated): a category per asset. A CategoryAxis merges equal labels, so cutting every
+     * name to 15 characters put 75 assets under a single "Ativo sintét..." bar. A ticker names its
+     * bar; a name without ticker stays whole up to {@value #AXIS_NAME_MAX} characters and longer ones
+     * are shortened; a label that would repeat another one keeps the whole name, then a counter.
+     */
+    static String axisLabel(String key, boolean ticker, Set<String> used) {
+        String label = ticker || key.length() <= AXIS_NAME_MAX ? key : key.substring(0, AXIS_NAME_MAX - 1).strip() + "\u2026";
+        if (used.add(label)) return label;
+        if (used.add(key)) return key;
+        int n = 2;
+        while (!used.add(key + " (" + n + ")")) n++;
+        return key + " (" + n + ")";
+    }
+
+    /**
+     * V5 (r1 populated at 600×480: "R$ 20.000.000,..." in the position list): a row's metrics move to
+     * another line whole instead of being squeezed below their text.
+     */
+    private static LineFlow metrics(Node... boxes) {
+        LineFlow flow = new LineFlow(12, 6, boxes);
+        flow.setAlignment(Pos.CENTER_RIGHT);
+        return flow;
+    }
+
+    /** The descriptive text of a row yields first: it wraps rather than pushing a value out. */
+    private static Label wrapLead(Label label) {
+        label.setWrapText(true);
+        label.setMinWidth(0);
+        return label;
+    }
+
+    private record InvestmentValue(String name, String key, long valueCents) {}
 
     private record DashData(
         List<InvestmentType> investments,

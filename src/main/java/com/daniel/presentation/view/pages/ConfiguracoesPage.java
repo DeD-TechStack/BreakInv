@@ -105,7 +105,9 @@ public final class ConfiguracoesPage implements ResponsivePage {
     @Override
     public void onBreakpoint(Breakpoint bp) {
         integrationsPair.onBreakpoint(bp);
-        ratesStrip.setColumns(bp == Breakpoint.MEDIUM ? 3 : 1);
+        // Three short rates are one line wherever they fit; the strip measures the real width and
+        // drops columns itself before a value would be cut (A-V6: no 220 px stack of dashes).
+        ratesStrip.setColumns(3);
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
         root.getStyleClass().add(bp.styleClass());
     }
@@ -303,8 +305,11 @@ public final class ConfiguracoesPage implements ResponsivePage {
         bcbLastUpdateLabel.maxWidthProperty().bind(actions.widthProperty());
         actions.setAlignment(Pos.CENTER_LEFT);
 
-        return new Panel("Taxas de referência (Banco Central)", ratesStrip, actions)
+        Panel panel = new Panel("Taxas de referência (Banco Central)", ratesStrip, actions)
                 .subtitle("CDI, SELIC e IPCA anuais usados como referência na simulação e nos benchmarks.");
+        // R2-20: its own height beside the taller BRAPI panel (stretched, it left ~165 px empty)
+        panel.setMaxHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        return panel;
     }
 
     private Panel buildAboutSection() {

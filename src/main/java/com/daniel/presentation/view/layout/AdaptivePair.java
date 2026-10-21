@@ -8,6 +8,8 @@ import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
+import java.util.function.DoublePredicate;
+
 /**
  * Two blocks side by side when the breakpoint allows, stacked otherwise. Replaces the fixed
  * {@code HBox(a, b)} pairs that only shrank fonts in narrow windows.
@@ -24,6 +26,8 @@ public final class AdaptivePair extends Pane {
     private final Breakpoint stackBelow;
     private final double firstWeight;
     private boolean sideBySide;
+    /** Optional (R4-01): decides side by side × stacked from the width the pair is measured and laid out at. */
+    private DoublePredicate sideBySideAt;
 
     /**
      * @param stackBelow  the first breakpoint (inclusive) at which the pair stacks: e.g. MEDIUM
@@ -54,7 +58,26 @@ public final class AdaptivePair extends Pane {
     }
 
     public void onBreakpoint(Breakpoint bp) {
-        boolean side = bp.ordinal() > stackBelow.ordinal();
+        if (sideBySideAt != null) { // the width rule decides: now with the current width, again at the laid-out width
+            arrange(sideBySideAt.test(getWidth()));
+            requestLayout();
+            return;
+        }
+        arrange(bp.ordinal() > stackBelow.ordinal());
+    }
+
+    /**
+     * R4-01: lets the pair choose side by side × stacked from the width it is measured and laid out at, so a
+     * parent reserves the height of the arrangement that width will show, in the same pass. A width listener
+     * decided it too late: the parent had already reserved the other arrangement's height, and a relayout
+     * requested during the parent's own layout is not propagated — stacked blocks ran under the next node.
+     */
+    public void setSideBySideRule(DoublePredicate sideBySideAt) {
+        this.sideBySideAt = sideBySideAt;
+        requestLayout();
+    }
+
+    private void arrange(boolean side) {
         if (side == sideBySide && !getChildren().isEmpty()) return;
         sideBySide = side;
         row.getChildren().clear();
@@ -91,6 +114,7 @@ public final class AdaptivePair extends Pane {
     @Override
     protected void layoutChildren() {
         double w = getWidth(), h = getHeight();
+        if (sideBySideAt != null && w > 0) arrange(sideBySideAt.test(w)); // the height reserved above was this arrangement's
         Node active = getChildren().isEmpty() ? null : getChildren().get(0);
         if (active == null) return;
         if (active == row && first instanceof javafx.scene.layout.Region r1 && second instanceof javafx.scene.layout.Region r2) {
@@ -114,7 +138,21 @@ public final class AdaptivePair extends Pane {
     @Override
     protected double computePrefHeight(double width) {
         Node active = getChildren().isEmpty() ? null : getChildren().get(0);
-        return active == null ? 0 : active.prefHeight(width);
+        if (active == null) return 0;
+        if (sideBySideAt != null && width > 0) {
+            boolean side = sideBySideAt.test(width);
+            if (side != sideBySide) return arrangedHeight(side, width); // the arrangement this width switches to
+        }
+        return active.prefHeight(width);
+    }
+
+    /** Height of the arrangement not shown yet, measured as layoutChildren will lay it out at this width. */
+    private double arrangedHeight(boolean side, double width) {
+        if (side) {
+            double usable = Math.max(0, width - row.getSpacing());
+            return snapSizeY(Math.max(first.prefHeight(usable * firstWeight), second.prefHeight(usable * (1 - firstWeight))));
+        }
+        return snapSizeY(first.prefHeight(width)) + snapSpaceY(column.getSpacing()) + snapSizeY(second.prefHeight(width));
     }
 
     @Override

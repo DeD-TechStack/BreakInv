@@ -123,6 +123,7 @@ public final class DialogChrome {
         closeBtn.setTooltip(new javafx.scene.control.Tooltip("Fechar (Esc)"));
         closeBtn.setAccessibleText("Fechar");
         closeBtn.setOnAction(e -> { if (closeAllowed == null || closeAllowed.getAsBoolean()) dialog.close(); });
+        routeNativeClose(dialog, closeAllowed);
         javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
         javafx.scene.layout.HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
         javafx.scene.layout.HBox.setHgrow(titleLabel, javafx.scene.layout.Priority.ALWAYS);
@@ -156,6 +157,30 @@ public final class DialogChrome {
         dialog.addEventHandler(javafx.scene.control.DialogEvent.DIALOG_SHOWN, e -> Platform.runLater(() -> fitToScreen(dialog)));
         animate(dialog);
         return scroll;
+    }
+
+    private static final String NATIVE_CLOSE_KEY = "breakinv.dialog.nativeClose";
+
+    /**
+     * The OS close (Alt+F4, the window's X) arrives as WINDOW_CLOSE_REQUEST on the dialog's window.
+     * JavaFX's dialog answers it with close() but leaves the window event unconsumed, so the window's
+     * default handler hid the stage whatever the dialog decided — during a write ("Gravando…") and
+     * with no exit motion (r2 JAR). Taken over before any window handler: the native close is the
+     * header's close button, so the busy veto and the exit motion apply to it as well.
+     */
+    private static void routeNativeClose(Dialog<?> dialog, java.util.function.BooleanSupplier closeAllowed) {
+        Runnable install = () -> {
+            Scene sc = dialog.getDialogPane().getScene();
+            Window w = sc == null ? null : sc.getWindow();
+            if (w == null || w.getProperties().containsKey(NATIVE_CLOSE_KEY)) return;
+            w.getProperties().put(NATIVE_CLOSE_KEY, Boolean.TRUE);
+            w.addEventFilter(javafx.stage.WindowEvent.WINDOW_CLOSE_REQUEST, e -> {
+                e.consume();
+                if (closeAllowed == null || closeAllowed.getAsBoolean()) dialog.close();
+            });
+        };
+        install.run();
+        dialog.addEventHandler(javafx.scene.control.DialogEvent.DIALOG_SHOWING, e -> install.run());
     }
 
     private static javafx.geometry.Rectangle2D usableScreenBounds(Dialog<?> dialog) {

@@ -92,6 +92,41 @@ class SimulationPageResultToneTest {
         });
     }
 
+    /**
+     * A-V9: after a valid projection, a form error keeps the previous curve for reference, but it
+     * must not read as the result of the current fields: it is labelled as the last valid
+     * calculation and dimmed until a new valid calculation replaces it. No value changes.
+     */
+    @Test
+    void fieldErrorKeepsThePreviousCurveOnlyAsLabelledLastValidCalculation() throws Exception {
+        FxTestSupport.runAndWait(() -> {
+            ((TextField) field("initialValueField")).setText("1000");
+            ((TextField) field("fixedRateField")).setText("10");
+            ((Button) field("calculateBtn")).fire();
+            javafx.scene.chart.LineChart<?, ?> chart = field("projectionChart");
+            assertFalse(chart.getData().isEmpty(), "valid projection drawn");
+            Label note = field("staleCurveNote");
+            assertFalse(note.isVisible() || note.isManaged(), "a current curve carries no warning");
+            javafx.scene.Node wrapper = chart.getParent();
+            var dataBefore = new java.util.ArrayList<>(chart.getData().get(0).getData().stream().map(d -> d.getYValue()).toList());
+
+            ((TextField) field("fixedRateField")).setText("abc");
+            ((Button) field("calculateBtn")).fire();
+            HeroValue hero = field("resultHero");
+            assertEquals("Verifique os campos", hero.valueLabel().getText());
+            assertEquals(dataBefore, chart.getData().get(0).getData().stream().map(d -> d.getYValue()).toList(),
+                    "the previous curve is kept unchanged for reference");
+            assertTrue(note.isVisible() && note.isManaged(), "the kept curve is labelled");
+            assertTrue(note.getText().toLowerCase().contains("último cálculo válido"), note.getText());
+            assertTrue(wrapper.getStyleClass().contains("projection-stale"), "the kept curve is dimmed: " + wrapper.getStyleClass());
+
+            ((TextField) field("fixedRateField")).setText("12");
+            ((Button) field("calculateBtn")).fire();
+            assertFalse(note.isVisible() || note.isManaged(), "a new valid calculation is current again");
+            assertFalse(wrapper.getStyleClass().contains("projection-stale"));
+        });
+    }
+
     @Test
     void fixedRateGain_staysPositive() throws Exception {
         FxTestSupport.runAndWait(() -> {

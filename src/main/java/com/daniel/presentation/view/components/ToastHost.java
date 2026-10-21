@@ -1,6 +1,6 @@
 package com.daniel.presentation.view.components;
 
-import javafx.animation.FadeTransition;
+import com.daniel.presentation.view.util.Motion;
 import javafx.animation.PauseTransition;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -30,6 +30,9 @@ public final class ToastHost {
 
     /** Wire the overlay into the root StackPane of the app shell. */
     public static void install(StackPane root) {
+        // a new shell starts without dim: an overlay counted for an earlier root is not this one's
+        dimCount = 0;
+        dimOverlay = null;
         // Capture first child as the blur/dim target (the main content node)
         blurTarget = root.getChildren().isEmpty() ? null : root.getChildren().get(0);
 
@@ -54,11 +57,10 @@ public final class ToastHost {
 
         dimOverlay = new Region();
         dimOverlay.getStyleClass().add("overlay-dim");
-        dimOverlay.setOpacity(0);
         int idx = root.getChildren().indexOf(container);
         root.getChildren().add(idx, dimOverlay);
-        FadeTransition ft = new FadeTransition(Duration.millis(200), dimOverlay);
-        ft.setFromValue(0); ft.setToValue(1); ft.play();
+        // E4 (M2): through the central Motion — immediate under "Reduzir animações", settled if it is turned on
+        Motion.fadeIn(dimOverlay, 200);
     }
 
     /** Removes the dark+blur overlay (reference-counted). */
@@ -71,13 +73,10 @@ public final class ToastHost {
 
         Region overlay = dimOverlay;
         dimOverlay = null;
-        FadeTransition ft = new FadeTransition(Duration.millis(180), overlay);
-        ft.setFromValue(1); ft.setToValue(0);
-        ft.setOnFinished(e -> {
-            StackPane root = (StackPane) overlay.getParent();
-            if (root != null) root.getChildren().remove(overlay);
+        // the removal is the fade's end state: it also runs when the fade is settled or motion is reduced
+        Motion.fadeOut(overlay, 180, () -> {
+            if (overlay.getParent() instanceof StackPane root) root.getChildren().remove(overlay);
         });
-        ft.play();
     }
 
     public static void showSuccess(String message) { show(iconFor(Feather.CHECK,          "icon-accent"),  message, "toast-success"); }
@@ -103,23 +102,13 @@ public final class ToastHost {
         HBox toast = new HBox(10, iconNode, msgLabel);
         toast.getStyleClass().addAll("toast", variant);
         toast.setAlignment(Pos.CENTER_LEFT);
-        toast.setOpacity(0);
 
         container.getChildren().add(0, toast);
+        Motion.fadeIn(toast, 200);
 
-        FadeTransition fadeIn = new FadeTransition(Duration.millis(200), toast);
-        fadeIn.setFromValue(0);
-        fadeIn.setToValue(1);
-        fadeIn.play();
-
+        // the reading time is not motion: the toast stays 5 s in both modes, then leaves (at once if reduced)
         PauseTransition hold = new PauseTransition(Duration.seconds(5));
-        hold.setOnFinished(e -> {
-            FadeTransition fadeOut = new FadeTransition(Duration.millis(300), toast);
-            fadeOut.setFromValue(1);
-            fadeOut.setToValue(0);
-            fadeOut.setOnFinished(ev -> container.getChildren().remove(toast));
-            fadeOut.play();
-        });
+        hold.setOnFinished(e -> Motion.fadeOut(toast, 300, () -> container.getChildren().remove(toast)));
         hold.play();
     }
 }

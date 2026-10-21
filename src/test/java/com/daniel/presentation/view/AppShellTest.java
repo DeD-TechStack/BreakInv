@@ -267,6 +267,24 @@ class AppShellTest {
         });
     }
 
+    /**
+     * r1 at 600×480: the expand button sat at x 13–55 of the 56 px rail, flush against the divider
+     * and 6 px right of the icon column — the brand spacer kept pushing it right on the rail.
+     */
+    @Test
+    void rail_expandButtonIsCentredOnTheIconColumn() {
+        resize(640, 600);
+        FxTestSupport.runAndWait(() -> {
+            Motion.settle(sidebar());
+            root.layout();
+            Button t = toggle();
+            var b = t.localToScene(t.getLayoutBounds());
+            var rail = sidebar().localToScene(sidebar().getLayoutBounds());
+            assertEquals(rail.getMinX() + rail.getWidth() / 2, b.getMinX() + b.getWidth() / 2, 1.0,
+                    "toggle centre " + b + " on the rail " + rail);
+        });
+    }
+
     @Test
     void railHidesTextButKeepsEveryNavButtonReachableWithATooltipAndAccessibleName() {
         resize(640, 600);
