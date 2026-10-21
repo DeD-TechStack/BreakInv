@@ -50,6 +50,7 @@ public final class FxTestSupport {
         ensureStarted();
         if (Platform.isFxApplicationThread()) {
             try {
+                com.daniel.presentation.view.util.UiTheme.install();
                 body.run();
             } catch (RuntimeException | Error e) {
                 throw e;
@@ -62,6 +63,7 @@ public final class FxTestSupport {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Platform.runLater(() -> {
             try {
+                com.daniel.presentation.view.util.UiTheme.install();
                 body.run();
             } catch (Throwable t) {
                 failure.set(t);

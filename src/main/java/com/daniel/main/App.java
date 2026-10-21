@@ -35,6 +35,7 @@ public class App extends Application {
 
     @Override
     public void start(Stage stage) {
+        com.daniel.presentation.view.util.UiTheme.install();
         conn = Database.open();
 
         UiPreferences uiPrefs = UiPreferences.forUser();
@@ -50,6 +51,7 @@ public class App extends Application {
         Scene scene = new Scene(shell.build(), WindowChrome.DEFAULT_WIDTH, WindowChrome.DEFAULT_HEIGHT);
         var css = getClass().getResource("/styles/app.css");
         if (css != null) scene.getStylesheets().add(css.toExternalForm());
+        com.daniel.presentation.view.util.UiTheme.applyFont(scene.getRoot());
 
         stage.setScene(scene);
         try {

@@ -249,7 +249,8 @@ public final class ReportsPage implements ResponsivePage {
     }
 
     private void buildTable() {
-        table.getStyleClass().add("table-analytic");
+        // Fixed 42px rows need the dense cell insets, including room for action labels.
+        table.getStyleClass().addAll("table-analytic", "table-dense");
         table.setFixedCellSize(42);
 
         TableColumn<ExtractRow, String> dateCol = new TableColumn<>("Data");

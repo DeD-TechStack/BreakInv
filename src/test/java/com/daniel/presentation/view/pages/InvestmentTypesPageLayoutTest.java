@@ -60,6 +60,74 @@ class InvestmentTypesPageLayoutTest {
     }
 
     @Test
+    void searchIconAndClearActionHaveReservedSpaceAfterCss() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 584, 600);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.NARROW);
+            var region = (javafx.scene.layout.Region) view;
+            region.resize(584, 600);
+            TextField search = field("searchField");
+            for (String input : List.of("", "FICT1", "")) {
+                search.setText(input);
+                for (int pass = 0; pass < 3; pass++) { region.applyCss(); region.layout(); }
+                var icon = search.getParent().getChildrenUnmodifiable().stream()
+                        .filter(org.kordamp.ikonli.javafx.FontIcon.class::isInstance).findFirst().orElseThrow();
+                var iconBounds = search.sceneToLocal(icon.localToScene(icon.getBoundsInLocal()));
+                assertTrue(search.getInsets().getLeft() >= iconBounds.getMaxX() + 4,
+                        "search glyph overlaps input/placeholder: inset=" + search.getInsets() + ", icon=" + iconBounds);
+                var clear = search.getParent().getChildrenUnmodifiable().stream()
+                        .filter(Button.class::isInstance).map(Button.class::cast).findFirst().orElseThrow();
+                if (!input.isEmpty()) {
+                    assertTrue(clear.isVisible());
+                    var clearBounds = search.sceneToLocal(clear.localToScene(clear.getBoundsInLocal()));
+                    assertTrue(search.getWidth() - search.getInsets().getRight() <= clearBounds.getMinX() - 2);
+                    clear.fire();
+                    assertEquals("", search.getText());
+                }
+            }
+        });
+    }
+
+    @Test
+    void positionStatusRemainsReadableAtNarrowContentWidths() {
+        FxTestSupport.runAndWait(() -> {
+            java.util.Map<Long, com.daniel.core.service.DailyTrackingUseCase.InvestmentStatus> statuses = field("statusById");
+            statuses.put(7L, new com.daniel.core.service.DailyTrackingUseCase.InvestmentStatus(7, sample().name(), true,
+                    com.daniel.core.domain.ledger.PositionMode.QUANTITY, 6, 12000, false, false, null,
+                    false, 0, null, null));
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(sample());
+            var scene = new javafx.scene.Scene(view, 584, 600);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            TableView<InvestmentType> table = field("table");
+            var region = (javafx.scene.layout.Region) view;
+            for (int width : new int[]{584, 420, 380, 584}) {
+                page.onBreakpoint(Breakpoint.NARROW);
+                region.resize(width, 600);
+                for (int pass = 0; pass < 4; pass++) { region.applyCss(); region.layout(); }
+                int checked = 0;
+                for (var n : table.lookupAll(".badge")) {
+                    if (!n.isVisible() || n.getScene() == null) continue;
+                    var label = (Label) n.lookup(".label");
+                    if (label == null || label.getText().equals("FICT1")) continue;
+                    assertTrue(label.getWidth() >= label.prefWidth(-1) - 1,
+                            "status truncated at " + width + ": " + label.getText() + ", actual=" + label.getWidth()
+                                    + ", required=" + label.prefWidth(-1));
+                    var bounds = n.localToScene(n.getBoundsInLocal());
+                    var viewport = table.localToScene(table.getBoundsInLocal());
+                    assertTrue(bounds.getMaxX() <= viewport.getMaxX() - 1, "status beyond viewport");
+                    checked++;
+                }
+                assertTrue(checked > 0, "visible status required at " + width);
+            }
+            page.showDetails(sample());
+            DetailsPane details = field("details");
+            assertTrue(details.fieldLabels().contains("Situação"));
+        });
+    }
+
+    @Test
     void tableRowsAreDense_andEachRowHasASingleActionsMenu() throws Exception {
         FxTestSupport.runAndWait(() -> {
             TableView<InvestmentType> table = field("table");

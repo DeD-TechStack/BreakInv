@@ -87,6 +87,9 @@ public final class InvestmentTypesPage implements ResponsivePage {
     private TableColumn<InvestmentType, String> liqColRef;
     private TableColumn<InvestmentType, String> dateColRef;
     private TableColumn<InvestmentType, Void>   actionsColRef;
+    private TableColumn<InvestmentType, String> qtyColRef;
+    private TableColumn<InvestmentType, String> statusColRef;
+    private boolean compactRows;
 
     private final StatStrip strip = new StatStrip(STAT_CASH, STAT_COST, STAT_COUNT);
     private final Label cashStateLabel = new Label();
@@ -170,7 +173,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         StackPane.setMargin(searchIcon, new Insets(0, 0, 0, 10));
         StackPane.setAlignment(clearBtn, Pos.CENTER_RIGHT);
         StackPane.setMargin(clearBtn, new Insets(0, 4, 0, 0));
-        searchField.setPadding(new Insets(7, 32, 7, 30));
+        searchField.getStyleClass().add("search-field");
         searchBox.setMinWidth(180);
         searchBox.setPrefWidth(320);
         HBox.setHgrow(searchBox, Priority.ALWAYS);
@@ -263,6 +266,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         if (liqColRef  != null) liqColRef.setVisible(wide);
         if (dateColRef != null) dateColRef.setVisible(wide);
         if (catColRef  != null) catColRef.setVisible(!narrow);
+        updateTableColumns();
         strip.setColumns(narrow ? 2 : 3);
         placeDetails();
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
@@ -301,10 +305,12 @@ public final class InvestmentTypesPage implements ResponsivePage {
         nameCol.setCellFactory(col -> new TableCell<>() {
             private final Label name = new Label();
             private final Label ticker = new Label();
-            private final HBox box = new HBox(8, name, ticker);
+            private final HBox identity = new HBox(8, name, ticker);
+            private final VBox box = new VBox(0, identity);
             {
                 name.getStyleClass().add("cell-primary");
                 ticker.getStyleClass().add("ticker-badge");
+                identity.setAlignment(Pos.CENTER_LEFT);
                 box.setAlignment(Pos.CENTER_LEFT);
             }
             @Override protected void updateItem(String item, boolean empty) {
@@ -314,7 +320,10 @@ public final class InvestmentTypesPage implements ResponsivePage {
                 name.setText(inv.name());
                 boolean hasTicker = inv.ticker() != null && !inv.ticker().isBlank();
                 ticker.setText(hasTicker ? inv.ticker() : "");
-                ticker.setVisible(hasTicker); ticker.setManaged(hasTicker);
+                ticker.setVisible(hasTicker && !compactRows); ticker.setManaged(hasTicker && !compactRows);
+                box.getChildren().setAll(identity);
+                if (compactRows) box.getChildren().add(compactStatusBadge(statusById.get((long) inv.id())));
+                setAccessibleText(inv.name() + (hasTicker ? " · " + inv.ticker() : ""));
                 setGraphic(box);
                 setText(null);
             }
@@ -370,6 +379,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         dateCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> qtyCol = new TableColumn<>("Qtd.");
+        qtyColRef = qtyCol;
         qtyCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(
                 c.getValue().quantity() == null ? "—" : c.getValue().quantity().toString()));
         qtyCol.setPrefWidth(70);
@@ -383,9 +393,11 @@ public final class InvestmentTypesPage implements ResponsivePage {
             return new javafx.beans.property.SimpleStringProperty(daily.brl(cents));
         });
         valueCol.setPrefWidth(130);
+        valueCol.setMinWidth(100);
         valueCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> statusCol = new TableColumn<>("Situação");
+        statusColRef = statusCol;
         statusCol.setCellFactory(col -> new TableCell<>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
@@ -396,6 +408,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
             }
         });
         statusCol.setPrefWidth(140);
+        statusCol.setMinWidth(140);
 
         TableColumn<InvestmentType, Void> actionsCol = new TableColumn<>("");
         actionsCol.getStyleClass().add("actions-col");
@@ -434,6 +447,39 @@ public final class InvestmentTypesPage implements ResponsivePage {
         table.getColumns().add(valueCol);
         table.getColumns().add(statusCol);
         table.getColumns().add(actionsCol);
+        table.widthProperty().addListener((o, a, b) -> updateTableColumns());
+    }
+
+    /** Keep status in the row, not in a clipped column, when the actual table is narrow. */
+    private void updateTableColumns() {
+        if (statusColRef == null || table.getWidth() <= 0) return;
+        boolean compact = table.getWidth() < 620;
+        boolean changed = compactRows != compact;
+        compactRows = compact;
+        statusColRef.setVisible(!compact);
+        qtyColRef.setVisible(!compact);
+        catColRef.setVisible(!compact && breakpoint != Breakpoint.NARROW);
+        liqColRef.setVisible(table.getWidth() >= 960 && breakpoint == Breakpoint.WIDE);
+        dateColRef.setVisible(table.getWidth() >= 960 && breakpoint == Breakpoint.WIDE);
+        if (changed) table.refresh();
+    }
+
+    private HBox compactStatusBadge(InvestmentStatus st) {
+        HBox badge = statusBadge(st);
+        Label label = (Label) badge.getChildren().get(1);
+        String full = label.getText();
+        label.setText(switch (full) {
+            case "Por quantidade" -> "Quantidade";
+            case "Por valor" -> "Valor";
+            case "Reconhecer saldo" -> "Reconhecer";
+            case "Sem saldo inicial" -> "Sem saldo";
+            case "Revisão pendente" -> "Revisar saldo";
+            case "Posição zerada" -> "Zerada";
+            default -> full;
+        });
+        badge.setAccessibleText(full + ". Abra os detalhes para a situação completa.");
+        badge.getStyleClass().add("row-status");
+        return badge;
     }
 
     /** All row actions in one menu; the unavailable ones stay visible but disabled. */

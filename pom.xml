@@ -19,6 +19,18 @@
     </properties>
 
     <dependencies>
+        <!-- JavaFX21 is supplied by our platform profiles, not AtlantaFX's FX20 build. -->
+        <dependency>
+            <groupId>io.github.mkpaz</groupId>
+            <artifactId>atlantafx-base</artifactId>
+            <version>2.0.1</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.openjfx</groupId>
+                    <artifactId>javafx-controls</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         <!-- SQLite JDBC -->
         <dependency>
             <groupId>org.xerial</groupId>

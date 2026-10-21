@@ -1,13 +1,12 @@
 /* ═══════════════════════════════════════════════
    ROOT — Design Tokens + JavaFX Overrides (V2)
-   Font: the JavaFX logical "System" family (Segoe UI on
-   Windows, SF on macOS, the platform default on Linux).
-   One family only — JavaFX ignores web-style fallback lists.
+   Font: offline IBM Plex Sans; UiTheme supplies an explicit System fallback.
+   AtlantaFX2.0.1 supplies the user-agent skins; this sheet owns product composition.
    Body 14 px · metadata ≥ 12 px · every text colour ≥ 4.5:1
    on the surface it sits on (text-3 on surface-3 = 4.8:1).
    ═══════════════════════════════════════════════ */
 .root {
-    -fx-font-family: "System";
+    -fx-font-family: "IBM Plex Sans";
     -fx-font-size: 14px;
 
     /* Backgrounds — slightly warm neutrals, not blue */
@@ -594,6 +593,9 @@
     -fx-prompt-text-fill: -color-text-3;
 }
 
+/* Reserve both adornments in author CSS; generic input CSS overrides setPadding(). */
+.text-field.search-field { -fx-padding: 9 44 9 32; }
+
 /* Monospace field (API tokens) — explicit override to keep monospace */
 .code-field { -fx-font-family: "Consolas", "Courier New", monospace; -fx-font-size: 12px; }
 
@@ -1171,6 +1173,7 @@
     -fx-font-size: 11px;
     -fx-font-weight: 800;
 }
+.badge.row-status { -fx-padding: 0 4; }
 .badge-success { -fx-background-color: -color-accent-soft; }
 .badge-success > .label { -fx-text-fill: -color-success; -fx-font-size: 11px; -fx-font-weight: 800; }
 .badge-warn    { -fx-background-color: -color-warning-a12; }

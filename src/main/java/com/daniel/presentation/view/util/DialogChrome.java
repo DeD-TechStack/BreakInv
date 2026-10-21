@@ -114,6 +114,7 @@ public final class DialogChrome {
      */
     public static javafx.scene.control.ScrollPane frame(Dialog<?> dialog, String title, Node body,
                                                         java.util.function.BooleanSupplier closeAllowed) {
+        UiTheme.applyFont(dialog.getDialogPane());
         javafx.scene.control.Label titleLabel = new javafx.scene.control.Label(title);
         titleLabel.getStyleClass().add("dialog-title-label");
         titleLabel.setWrapText(true);

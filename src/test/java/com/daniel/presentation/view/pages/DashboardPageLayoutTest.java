@@ -48,6 +48,10 @@ class DashboardPageLayoutTest {
         // owns its own empty database instead of depending on the order of execution.
         Database.configure("jdbc:sqlite:" + tempDir.resolve("dashboard.db").toString().replace("\\", "/"));
         Database.open();
+        // Layout fixtures are offline. An unawaited rate callback can otherwise reopen the
+        // next test's Database singleton after teardown and recreate its temporary directory.
+        new com.daniel.infrastructure.persistence.repository.AppSettingsRepository()
+                .set("brapi_auto_update", "false");
         FxTestSupport.runAndWait(() -> {
             page = new DashboardPage(FxStubs.emptyDaily());
             view = page.view();
