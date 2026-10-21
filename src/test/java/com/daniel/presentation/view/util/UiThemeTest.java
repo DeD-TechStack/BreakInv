@@ -10,6 +10,25 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class UiThemeTest {
     @Test
+    void headingAndAmountUseTheBundledWeightRatherThanSilentlyFallingBackToRegular() {
+        FxTestSupport.runAndWait(() -> {
+            Label title = new Label("Patrimônio");
+            title.getStyleClass().add("page-title");
+            var amount = new javafx.scene.control.TextField("1.234,56");
+            amount.getStyleClass().add("movement-amount");
+            VBox root = new VBox(title, amount);
+            root.getStyleClass().add("dark-dialog");
+            var scene = new Scene(root, 600, 200);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            root.applyCss(); root.layout();
+            var semibold = javafx.scene.text.Font.loadFont(getClass().getResource("/fonts/IBMPlexSans-SemiBold.ttf").toExternalForm(), 26);
+            var medium = javafx.scene.text.Font.loadFont(getClass().getResource("/fonts/IBMPlexSans-Medium.ttf").toExternalForm(), 24);
+            assertEquals(semibold.getName(), title.getFont().getName(), "heading must resolve the real bundled face; family=" + semibold.getFamily());
+            assertEquals(medium.getName(), amount.getFont().getName(), "amount must resolve the real bundled face; family=" + medium.getFamily());
+        });
+    }
+
+    @Test
     void packagedThemeLoadsOfflineFontsAndPtBrGlyphs() {
         FxTestSupport.runAndWait(() -> {
             for (String weight : new String[]{"Regular", "Medium", "SemiBold"})

@@ -87,6 +87,47 @@ class DashboardPageLayoutTest {
     }
 
     @Test
+    void minimumContentWidthContainsSummaryAndWarningWithoutHorizontalClipping() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            ScrollPane scroll = (ScrollPane) view;
+            for (double width : new double[]{1060, 380, 544, 740, 1060}) {
+                var bp = Breakpoint.of(width);
+                page.onBreakpoint(bp);
+                view.getStyleClass().removeAll(Breakpoint.allStyleClasses());
+                view.getStyleClass().add(bp.styleClass());
+                scroll.resize(width, 480);
+                for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+                assertTrue(pageRoot().getWidth() <= scroll.getViewportBounds().getWidth() + 1,
+                        "root exceeds viewport at " + width + ": " + pageRoot().getWidth()
+                                + pageRoot().getChildren().stream().map(n -> n.getStyleClass() + " min=" + n.minWidth(-1)).toList());
+            }
+        });
+    }
+
+    @Test
+    void wideChartKeepsAllPeriodsInOneRowWithoutCompetingWithTheTitle() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            for (double width : new double[]{1060, 380, 740, 1060}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                ((javafx.scene.layout.Region) view).resize(width, 800);
+                for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+                var toggles = flatten(view).stream().filter(n -> n instanceof javafx.scene.control.ToggleButton
+                        && n.getStyleClass().contains("filter-toggle")).distinct().toList();
+                assertEquals(8, toggles.size(), "all periods and custom interval remain available");
+                if (width == 1060) {
+                    double y = toggles.getFirst().localToScene(toggles.getFirst().getLayoutBounds()).getCenterY();
+                    for (Node toggle : toggles) assertEquals(y,
+                            toggle.localToScene(toggle.getLayoutBounds()).getCenterY(), 1);
+                }
+            }
+        });
+    }
+
+    @Test
     void heroIsThePatrimonyValue_withGainAndCashAsSupportingValues() {
         FxTestSupport.runAndWait(() -> {
             HeroValue hero = first(HeroValue.class);
@@ -212,12 +253,37 @@ class DashboardPageLayoutTest {
             List<ToggleButton> toggles = view.lookupAll(".bench-toggle").stream()
                     .map(ToggleButton.class::cast).toList();
             assertEquals(4, toggles.size());
+            double benchmarkY = toggles.getFirst().localToScene(toggles.getFirst().getBoundsInLocal()).getMinY();
             for (ToggleButton button : toggles) {
+                assertEquals(benchmarkY, button.localToScene(button.getBoundsInLocal()).getMinY(), 1,
+                        "benchmark controls form one group above the plot, not a cramped metrics column");
                 assertTrue(button.getWidth() + 0.5 >= button.prefWidth(-1),
                         button.getText() + ": actual=" + button.getWidth() + ", preferred=" + button.prefWidth(-1));
                 assertTrue(button.getBoundsInParent().getMaxX() <=
                         button.getParent().getLayoutBounds().getWidth() + 0.5,
                         button.getText() + " must stay inside its toolbar");
+            }
+        });
+    }
+
+    @Test
+    void patrimonyAndItsBreakdownShareTheWideSummary_andStackWithoutLosingValues() {
+        FxTestSupport.runAndWait(() -> {
+            Scene scene = new Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            for (int width : new int[]{1060, 544, 740, 1060}) {
+                page.onBreakpoint(width >= 1000 ? Breakpoint.WIDE : width < 600 ? Breakpoint.NARROW : Breakpoint.MEDIUM);
+                ((Region) view).resize(width, 800);
+                view.applyCss(); view.layout();
+                HeroValue hero = first(HeroValue.class);
+                StatStrip strip = first(StatStrip.class);
+                var h = hero.localToScene(hero.getBoundsInLocal());
+                var s = strip.localToScene(strip.getBoundsInLocal());
+                if (width >= 1000) {
+                    assertEquals(h.getMinY(), s.getMinY(), 1, "wide: wealth and breakdown align");
+                    assertTrue(s.getMinX() > h.getMinX(), "breakdown beside wealth, not another full-width card");
+                } else assertTrue(s.getMinY() >= h.getMaxY(), "narrow: breakdown follows wealth");
+                assertEquals(4, strip.labels().size());
             }
         });
     }

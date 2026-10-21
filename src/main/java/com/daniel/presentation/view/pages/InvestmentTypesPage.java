@@ -119,7 +119,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         // ── Header + actions ─────────────────────────────────────────────────
         PageHeader header = new PageHeader("Carteira",
                 "Posições, custo e caixa calculados a partir do histórico de movimentações");
-        addBtn.getStyleClass().add("button");
+        addBtn.getStyleClass().add("primary-btn");
         addBtn.setOnAction(e -> onCreate());
         depositBtn.getStyleClass().add("ghost-btn");
         withdrawBtn.getStyleClass().add("ghost-btn");
@@ -197,6 +197,8 @@ public final class InvestmentTypesPage implements ResponsivePage {
         showArchived.selectedProperty().addListener((o, a, v) -> refresh());
 
         FlowPane filterRow = new FlowPane(10, 8);
+        filterRow.setMinWidth(0);
+        searchBox.maxWidthProperty().bind(filterRow.widthProperty());
         filterRow.getStyleClass().add("filter-flow");
         filterRow.setAlignment(Pos.CENTER_LEFT);
         filterRow.getChildren().addAll(searchBox, categoryFilter, showArchived, clearFiltersBtn);
@@ -208,8 +210,11 @@ public final class InvestmentTypesPage implements ResponsivePage {
 
         // ── Table + details ──────────────────────────────────────────────────
         buildTable();
-        table.setMinHeight(280);
-        table.setPrefHeight(440);
+        table.setMinHeight(Region.USE_PREF_SIZE);
+        table.setMaxHeight(Region.USE_PREF_SIZE);
+        table.prefHeightProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
+                () -> filteredItems.isEmpty() ? 240 : 44 + ROW_HEIGHT * Math.min(10, filteredItems.size()),
+                filteredItems));
         VBox tableCard = new VBox(0, table);
         tableCard.getStyleClass().add("table-card");
         VBox.setVgrow(table, Priority.ALWAYS);
@@ -222,7 +227,23 @@ public final class InvestmentTypesPage implements ResponsivePage {
         body.setCenter(tableCard);
         body.getStyleClass().add("carteira-body");
 
-        root.getChildren().addAll(headerRow, warningBanner, strip, cashStateLabel, filterRow, body);
+        Label positionsTitle = new Label("Posições");
+        positionsTitle.getStyleClass().add("panel-title");
+        Label positionCount = new Label();
+        positionCount.getStyleClass().addAll("position-count", "text-secondary");
+        positionCount.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(
+                () -> filteredItems.size() + " de " + allItems.size() + " ativos", filteredItems, allItems));
+        Region countSpacer = new Region();
+        HBox.setHgrow(countSpacer, Priority.ALWAYS);
+        HBox positionsHeading = new HBox(12, positionsTitle, countSpacer, positionCount);
+        positionsHeading.setAlignment(Pos.CENTER_LEFT);
+        Label selectionHint = new Label("Selecione um ativo para ver posição, situação e ações.");
+        selectionHint.getStyleClass().add("text-secondary");
+        selectionHint.setWrapText(true);
+        VBox workspace = new VBox(12, positionsHeading, filterRow, body, selectionHint);
+        workspace.setMinWidth(0);
+        workspace.getStyleClass().addAll("panel", "positions-workspace");
+        root.getChildren().addAll(headerRow, warningBanner, strip, cashStateLabel, workspace);
 
         // Selection lost because the DATA changed (filter/refresh): only hide, never touch the focus.
         // The user's own close (Esc / X) goes through details.requestClose() -> onClose above.
@@ -315,15 +336,17 @@ public final class InvestmentTypesPage implements ResponsivePage {
             }
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) { setGraphic(null); setText(null); return; }
+                if (empty || item == null) { setGraphic(null); setText(null); setAccessibleText(null); return; }
                 InvestmentType inv = getTableView().getItems().get(getIndex());
                 name.setText(inv.name());
                 boolean hasTicker = inv.ticker() != null && !inv.ticker().isBlank();
                 ticker.setText(hasTicker ? inv.ticker() : "");
                 ticker.setVisible(hasTicker && !compactRows); ticker.setManaged(hasTicker && !compactRows);
                 box.getChildren().setAll(identity);
-                if (compactRows) box.getChildren().add(compactStatusBadge(statusById.get((long) inv.id())));
-                setAccessibleText(inv.name() + (hasTicker ? " · " + inv.ticker() : ""));
+                HBox status = compactStatusBadge(statusById.get((long) inv.id()));
+                if (compactRows) box.getChildren().add(status);
+                setAccessibleText(inv.name() + (hasTicker ? " · " + inv.ticker() : "")
+                        + " · " + status.getAccessibleText());
                 setGraphic(box);
                 setText(null);
             }
@@ -349,6 +372,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
             }
         });
         catCol.setPrefWidth(150);
+        catCol.setMinWidth(90);
 
         liqColRef = new TableColumn<>("Liquidez");
         TableColumn<InvestmentType, String> liqCol = liqColRef;
@@ -367,7 +391,8 @@ public final class InvestmentTypesPage implements ResponsivePage {
                 }
             }
         });
-        liqCol.setPrefWidth(130);
+        liqCol.setPrefWidth(165);
+        liqCol.setMinWidth(165);
 
         dateColRef = new TableColumn<>("Data");
         TableColumn<InvestmentType, String> dateCol = dateColRef;
@@ -375,14 +400,16 @@ public final class InvestmentTypesPage implements ResponsivePage {
             LocalDate date = c.getValue().investmentDate();
             return new javafx.beans.property.SimpleStringProperty(date == null ? "—" : DATE_FMT.format(date));
         });
-        dateCol.setPrefWidth(100);
+        dateCol.setPrefWidth(110);
+        dateCol.setMinWidth(110);
         dateCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> qtyCol = new TableColumn<>("Qtd.");
         qtyColRef = qtyCol;
         qtyCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(
                 c.getValue().quantity() == null ? "—" : c.getValue().quantity().toString()));
-        qtyCol.setPrefWidth(70);
+        qtyCol.setPrefWidth(75);
+        qtyCol.setMinWidth(75);
         qtyCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> valueCol = new TableColumn<>("Custo");
@@ -393,7 +420,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
             return new javafx.beans.property.SimpleStringProperty(daily.brl(cents));
         });
         valueCol.setPrefWidth(130);
-        valueCol.setMinWidth(100);
+        valueCol.setMinWidth(110);
         valueCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> statusCol = new TableColumn<>("Situação");
@@ -437,7 +464,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         actionsColRef = actionsCol;
 
         table.setPlaceholder(EmptyState.of("📂", "Nenhum investimento cadastrado",
-                "Use \"Novo ativo\" para cadastrar o primeiro e acompanhar patrimônio e distribuição."));
+                "Use \"Novo ativo\" para cadastrar o primeiro e acompanhar patrimônio e distribuição.", true));
 
         table.getColumns().add(nameCol);
         table.getColumns().add(catCol);
@@ -453,9 +480,11 @@ public final class InvestmentTypesPage implements ResponsivePage {
     /** Keep status in the row, not in a clipped column, when the actual table is narrow. */
     private void updateTableColumns() {
         if (statusColRef == null || table.getWidth() <= 0) return;
-        boolean compact = table.getWidth() < 620;
+        // Six priority columns need683px plus the skin/scrollbar reserve.
+        boolean compact = table.getWidth() < 700;
         boolean changed = compactRows != compact;
         compactRows = compact;
+        table.getColumns().getFirst().setMinWidth(compact ? 110 : 220);
         statusColRef.setVisible(!compact);
         qtyColRef.setVisible(!compact);
         catColRef.setVisible(!compact && breakpoint != Breakpoint.NARROW);
@@ -469,10 +498,10 @@ public final class InvestmentTypesPage implements ResponsivePage {
         Label label = (Label) badge.getChildren().get(1);
         String full = label.getText();
         label.setText(switch (full) {
-            case "Por quantidade" -> "Quantidade";
-            case "Por valor" -> "Valor";
+            case "Por quantidade" -> "Por qtd.";
+            case "Por valor" -> "Por valor";
             case "Reconhecer saldo" -> "Reconhecer";
-            case "Sem saldo inicial" -> "Sem saldo";
+            case "Sem saldo inicial" -> "Sem abertura";
             case "Revisão pendente" -> "Revisar saldo";
             case "Posição zerada" -> "Zerada";
             default -> full;

@@ -120,10 +120,210 @@ class InvestmentTypesPageLayoutTest {
                     checked++;
                 }
                 assertTrue(checked > 0, "visible status required at " + width);
+                for (Node node : table.lookupAll(".table-cell")) {
+                    TableCell<?, ?> cell = (TableCell<?, ?>) node;
+                    if (!cell.isEmpty() && "Ativo".equals(cell.getTableColumn().getText())) {
+                        assertTrue(cell.getAccessibleText().contains("Por quantidade"),
+                                "accessible identity must retain the complete position status");
+                        Label status = (Label) cell.lookup(".row-status .label");
+                        assertEquals("Por qtd.", status.getText(), "short label still identifies a mode, not a quantity value");
+                    }
+                }
             }
             page.showDetails(sample());
             DetailsPane details = field("details");
             assertTrue(details.fieldLabels().contains("Situação"));
+        });
+    }
+
+    @Test
+    void wideVisibleDatesAndLiquidityAreNotTruncatedByCompetingColumns() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(sample());
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            TableView<InvestmentType> table = field("table");
+            page.onBreakpoint(Breakpoint.WIDE);
+            ((javafx.scene.layout.Region) view).resize(1060, 800);
+            for (int pass = 0; pass < 4; pass++) { view.applyCss(); view.layout(); }
+            TableColumn<?, ?> date = field("dateColRef");
+            assertTrue(date.isVisible(), "wide view keeps complete registration date");
+            var quantityHeader = table.lookupAll(".column-header").stream()
+                    .filter(n -> n instanceof javafx.scene.control.skin.TableColumnHeader h
+                            && h.getTableColumn() != null && "Qtd.".equals(h.getTableColumn().getText()))
+                    .findFirst().orElseThrow();
+            assertEquals("Qtd.", ((javafx.scene.text.Text) quantityHeader.lookup(".label .text")).getText(),
+                    "quantity header must not render as ellipsis");
+            for (Node n : table.lookupAll(".table-cell")) {
+                TableCell<?, ?> cell = (TableCell<?, ?>) n;
+                if (cell.isEmpty()) continue;
+                if (cell.getTableColumn() == date) {
+                    javafx.scene.text.Text text = (javafx.scene.text.Text) cell.lookup(".text");
+                    assertEquals("15/10/2026", text.getText(), "actual rendered date, not only cell value");
+                }
+            }
+            for (Node badge : table.lookupAll(".badge")) {
+                Label label = (Label) badge.lookup(".label");
+                if (label != null && label.getText().startsWith("Alta"))
+                    assertTrue(label.getWidth() >= label.prefWidth(-1) - 1, "liquidity badge must fit when shown");
+            }
+        });
+    }
+
+    @Test
+    void pageContentDoesNotForceHorizontalOverflowWithExpandedSidebarAtMinimumWindow() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(sample());
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            ScrollPane scroll = (ScrollPane) view;
+            for (double width : new double[]{1060, 380, 544, 740, 1060}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                scroll.resize(width, 480);
+                for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+                assertTrue(scroll.getContent().getLayoutBounds().getWidth() <= scroll.getViewportBounds().getWidth() + 1,
+                        "content exceeds actual viewport at " + width + ": " + scroll.getContent().getLayoutBounds()
+                                + ((javafx.scene.layout.VBox) scroll.getContent()).getChildren().stream()
+                                .map(n -> n.getStyleClass() + " min=" + n.minWidth(-1)).toList());
+                for (String fieldName : new String[]{"addBtn", "showArchived", "searchField"}) {
+                    Node control = field(fieldName);
+                    assertTrue(control.localToScene(control.getBoundsInLocal()).getMaxX() <= width,
+                            fieldName + " overflows at " + width);
+                }
+                TableView<?> table = field("table");
+                for (Node action : table.lookupAll(".row-more-btn")) {
+                    assertTrue(action.localToScene(action.getBoundsInLocal()).getMaxX()
+                                    <= table.localToScene(table.getBoundsInLocal()).getMaxX() - 1,
+                            "row action exceeds the table viewport at " + width + ": action="
+                                    + action.localToScene(action.getBoundsInLocal()) + ", table="
+                                    + table.localToScene(table.getBoundsInLocal()) + ", columns="
+                                    + table.getVisibleLeafColumns().stream().map(c -> c.getText() + ":" + c.getWidth()).toList());
+                }
+            }
+        });
+    }
+
+    @Test
+    void positionsWorkspaceKeepsFiltersAndVisibleCountWithTheTable() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(sample());
+            var workspace = flatten(view).stream().filter(n -> n.getStyleClass().contains("positions-workspace"))
+                    .findFirst().orElse(null);
+            assertNotNull(workspace, "filters and table belong to one workspace, not unrelated cards");
+            assertTrue(flatten(workspace).contains(field("searchField")));
+            assertTrue(flatten(workspace).contains(field("table")));
+            Label count = (Label) flatten(workspace).stream().filter(n -> n.getStyleClass().contains("position-count"))
+                    .findFirst().orElseThrow();
+            assertEquals("1 de 1 ativos", count.getText());
+            ((TextField) field("searchField")).setText("inexistente");
+            assertEquals("0 de 1 ativos", count.getText());
+            ((TextField) field("searchField")).clear();
+            assertEquals("1 de 1 ativos", count.getText());
+        });
+    }
+
+    @Test
+    void tableHeightFollowsVisibleVolumeWithoutExpandingAllSeventyFiveRows() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            TableView<InvestmentType> table = field("table");
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            ((javafx.scene.layout.Region) view).resize(1060, 800);
+            double tenRows = 0;
+            for (int count : new int[]{1, 10, 75, 1}) {
+                items.setAll(java.util.Collections.nCopies(count, sample()));
+                view.applyCss(); view.layout();
+                double height = table.prefHeight(-1);
+                if (count == 1) assertTrue(height <= 120, "one row must not reserve a 440px empty box: " + height);
+                if (count == 10) { tenRows = height; assertTrue(height >= 400 && height <= 500); }
+                if (count == 75) {
+                    assertEquals(tenRows, height, .5, "bounded viewport retains virtualized table");
+                    assertTrue(table.lookupAll(".table-row-cell").size() < 75);
+                }
+            }
+            TextField search = field("searchField");
+            search.setText("inexistente");
+            assertTrue(table.getItems().isEmpty());
+            assertTrue(table.prefHeight(-1) >= 160, "empty state has room for guidance");
+            search.clear();
+            assertEquals(1, table.getItems().size());
+            assertTrue(table.prefHeight(-1) <= 120);
+        });
+    }
+
+    @Test
+    void populatedWideTableReservesSpaceForItsVerticalScrollbar() {
+        FxTestSupport.runAndWait(() -> {
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            TableView<InvestmentType> table = field("table");
+            var scene = new javafx.scene.Scene(view, 1060, 1000);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            page.onBreakpoint(Breakpoint.WIDE);
+            ((javafx.scene.layout.Region) view).resize(1060, 1000);
+            for (int count : new int[]{1, 10, 75, 1}) {
+                items.setAll(java.util.Collections.nCopies(count, sample()));
+                for (int pass = 0; pass < 8; pass++) { view.applyCss(); view.layout(); }
+                for (Node n : table.lookupAll(".scroll-bar")) {
+                    var bar = (javafx.scene.control.ScrollBar) n;
+                    if (bar.getOrientation() == javafx.geometry.Orientation.HORIZONTAL)
+                        assertFalse(bar.isVisible(), "priority columns overflow at " + count + " rows / " + table.getWidth());
+                    if (count == 75 && bar.getOrientation() == javafx.geometry.Orientation.VERTICAL) {
+                        assertTrue(bar.isVisible(), "75 rows require a virtualized vertical viewport");
+                        double right = bar.localToScene(bar.getLayoutBounds()).getMinX();
+                        for (Node action : table.lookupAll(".row-more-btn"))
+                            assertTrue(action.localToScene(action.getLayoutBounds()).getMaxX() <= right + 1,
+                                    "row action is covered by vertical scrollbar");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    void wideHeaderKeepsThePrimaryActionOnTheSameRowAsOtherActions() {
+        FxTestSupport.runAndWait(() -> {
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            ((javafx.scene.layout.Region) view).resize(1060, 800);
+            for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+            var buttons = flatten(view).stream().filter(n -> n instanceof javafx.scene.control.Button)
+                    .map(n -> (javafx.scene.control.Button) n).toList();
+            var primary = buttons.stream().filter(b -> "Novo ativo".equals(b.getText())).findFirst().orElseThrow();
+            var deposit = buttons.stream().filter(b -> "Aporte".equals(b.getText())).findFirst().orElseThrow();
+            assertEquals(deposit.localToScene(deposit.getLayoutBounds()).getCenterY(),
+                    primary.localToScene(primary.getLayoutBounds()).getCenterY(), 1,
+                    "ample width must not force the primary action onto another line: "
+                            + primary.getParent().getLayoutBounds() + " "
+                            + primary.getParent().getChildrenUnmodifiable().stream()
+                                    .map(n -> n.getLayoutBounds() + " pref=" + n.prefWidth(-1) + " min=" + n.minWidth(-1)).toList());
+        });
+    }
+
+    @Test
+    void emptyPlaceholderDoesNotCoverTheHeaderOrFollowingContent() {
+        FxTestSupport.runAndWait(() -> {
+            TableView<InvestmentType> table = field("table");
+            var scene = new javafx.scene.Scene(view, 1060, 800);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            for (double width : new double[]{1060, 544, 380, 740, 1060}) {
+                page.onBreakpoint(Breakpoint.of(width));
+                ((javafx.scene.layout.Region) view).resize(width, 800);
+                for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+                Node placeholder = table.getPlaceholder();
+                Node header = table.lookup(".column-header-background");
+                assertNotNull(header);
+                var emptyBounds = placeholder.localToScene(placeholder.getLayoutBounds());
+                var headerBounds = header.localToScene(header.getLayoutBounds());
+                var tableBounds = table.localToScene(table.getLayoutBounds());
+                assertTrue(emptyBounds.getMinY() >= headerBounds.getMaxY() - 1,
+                        "empty state overlaps header at " + width + ": " + emptyBounds + " / " + headerBounds);
+                assertTrue(emptyBounds.getMaxY() <= tableBounds.getMaxY() + 1,
+                        "empty state spills below table at " + width + ": " + emptyBounds + " / " + tableBounds);
+            }
         });
     }
 

@@ -23,6 +23,7 @@ public final class PageHeader extends VBox {
 
         if (subtitle != null && !subtitle.isBlank()) {
             Label sub = new Label(subtitle);
+            sub.setWrapText(true);
             sub.getStyleClass().add("page-subtitle");
             getChildren().add(sub);
         }

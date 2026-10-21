@@ -60,6 +60,7 @@ public final class DashboardPage implements ResponsivePage {
     private final Label cdiCaption = new Label("vs CDI atual (projeção)");
     private Panel chartPanel;
     private AdaptivePair chartPair;
+    private AdaptivePair summaryPair;
     private AdaptivePair supportPair;
     private AdaptivePair secondPair;
     private AdaptivePair rankPair;
@@ -109,10 +110,10 @@ public final class DashboardPage implements ResponsivePage {
     private LocalDate customFrom = null;
     private LocalDate customTo = null;
     private boolean useCustomRange = false;
-    private final HBox filterBar = new HBox(6);
+    private final FlowPane filterBar = new FlowPane(6, 6);
     private final DatePicker fromPicker = new DatePicker();
     private final DatePicker toPicker = new DatePicker();
-    private final HBox datePickerBox = new HBox(8);
+    private final FlowPane datePickerBox = new FlowPane(8, 8);
 
     private final Label tokenWarningBanner = new Label(
             "Token Brapi não configurado — cotações de ações usam preço de compra como referência. " +
@@ -162,6 +163,9 @@ public final class DashboardPage implements ResponsivePage {
         cdiChip.setAlignment(Pos.CENTER_LEFT);
         hero.setTrailing(cdiChip);
         hero.setContext("Referência " + formatDate(referenceDate));
+        summaryPair = new AdaptivePair(hero, strip, Breakpoint.MEDIUM, 0.56, 24);
+        VBox summary = new VBox(summaryPair);
+        summary.getStyleClass().add("portfolio-summary");
 
         // ── Main chart block, period controls inside it ────────────────────
         chartPanel = buildComparisonSection();
@@ -202,7 +206,7 @@ public final class DashboardPage implements ResponsivePage {
         Panel waterfallPanel = new Panel("Valor por ativo", waterfallChart).subtitle("Posições ordenadas pelo valor atual");
         secondPair = new AdaptivePair(rankBlock, waterfallPanel, Breakpoint.MEDIUM, 0.45, 16);
 
-        root.getChildren().addAll(headerRow, tokenWarningBanner, hero, strip, chartPanel,
+        root.getChildren().addAll(headerRow, tokenWarningBanner, summary, chartPanel,
                 supportPair, secondPair, investmentsByCategoryContainer);
 
         scrollPane.setContent(root);
@@ -220,19 +224,12 @@ public final class DashboardPage implements ResponsivePage {
     public void onBreakpoint(Breakpoint bp) {
         breakpoint = bp;
         strip.setColumns(bp == Breakpoint.NARROW ? 2 : 4);
+        summaryPair.onBreakpoint(bp);
         supportPair.onBreakpoint(bp);
         secondPair.onBreakpoint(bp);
         rankPair.onBreakpoint(bp);
         chartPair.onBreakpoint(bp);
-        // period toggles sit in the panel header when there is room, under the title otherwise
-        boolean inHeader = bp != Breakpoint.NARROW;
-        chartPanel.body().getChildren().remove(filterBar);
-        if (inHeader) {
-            chartPanel.actions(filterBar);
-        } else {
-            chartPanel.actions();
-            chartPanel.body().getChildren().add(0, filterBar);
-        }
+        // Period controls keep the full plot width instead of competing with the title.
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
         root.getStyleClass().add(bp.styleClass());
     }
@@ -625,7 +622,11 @@ public final class DashboardPage implements ResponsivePage {
         // Botões de benchmark
         ToggleGroup benchTg = new ToggleGroup();
         FlowPane benchBar = new FlowPane(8, 8);
-        benchBar.setAlignment(Pos.CENTER_RIGHT);
+        benchBar.setAlignment(Pos.CENTER_LEFT);
+        benchBar.getStyleClass().add("chart-controls");
+        Label benchmarkCaption = new Label("Comparar com");
+        benchmarkCaption.getStyleClass().add("text-secondary");
+        benchBar.getChildren().add(benchmarkCaption);
 
         for (String bench : List.of("CDI", "SELIC", "IPCA", "IBOVESPA")) {
             ToggleButton btn = new ToggleButton(bench);
@@ -651,7 +652,6 @@ public final class DashboardPage implements ResponsivePage {
         metricsPanel.setMinWidth(150);
         metricsPanel.setPadding(new Insets(4, 0, 0, 8));
         metricsPanel.getChildren().addAll(
-                benchBar,
                 buildMetricBox("Variação (R$, inclui aportes)", metricRendimentoLabel),
                 buildMetricBox("Variação % do valor", metricRentabilidadeLabel),
                 buildMetricBoxCustomTitle(metricBenchmarkTitleLabel, metricBenchmarkLabel)
@@ -693,10 +693,9 @@ public final class DashboardPage implements ResponsivePage {
         comparisonMethodHint.getStyleClass().add("text-secondary");
         comparisonMethodHint.setWrapText(true);
 
-        Panel panel = new Panel("Evolução da carteira", datePickerBox, noComparisonHint, sparseChartHint, chartPair, comparisonMethodHint)
+        Panel panel = new Panel("Evolução da carteira", filterBar, datePickerBox, benchBar, noComparisonHint, sparseChartHint, chartPair, comparisonMethodHint)
                 .subtitle("Variação do valor das posições no período, comparada ao benchmark");
         panel.getStyleClass().add("main-chart-panel");
-        panel.actions(filterBar);
         return panel;
     }
 

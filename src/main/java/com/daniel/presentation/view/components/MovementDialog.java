@@ -84,16 +84,19 @@ public final class MovementDialog extends Dialog<Movement> {
         confirmType = new ButtonType("Confirmar", ButtonBar.ButtonData.OK_DONE);
         getDialogPane().getButtonTypes().addAll(confirmType, ButtonType.CANCEL);
 
-        VBox content = new VBox(10);
+        VBox content = new VBox(16);
+        content.getStyleClass().add("movement-form");
         content.setPadding(new Insets(16));
         if (subtitle != null) {
             Label sub = new Label(subtitle);
-            sub.getStyleClass().add("text-secondary");
+            sub.getStyleClass().addAll("text-secondary", "movement-context");
             sub.setWrapText(true);
             content.getChildren().add(sub);
         }
 
-        content.getChildren().add(field("Data", datePicker, "date"));
+        VBox financialFields = new VBox(12);
+        financialFields.getStyleClass().add("movement-values");
+        if (form.usesQuantity() || form.usesPrice() || form.usesAmount()) content.getChildren().add(financialFields);
         datePicker.setMaxWidth(Double.MAX_VALUE);
         UiDates.applyBrFormat(datePicker);
         datePicker.valueProperty().addListener((o, a, v) -> form.setDate(v));
@@ -102,12 +105,12 @@ public final class MovementDialog extends Dialog<Movement> {
         if (form.usesQuantity()) {
             quantityField.setPromptText("Quantidade inteira");
             quantityField.textProperty().addListener((o, a, v) -> form.setQuantityText(v));
-            content.getChildren().add(field(form.isAdjustment() ? "Quantidade (opcional)" : "Quantidade", quantityField, "quantity"));
+            financialFields.getChildren().add(field(form.isAdjustment() ? "Quantidade (opcional)" : "Quantidade", quantityField, "quantity"));
         }
         if (form.usesPrice()) {
             priceField.setPromptText("Preço unitário, ex.: 20,005");
             priceField.textProperty().addListener((o, a, v) -> form.setPriceText(v));
-            content.getChildren().add(field("Preço unitário (R$)", priceField, "unitPrice"));
+            financialFields.getChildren().add(field("Preço unitário (R$)", priceField, "unitPrice"));
         }
         if (form.usesAmount()) {
             amountField.setPromptText("R$ 0,00");
@@ -118,15 +121,17 @@ public final class MovementDialog extends Dialog<Movement> {
                 case ADJUSTMENT -> form.investmentTypeId() == null ? "Valor (R$)" : "Variação de custo (R$)";
                 default -> "Valor (R$)";
             };
-            content.getChildren().add(field(label, amountField, "amount"));
+            amountField.getStyleClass().add("movement-amount");
+            financialFields.getChildren().add(field(label, amountField, "amount"));
         }
+        content.getChildren().add(field("Data", datePicker, "date"));
         if (form.isAdjustment()) {
             inflowBtn.setToggleGroup(signGroup);
             outflowBtn.setToggleGroup(signGroup);
             inflowBtn.setSelected(true);
             signGroup.selectedToggleProperty().addListener((o, a, v) -> form.setOutflow(v == outflowBtn));
             HBox signRow = new HBox(14, inflowBtn, outflowBtn);
-            content.getChildren().add(field("Sentido", signRow, "sign"));
+            financialFields.getChildren().add(field("Sentido", signRow, "sign"));
 
             classificationCombo.getItems().addAll(AdjustmentClassification.values());
             classificationCombo.setMaxWidth(Double.MAX_VALUE);

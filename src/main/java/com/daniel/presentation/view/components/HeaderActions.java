@@ -5,8 +5,7 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
+
 
 /**
  * Page header row: title/subtitle on the left, actions on the right. The actions wrap under the
@@ -14,7 +13,15 @@ import javafx.scene.layout.Region;
  */
 public final class HeaderActions extends FlowPane {
 
-    private final HBox actions = new HBox(8);
+    private final FlowPane actions = new FlowPane(8, 8) {
+        @Override protected double computePrefWidth(double height) {
+            // FlowPane snaps each child separately; rounding only the final sum loses pixels.
+            return snappedLeftInset() + snappedRightInset()
+                    + getChildren().stream().filter(Node::isManaged)
+                            .mapToDouble(n -> snapSizeX(n.prefWidth(-1))).sum()
+                    + Math.max(0, getManagedChildren().size() - 1) * snapSpaceX(getHgap());
+        }
+    };
 
     public HeaderActions(PageHeader header, Node... actionNodes) {
         getStyleClass().add("header-actions");
@@ -22,10 +29,14 @@ public final class HeaderActions extends FlowPane {
         setVgap(8);
         setAlignment(Pos.CENTER_LEFT);
         setRowValignment(javafx.geometry.VPos.CENTER);
+        setMinWidth(0);
         HBox left = new HBox(header);
         left.setAlignment(Pos.CENTER_LEFT);
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        left.setMinWidth(0);
+        left.maxWidthProperty().bind(widthProperty());
+        header.setMinWidth(0);
+        actions.setMinWidth(0);
+        actions.maxWidthProperty().bind(widthProperty());
         actions.setAlignment(Pos.CENTER_RIGHT);
         actions.getChildren().addAll(actionNodes);
         getChildren().addAll(left, actions);
@@ -38,7 +49,7 @@ public final class HeaderActions extends FlowPane {
         });
     }
 
-    public HBox actions() {
+    public FlowPane actions() {
         return actions;
     }
 }

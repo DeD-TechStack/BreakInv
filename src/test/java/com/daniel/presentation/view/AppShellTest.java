@@ -114,6 +114,21 @@ class AppShellTest {
     }
 
     @Test
+    void minimumHeightKeepsThePageOriginInsideTheScene() {
+        resize(600, 480);
+        FxTestSupport.runAndWait(() -> {
+            Motion.settle(sidebar());
+            if (sidebar().getStyleClass().contains("rail")) toggle().fire();
+            Motion.settle(sidebar());
+            for (int pass = 0; pass < 4; pass++) { root.applyCss(); root.layout(); }
+            var bounds = frame().localToScene(frame().getLayoutBounds());
+            assertTrue(bounds.getMinY() >= 0, "shell must not center an oversized frame above the scene: " + bounds);
+            assertTrue(bounds.getMaxY() <= 480, "frame must fit the minimum-height scene: " + bounds);
+            assertTrue(content().localToScene(content().getLayoutBounds()).getMinY() >= 0);
+        });
+    }
+
+    @Test
     void breakpointUsesContentWidth_notSceneWidth() {
         // 960 scene − 220 sidebar = 740 content → MEDIUM, although 960 itself would read as WIDE
         resize(960, 720);

@@ -115,6 +115,8 @@ public final class AppShell {
         shell.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
                 onSceneWidth(newScene.getWidth());
+                applySidebarHeight(newScene.getHeight());
+                newScene.heightProperty().addListener((o, a, h) -> applySidebarHeight(h.doubleValue()));
                 newScene.widthProperty().addListener((o, a, w) -> onSceneWidth(w.doubleValue()));
             }
         });
@@ -150,6 +152,10 @@ public final class AppShell {
     }
 
     // ── Breakpoints / sidebar ──────────────────────────────────────────────
+
+    private void applySidebarHeight(double height) {
+        sidebar.pseudoClassStateChanged(javafx.css.PseudoClass.getPseudoClass("short"), height < 560);
+    }
 
     private void onSceneWidth(double sceneWidth) {
         if (!Double.isFinite(sceneWidth) || sceneWidth <= 0) return;

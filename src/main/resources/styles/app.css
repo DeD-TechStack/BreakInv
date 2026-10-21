@@ -1,36 +1,37 @@
+@import "typography.css";
+
 /* ═══════════════════════════════════════════════
-   ROOT — Design Tokens + JavaFX Overrides (V2)
+   ROOT — BreakInv tokens over PrimerDark2.0.1
    Font: offline IBM Plex Sans; UiTheme supplies an explicit System fallback.
    AtlantaFX2.0.1 supplies the user-agent skins; this sheet owns product composition.
-   Body 14 px · metadata ≥ 12 px · every text colour ≥ 4.5:1
-   on the surface it sits on (text-3 on surface-3 = 4.8:1).
+   Body14px; bundled Regular/Medium/SemiBold. Contrast is verified on rendered states.
    ═══════════════════════════════════════════════ */
 .root {
     -fx-font-family: "IBM Plex Sans";
     -fx-font-size: 14px;
 
-    /* Backgrounds — slightly warm neutrals, not blue */
-    -color-bg-0: #0F1216;
-    -color-bg-1: #12161B;
-    -color-bg-2: #161B21;
+    /* Canvas and working surfaces */
+    -color-bg-0: #10151D;
+    -color-bg-1: #131B25;
+    -color-bg-2: #151E29;
 
     /* Surfaces: window → block → active row/hover/chip */
-    -color-surface:   #1B212B;
-    -color-surface-2: #232B37;
-    -color-surface-3: #2A3340;
+    -color-surface:   #18212C;
+    -color-surface-2: #223042;
+    -color-surface-3: #29394C;
 
     /* Borders */
-    -color-border:        #2A3340;
-    -color-border-strong: #39434F;
+    -color-border:        #2D3A4B;
+    -color-border-strong: #465A70;
 
-    /* Text (contrast on surface / surface-2): 13.5 · 7.4 · 6.1 */
-    -color-text-1: #E7EBF0;
-    -color-text-2: #A6B0BD;
-    -color-text-3: #95A0AE;
+    /* Text */
+    -color-text-1: #EAF0F6;
+    -color-text-2: #A8B6C6;
+    -color-text-3: #A8B6C6;
 
     /* Accent — fill for the primary action (ink text), active nav bar, main series */
-    -color-accent:        #22C55E;
-    -color-accent-strong: #1FB457;
+    -color-accent:        #39CF8B;
+    -color-accent-strong: #31B77A;
     -color-accent-ink:    #06160C;
     -color-accent-soft:   rgba(34,197,94,0.12);
     -color-accent-a25:    rgba(34,197,94,0.25);
@@ -51,11 +52,26 @@
     -color-warning-a32:   rgba(245,158,11,0.32);
     -color-info-a12:      rgba(59,130,246,0.12);
 
-    /* State — as text on surface: 9.3 · 8.7 · 5.7 · 7.3 */
-    -color-success: #4ADE80;
-    -color-warning: #E8B657;
-    -color-danger:  #F4716B;
-    -color-info:    #7FB2F0;
+    /* Selection/focus is blue; brand and financial gain are distinct roles. */
+    -color-success: #74D7A6;
+    -color-warning: #F3C979;
+    -color-danger:  #FF9595;
+    -color-info:    #8ABFFF;
+
+    /* PrimerDark semantic bridge: controls and popups share the product surfaces. */
+    -color-fg-default: -color-text-1;
+    -color-fg-muted: -color-text-2;
+    -color-fg-subtle: -color-text-3;
+    -color-fg-emphasis: -color-text-1;
+    -color-bg-default: -color-bg-2;
+    -color-bg-overlay: -color-surface-2;
+    -color-bg-subtle: -color-surface;
+    -color-bg-inset: -color-bg-0;
+    -color-border-default: -color-border-strong;
+    -color-border-muted: -color-border;
+    -color-accent-fg: -color-info;
+    -color-accent-emphasis: #315B85;
+    -color-accent-subtle: rgba(138,191,255,0.12);
 
     /* Warning banner surface */
     -color-warning-bg:   derive(-color-warning, -65%);
@@ -64,9 +80,9 @@
     /* JavaFX root overrides */
     -fx-base: -color-bg-0;
     -fx-background-color: -color-bg-0;
-    -fx-accent: -color-accent-strong;
-    -fx-focus-color: -color-accent;
-    -fx-faint-focus-color: -color-accent-soft;
+    -fx-accent: -color-info;
+    -fx-focus-color: -color-info;
+    -fx-faint-focus-color: -color-info-a12;
     -fx-text-fill: -color-text-1;
 }
 
@@ -79,8 +95,8 @@
 
 /* Page title (used by PageHeader) */
 .page-title {
-    -fx-font-size: 22px;
-    -fx-font-weight: 800;
+    -fx-font-size: 26px;
+    -fx-font-weight: 600;
     -fx-text-fill: -color-text-1;
 }
 
@@ -116,7 +132,7 @@
 .text-lg     { -fx-font-size: 16px; -fx-font-weight: 700; }
 .text-bold   { -fx-font-weight: 700; }
 .text-strong { -fx-font-weight: 800; -fx-text-fill: -color-text-1; }
-.text-helper { -fx-font-size: 12px; -fx-font-weight: 400; -fx-text-fill: -color-text-3; -fx-opacity: 0.9; }
+.text-helper { -fx-font-size: 12px; -fx-font-weight: 400; -fx-text-fill: -color-text-3; -fx-opacity: 1; }
 .text-link   { -fx-text-fill: -color-accent; -fx-underline: false; -fx-cursor: hand; -fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent; }
 .text-link:hover { -fx-underline: true; -fx-opacity: 0.85; }
 .text-dim    { -fx-font-size: 12px; -fx-font-weight: 400; -fx-text-fill: -color-text-2; }
@@ -306,6 +322,11 @@
 }
 
 /* Footer */
+.sidebar:short { -fx-padding: 0 0 8 0; }
+.sidebar:short .sidebar-brand { -fx-padding: 12 16 12 16; }
+.sidebar:short .sidebar-nav { -fx-padding: 8 8 0 8; }
+.sidebar:short .sidebar-nav-label { -fx-padding: 4 8 2 8; }
+
 .sidebar-footer {
     -fx-padding: 12 16 0 16;
     -fx-spacing: 4;
@@ -607,30 +628,8 @@
     -fx-cursor: hand;
     -fx-graphic-text-gap: 10;
 }
-.check-box .box {
-    -fx-background-color: -color-surface-2;
-    -fx-border-color: -color-border-strong;
-    -fx-border-radius: 5;
-    -fx-background-radius: 5;
-    -fx-min-width: 20px;  -fx-min-height: 20px;
-    -fx-pref-width: 20px; -fx-pref-height: 20px;
-    -fx-border-width: 1.5;
-}
-.check-box:hover .box {
-    -fx-border-color: -color-accent;
-    -fx-background-color: -color-surface-3;
-}
-.check-box:selected .box {
-    -fx-background-color: -color-accent-strong;
-    -fx-border-color: -color-accent-strong;
-}
-.check-box:selected .mark {
-    -fx-background-color: white;
-}
-.check-box:focused .box {
-    -fx-border-color: -color-accent;
-    -fx-effect: dropshadow(gaussian, -color-accent-glow, 5, 0, 0, 0);
-}
+/* Box/mark/selection are owned together by PrimerDark; mixing a legacy box
+   with its new mark paints a false check in the unchecked state. */
 
 /* ── Radio Button ── */
 .radio-button {
@@ -754,21 +753,21 @@
    BUTTONS
    ═══════════════════════════════════════════════ */
 
-/* Default button — green primary */
+/* Neutral by default; primary actions opt in. */
 .button {
-    -fx-background-color: -color-accent;
-    -fx-text-fill: -color-accent-ink;
-    -fx-background-radius: 10;
+    -fx-background-color: -color-surface-2;
+    -fx-text-fill: -color-text-1;
+    -fx-background-radius: 7;
     -fx-padding: 8 14;
-    -fx-font-weight: 700;
+    -fx-font-weight: 600;
     -fx-cursor: hand;
     -fx-border-color: transparent;
     -fx-border-width: 2;
-    -fx-border-radius: 10;
+    -fx-border-radius: 7;
 }
-.button:hover    { -fx-background-color: derive(-color-accent, 8%); }
-.button:pressed  { -fx-background-color: derive(-color-accent, -10%); }
-.button:focused  { -fx-border-color: -color-success; }
+.button:hover    { -fx-background-color: -color-surface-3; }
+.button:pressed  { -fx-background-color: -color-bg-2; }
+.button:focused  { -fx-border-color: -color-info; }
 .button:disabled { -fx-opacity: 0.4; -fx-cursor: default; }
 .ghost-btn:disabled    { -fx-opacity: 0.4; -fx-cursor: default; }
 .danger-btn:disabled   { -fx-opacity: 0.4; -fx-cursor: default; }
@@ -927,12 +926,17 @@
 }
 .table-view .column-header-background {
     -fx-background-color: -color-surface;
-    -fx-background-radius: 12 12 0 0;
+    -fx-background-radius: 8 8 0 0;
+}
+.table-view .column-header, .table-view .filler {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent transparent -color-border transparent;
+    -fx-border-width: 0 0 1 0;
 }
 .table-view .column-header .label {
     -fx-text-fill: -color-text-2;
-    -fx-font-weight: 900;
-    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-font-size: 12px;
 }
 .table-row-cell                      { -fx-background-color: transparent; }
 .table-row-cell:filled:hover         { -fx-background-color: -color-surface-2; }
@@ -949,19 +953,16 @@
     -fx-border-color: -color-border;
 }
 .table-analytic .column-header-background {
-    -fx-background-color: -color-surface-2;
-    -fx-background-radius: 12 12 0 0;
-    -fx-border-color: transparent transparent -color-border-strong transparent;
-    -fx-border-width: 0 0 1 0;
+    -fx-background-color: -color-surface;
+    -fx-background-radius: 8 8 0 0;
 }
 .table-analytic .column-header {
     -fx-padding: 10 12;
 }
 .table-analytic .column-header .label {
-    -fx-font-size: 11px;
-    -fx-font-weight: 900;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
     -fx-text-fill: -color-text-2;
-    -fx-text-transform: uppercase;
 }
 .table-analytic .table-row-cell:filled:odd {
     -fx-background-color: derive(-color-surface, -4%);
@@ -970,8 +971,8 @@
     -fx-background-color: -color-surface-3;
 }
 .table-analytic .table-row-cell:filled:selected {
-    -fx-background-color: -color-surface-2;
-    -fx-border-color: transparent transparent transparent -color-accent;
+    -fx-background-color: -color-info-a12;
+    -fx-border-color: transparent transparent transparent -color-info;
     -fx-border-width: 0 0 0 3;
 }
 .table-analytic .table-row-cell:filled:selected .table-cell {
@@ -2065,7 +2066,7 @@
 /* ── Page density per breakpoint ── */
 .bp-medium .page-root { -fx-padding: 20 24 24 24; -fx-spacing: 16; }
 .bp-narrow .page-root { -fx-padding: 12 16 16 16; -fx-spacing: 12; }
-.bp-narrow .page-title { -fx-font-size: 18px; }
+.bp-narrow .page-title { -fx-font-size: 24px; }
 .bp-narrow .card, .bp-narrow .panel-block { -fx-padding: 12; }
 .bp-narrow .table-analytic .table-cell { -fx-padding: 0 10; }
 
@@ -2083,6 +2084,23 @@
 .hero-value .hero-number.neg { -fx-text-fill: -color-danger; }
 
 /* ── Hero value ── */
+.portfolio-summary {
+    -fx-background-color: -color-surface;
+    -fx-background-radius: 12;
+    -fx-padding: 20 24;
+    -fx-border-color: -color-border;
+    -fx-border-radius: 12;
+}
+.portfolio-summary .stat-strip { -fx-background-color: transparent; -fx-border-color: transparent; }
+.portfolio-summary .stat-cell { -fx-padding: 10 12; }
+.bp-narrow .portfolio-summary { -fx-padding: 16; }
+.chart-controls { -fx-padding: 4 0 12 0; -fx-border-color: transparent transparent -color-border transparent; -fx-border-width: 0 0 1 0; }
+.positions-workspace { -fx-background-color: -color-surface; -fx-padding: 16; -fx-background-radius: 12; }
+.positions-workspace .table-view { -fx-border-color: transparent; }
+.positions-workspace .filter-flow { -fx-padding: 0; -fx-border-color: transparent; -fx-background-color: transparent; }
+.movement-context { -fx-padding: 12; -fx-background-color: -color-info-a12; -fx-background-radius: 8; }
+.movement-values { -fx-padding: 0 0 16 0; -fx-border-color: transparent transparent -color-border transparent; -fx-border-width: 0 0 1 0; }
+.dark-dialog .text-field.movement-amount { -fx-font-size: 24px; -fx-font-weight: 500; -fx-padding: 10 12; }
 .hero-value      { -fx-padding: 4 0 0 0; }
 .hero-caption    { -fx-font-size: 13px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; }
 .hero-number     { -fx-font-size: 38px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
@@ -2128,7 +2146,7 @@
     -fx-border-color: -color-border;
     -fx-padding: 16;
 }
-.panel-title    { -fx-font-size: 15px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
+.panel-title    { -fx-font-size: 17px; -fx-font-weight: 600; -fx-text-fill: -color-text-1; }
 .panel-subtitle { -fx-font-size: 12px; -fx-text-fill: -color-text-3; }
 .main-chart-panel { -fx-min-height: 360; }
 .rank-panel .rank-title { -fx-font-size: 13px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
@@ -2137,6 +2155,7 @@
 
 /* ── Dense table (Carteira) ── */
 .table-card { -fx-background-color: transparent; }
+.positions-workspace .empty-state { -fx-padding: 16; }
 .table-dense .column-header { -fx-padding: 8 12; }
 .table-dense .column-header .label { -fx-font-size: 12px; -fx-font-weight: 600; -fx-text-fill: -color-text-2; -fx-text-transform: none; }
 .table-dense .table-cell { -fx-padding: 0 12; -fx-alignment: CENTER_LEFT; -fx-font-size: 13px; }
@@ -2149,8 +2168,10 @@
     -fx-background-color: -color-surface-3; -fx-background-radius: 5; -fx-padding: 1 6;
 }
 .row-more-btn, .more-btn { -fx-padding: 4 6; -fx-background-radius: 7; }
+.row-more-btn { -fx-min-width: 40; -fx-pref-width: 40; -fx-max-width: 40; -fx-min-height: 28; }
+.row-more-btn > .label, .more-btn > .label { -fx-padding: 0; }
 .row-more-btn > .arrow-button, .more-btn > .arrow-button { -fx-padding: 0; }
-.row-more-btn > .arrow-button > .arrow, .more-btn > .arrow-button > .arrow { -fx-padding: 0; -fx-shape: null; -fx-background-color: transparent; }
+.row-more-btn > .arrow-button > .arrow, .more-btn > .arrow-button > .arrow { -fx-padding: 0; -fx-min-width: 0; -fx-shape: null; -fx-background-color: transparent; }
 .more-btn { -fx-background-color: -color-surface; -fx-border-color: -color-border-strong; -fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 7 10; }
 .row-more-btn:hover, .more-btn:hover { -fx-background-color: -color-surface-2; }
 .row-more-btn:showing, .more-btn:showing { -fx-background-color: -color-surface-3; }
