@@ -124,15 +124,21 @@ public final class DashboardPage implements ResponsivePage {
     private LocalDate customFrom = null;
     private LocalDate customTo = null;
     private boolean useCustomRange = false;
-    private final FlowPane filterBar = new FlowPane(6, 6);
+    private final FlowPane filterBar = new LineFlow(0, 6);
     private final DatePicker fromPicker = new DatePicker();
     private final DatePicker toPicker = new DatePicker();
     private final FlowPane datePickerBox = new FlowPane(8, 8);
 
     private final Label tokenWarningBanner = new Label(
-            "Token Brapi não configurado — cotações de ações usam preço de compra como referência. " +
-            "Configure seu token em Configurações para valorar as posições pela cotação de mercado.");
+            "Token Brapi não configurado: as ações ficam sem cotação de mercado.");
     private final AppSettingsRepository settingsRepo = new AppSettingsRepository();
+
+    /** C04: the token warning as one line: message, then its action. */
+    private final HBox tokenWarningRow = new HBox(12);
+    private Runnable onConfigureToken = () -> {};
+    /** C04: period | comparison on one toolbar line when wide, stacked otherwise. */
+    private AdaptivePair toolbarPair;
+    private LineFlow benchBar;
 
     // BRAPI freshness chips
     private final Label freshnessChip = new Label();
@@ -168,13 +174,25 @@ public final class DashboardPage implements ResponsivePage {
         connectionChip.getStyleClass().addAll("brapi-chip", "brapi-chip-neutral");
         HeaderActions headerRow = new HeaderActions(header, connectionChip, freshnessChip);
 
+        // C04: the missing token is said once, in one compact line that carries its own action; the
+        // base of the value stays in the hero ("preço de compra como referência").
         tokenWarningBanner.setGraphic(Icons.alertTriangle());
         tokenWarningBanner.setGraphicTextGap(8);
         tokenWarningBanner.setWrapText(true);
-        tokenWarningBanner.setMaxWidth(Double.MAX_VALUE); // a banner spans the content, whatever the message length (E-V2)
-        tokenWarningBanner.getStyleClass().add("warning-banner");
-        tokenWarningBanner.setVisible(false);
-        tokenWarningBanner.setManaged(false);
+        tokenWarningBanner.setMinHeight(Region.USE_PREF_SIZE);
+        tokenWarningBanner.setMaxWidth(Double.MAX_VALUE);
+        tokenWarningBanner.getStyleClass().add("warning-banner-text");
+        HBox.setHgrow(tokenWarningBanner, Priority.ALWAYS);
+        Button configureToken = new Button("Configurar token");
+        configureToken.getStyleClass().add("warning-banner-action");
+        configureToken.setMinWidth(Region.USE_PREF_SIZE);
+        configureToken.setOnAction(e -> onConfigureToken.run());
+        tokenWarningRow.getChildren().setAll(tokenWarningBanner, configureToken);
+        tokenWarningRow.setAlignment(Pos.CENTER_LEFT);
+        tokenWarningRow.setMaxWidth(Double.MAX_VALUE); // a banner spans the content, whatever the message length (E-V2)
+        tokenWarningRow.getStyleClass().addAll("warning-banner", "token-warning-row");
+        tokenWarningRow.setVisible(false);
+        tokenWarningRow.setManaged(false);
 
         // ── Hero: patrimony, with the gain beside it and the CDI projection as a chip ──
         cdiCaption.getStyleClass().add("hero-chip-caption");
@@ -234,7 +252,7 @@ public final class DashboardPage implements ResponsivePage {
         Panel waterfallPanel = new Panel("Valor por ativo", waterfallChart, valueEmpty).subtitle("Posições ordenadas pelo valor atual");
         secondPair = new AdaptivePair(rankBlock, waterfallPanel, Breakpoint.MEDIUM, 0.45, 16);
 
-        root.getChildren().addAll(headerRow, tokenWarningBanner, summary, chartPanel,
+        root.getChildren().addAll(headerRow, tokenWarningRow, summary, chartPanel,
                 supportPair, secondPair, investmentsByCategoryContainer);
 
         scrollPane.setContent(root);
@@ -297,6 +315,8 @@ public final class DashboardPage implements ResponsivePage {
         secondPair.onBreakpoint(bp);
         rankPair.onBreakpoint(bp);
         chartPair.onBreakpoint(bp);
+        toolbarPair.onBreakpoint(bp);
+        benchBar.setAlignment(bp == Breakpoint.WIDE ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
         // Period controls keep the full plot width instead of competing with the title.
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
         root.getStyleClass().add(bp.styleClass());
@@ -304,10 +324,7 @@ public final class DashboardPage implements ResponsivePage {
 
     @Override
     public void onShow() {
-        boolean hasToken = BrapiClient.hasToken();
-        tokenWarningBanner.setVisible(!hasToken);
-        tokenWarningBanner.setManaged(!hasToken);
-        updateBrapiChips();
+        applyTokenState();
         refreshData();
         if (!ratesFetched) {
             boolean autoUpdate = Boolean.parseBoolean(
@@ -316,6 +333,19 @@ public final class DashboardPage implements ResponsivePage {
                 fetchRealRates();
             }
         }
+    }
+
+    /** C04: the shell's way to the token setting, offered by the warning line. */
+    public void setOnConfigureToken(Runnable action) {
+        onConfigureToken = action == null ? () -> {} : action;
+    }
+
+    /** Token present or not: the warning line and the data-origin chips follow it. */
+    void applyTokenState() {
+        boolean hasToken = BrapiClient.hasToken();
+        tokenWarningRow.setVisible(!hasToken);
+        tokenWarningRow.setManaged(!hasToken);
+        updateBrapiChips();
     }
 
     private void updateBrapiChips() {
@@ -346,6 +376,9 @@ public final class DashboardPage implements ResponsivePage {
 
         // ── Connection chip ──────────────────────────────────────────────
         connectionChip.getStyleClass().removeAll("brapi-chip-success", "brapi-chip-warn", "brapi-chip-neutral");
+        // C04: without a token the warning line already says so (and offers the setting): no second badge.
+        connectionChip.setVisible(hasToken);
+        connectionChip.setManaged(hasToken);
         if (!hasToken) {
             connectionChip.setText("BRAPI sem token");
             connectionChip.getStyleClass().add("brapi-chip-neutral");
@@ -746,17 +779,20 @@ public final class DashboardPage implements ResponsivePage {
     private Panel buildComparisonSection() {
         // Botões de benchmark
         ToggleGroup benchTg = new ToggleGroup();
-        FlowPane benchBar = new FlowPane(8, 8);
+        // C04: one segmented group (AtlantaFX pills) beside the period group, no rule below them.
+        benchBar = new LineFlow(0, 6);
         benchBar.setAlignment(Pos.CENTER_LEFT);
-        benchBar.getStyleClass().add("chart-controls");
+        benchBar.getStyleClass().add("chart-toolbar");
         Label benchmarkCaption = new Label("Comparar com");
         benchmarkCaption.getStyleClass().add("text-secondary");
+        FlowPane.setMargin(benchmarkCaption, new Insets(0, 8, 0, 0));
         benchBar.getChildren().add(benchmarkCaption);
 
-        for (String bench : List.of("CDI", "SELIC", "IPCA", "IBOVESPA")) {
+        List<String> benchmarks = List.of("CDI", "SELIC", "IPCA", "IBOVESPA");
+        for (String bench : benchmarks) {
             ToggleButton btn = new ToggleButton(bench);
             btn.setToggleGroup(benchTg);
-            btn.getStyleClass().add("bench-toggle");
+            btn.getStyleClass().addAll("bench-toggle", pill(benchmarks.indexOf(bench), benchmarks.size()));
             if (bench.equals("CDI")) btn.setSelected(true);
             btn.setOnAction(e -> {
                 selectedBenchmark = bench;
@@ -790,6 +826,10 @@ public final class DashboardPage implements ResponsivePage {
         comparisonChart.setCreateSymbols(false);
         comparisonChart.setLegendVisible(true);
         comparisonChart.setMinHeight(300);
+        // C04 (adapting to the monitor): the evolution takes a share of the window height, so a taller
+        // monitor shows more of it and a short window keeps the readable minimum.
+        comparisonChart.prefHeightProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
+                () -> Math.max(300, Math.min(520, scrollPane.getHeight() * 0.42)), scrollPane.heightProperty()));
 
         // Instala listener de largura para atualizar labels automaticamente no resize
         ChartAxisUtils.installSmartAxis(compXAxis, comparisonChart);
@@ -822,7 +862,9 @@ public final class DashboardPage implements ResponsivePage {
         evolutionLoading.getStyleClass().add("text-secondary");
         evolutionLoading.setWrapText(true);
         evolutionLoading.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
-        Panel panel = new Panel("Evolução da carteira", filterBar, datePickerBox, benchBar, noComparisonHint, evolutionLoading, sparseChartHint, chartPair, comparisonMethodHint)
+        // C04: period | comparison on one toolbar line when wide (each group wraps whole when stacked)
+        toolbarPair = new AdaptivePair(filterBar, benchBar, Breakpoint.MEDIUM, 0.47, 16);
+        Panel panel = new Panel("Evolução da carteira", toolbarPair, datePickerBox, noComparisonHint, evolutionLoading, sparseChartHint, chartPair, comparisonMethodHint)
                 .subtitle("Variação do valor das posições no período, comparada ao benchmark");
         panel.getStyleClass().add("main-chart-panel");
         return panel;
@@ -844,9 +886,15 @@ public final class DashboardPage implements ResponsivePage {
         return b;
     }
 
+    /** AtlantaFX pill position of segment {@code index} in a group of {@code size}. */
+    static String pill(int index, int size) {
+        if (index == 0) return atlantafx.base.theme.Styles.LEFT_PILL;
+        return index == size - 1 ? atlantafx.base.theme.Styles.RIGHT_PILL : atlantafx.base.theme.Styles.CENTER_PILL;
+    }
+
     private void buildFilterBar() {
         filterBar.setAlignment(Pos.CENTER_LEFT);
-        filterBar.setPadding(new Insets(4, 0, 4, 0));
+        filterBar.getStyleClass().add("chart-toolbar");
 
         Map<String, Integer> filters = new LinkedHashMap<>();
         filters.put("1M", 1);
@@ -885,6 +933,7 @@ public final class DashboardPage implements ResponsivePage {
             datePickerBox.setManaged(true);
         });
         buttons.add(customBtn);
+        for (int i = 0; i < buttons.size(); i++) buttons.get(i).getStyleClass().add(pill(i, buttons.size()));
 
         filterBar.getChildren().addAll(buttons);
 

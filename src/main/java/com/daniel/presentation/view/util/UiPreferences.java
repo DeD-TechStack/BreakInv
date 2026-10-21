@@ -16,6 +16,7 @@ public final class UiPreferences {
     public static final String NODE_PATH = "/com/daniel/breakinv/ui";
     static final String KEY_REDUCE_MOTION = "reduceMotion";
     static final String KEY_SIDEBAR = "sidebarCollapsed"; // absent = automatic
+    static final String KEY_CARTEIRA_DETAIL_WIDTH = "carteiraDetailWidth"; // absent = page default
 
     private final Preferences node;
     private final List<Consumer<Boolean>> reduceMotionListeners = new CopyOnWriteArrayList<>();
@@ -70,6 +71,19 @@ public final class UiPreferences {
     public void setSidebarCollapsedChoice(Boolean choice) {
         if (choice == null) node.remove(KEY_SIDEBAR);
         else node.put(KEY_SIDEBAR, choice.toString());
+        flush();
+    }
+
+    /** C04: width the user gave the Carteira detail pane on the divider; NaN while never chosen. */
+    public double carteiraDetailWidth() {
+        double v = node.getDouble(KEY_CARTEIRA_DETAIL_WIDTH, Double.NaN);
+        return Double.isFinite(v) && v > 0 ? v : Double.NaN;
+    }
+
+    /** A non-finite or non-positive width clears the choice (the page falls back to its default). */
+    public void setCarteiraDetailWidth(double width) {
+        if (Double.isFinite(width) && width > 0) node.putDouble(KEY_CARTEIRA_DETAIL_WIDTH, width);
+        else node.remove(KEY_CARTEIRA_DETAIL_WIDTH);
         flush();
     }
 

@@ -54,6 +54,35 @@ class MovementDialogLayoutTest {
         });
     }
 
+    /**
+     * C04: what (context), how much (amount), when (date and note on one record line): a shorter
+     * form that reads in that order and still ends where the fields end.
+     */
+    @Test
+    void dateAndNoteShareOneRecordLineUnderTheAmount() {
+        FxTestSupport.runAndWait(() -> {
+            var dialog = new MovementDialog("Aporte externo", "Aumenta o caixa; não é lucro.",
+                    MovementForm.deposit(), FxStubs.emptyDaily(), m -> {}, Runnable::run, Runnable::run);
+            var pane = dialog.getDialogPane();
+            pane.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+            pane.resize(520, 620);
+            for (int pass = 0; pass < 4; pass++) { pane.applyCss(); pane.layout(); }
+            var date = (DatePicker) pane.lookup(".date-picker");
+            var note = pane.lookupAll(".text-field").stream()
+                    .filter(n -> n instanceof javafx.scene.control.TextField t && "Observação (opcional)".equals(t.getPromptText()))
+                    .findFirst().orElseThrow();
+            var amount = dialog.amountField();
+            var a = amount.localToScene(amount.getLayoutBounds());
+            var d = date.localToScene(date.getLayoutBounds());
+            var n = note.localToScene(note.getLayoutBounds());
+            assertEquals(d.getMinY(), n.getMinY(), 1, "date and note share one record line");
+            assertTrue(n.getMinX() > d.getMaxX(), "the note follows the date");
+            assertTrue(d.getMinY() > a.getMaxY(), "the record line follows the amount");
+            assertEquals(a.getMaxX(), n.getMaxX(), 1, "the line ends where the fields end");
+            assertTrue(date.getWidth() + 0.5 >= date.prefWidth(-1), "the date keeps its whole text: " + date.getWidth());
+        });
+    }
+
     /** E-V2: the context note and the error banner span the form, with the same right edge as the fields. */
     @Test
     void contextAndErrorBannerSpanTheFormWidth() {

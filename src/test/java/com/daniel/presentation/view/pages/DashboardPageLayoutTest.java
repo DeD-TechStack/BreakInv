@@ -95,7 +95,10 @@ class DashboardPageLayoutTest {
         return -1;
     }
 
-    /** E-V2 class: the token banner spans the content like the panels around it, even with a short message. */
+    /**
+     * E-V2 class: the token banner spans the content like the panels around it, even with a short
+     * message. C04: the banner is a line (message + action); the line spans, the message fills it.
+     */
     @Test
     void warningBannerSpansItsContainerEvenWithAShortMessage() {
         FxTestSupport.runAndWait(() -> {
@@ -103,7 +106,18 @@ class DashboardPageLayoutTest {
             scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
             page.onBreakpoint(Breakpoint.WIDE);
             ((Region) view).resize(1060, 800);
-            assertEquals(List.of(), FxTestSupport.messageBoxesShortOfTheirContainer(view, ".warning-banner"));
+            Label text = field("tokenWarningBanner");
+            Region row = field("tokenWarningRow");
+            text.setText("Curto.");
+            row.setVisible(true);
+            row.setManaged(true);
+            for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+            Region parent = (Region) row.getParent();
+            double available = parent.getWidth() - parent.snappedLeftInset() - parent.snappedRightInset();
+            assertEquals(available, row.getWidth(), 1, "the warning line spans its container");
+            Node action = row.getChildrenUnmodifiable().getLast();
+            assertTrue(text.getBoundsInParent().getMaxX() + ((javafx.scene.layout.HBox) row).getSpacing() + 1
+                    >= action.getBoundsInParent().getMinX(), "the message fills the line up to its action");
         });
     }
 
@@ -754,6 +768,96 @@ class DashboardPageLayoutTest {
             double medium = title.getFont().getSize();
             assertEquals(wide, narrow, 0.01, "narrow title");
             assertEquals(wide, medium, 0.01, "medium title");
+        });
+    }
+
+    // ── C04 pilot: content ahead of the frame ──────────────────────────────────
+
+    void styledAt(double width, double height) {
+        if (view.getScene() == null) {
+            var scene = new Scene(view, width, height);
+            scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+        }
+        page.onBreakpoint(Breakpoint.of(width));
+        ((Region) view).resize(width, height);
+        for (int pass = 0; pass < 6; pass++) { view.applyCss(); view.layout(); }
+    }
+
+    /**
+     * C04: the token warning said the same thing three times (badge, full-width amber band, hero
+     * footer). Now it is said once, in one compact line that carries its own way out.
+     */
+    @Test
+    void tokenWarningIsOneCompactLineWithItsAction() {
+        org.junit.jupiter.api.Assumptions.assumeFalse(com.daniel.infrastructure.api.BrapiClient.hasToken(),
+                "the synthetic home has no BRAPI token");
+        FxTestSupport.runAndWait(() -> {
+            int[] asked = new int[1];
+            page.setOnConfigureToken(() -> asked[0]++);
+            call("applyTokenState", new Class<?>[]{});
+            styledAt(1060, 800);
+            Region row = field("tokenWarningRow");
+            assertTrue(shown(row) && row.isManaged(), "without a token the warning is shown");
+            assertTrue(row.getStyleClass().contains("warning-banner"), "the row is the banner");
+            javafx.scene.control.Button action = (javafx.scene.control.Button) flatten(row).stream()
+                    .filter(javafx.scene.control.Button.class::isInstance).findFirst().orElseThrow();
+            assertEquals("Configurar token", action.getText());
+            action.fire();
+            assertEquals(1, asked[0], "the warning's action leads to the token setting");
+            assertTrue(row.getHeight() <= 48, "one line at wide content: " + row.getHeight());
+            List<String> elsewhere = flatten(view).stream()
+                    .filter(n -> n instanceof javafx.scene.control.Labeled l && l.getText() != null
+                            && l.getText().toLowerCase().contains("token") && shown(n) && !flatten(row).contains(n))
+                    .map(n -> ((javafx.scene.control.Labeled) n).getText()).toList();
+            assertEquals(List.of(), elsewhere, "the missing token is said once, in the warning line");
+        });
+    }
+
+    /** C04: period and comparison were two rows of bordered chips and a rule; now one toolbar line of segments. */
+    @Test
+    void periodAndComparisonShareOneToolbarLineWhenWide() {
+        FxTestSupport.runAndWait(() -> {
+            for (double width : new double[]{1060, 740, 380, 1060}) {
+                styledAt(width, 800);
+                List<ToggleButton> period = flatten(view).stream().filter(n -> n instanceof ToggleButton
+                        && n.getStyleClass().contains("filter-toggle")).map(ToggleButton.class::cast).distinct().toList();
+                List<ToggleButton> bench = flatten(view).stream().filter(n -> n instanceof ToggleButton
+                        && n.getStyleClass().contains("bench-toggle")).map(ToggleButton.class::cast).distinct().toList();
+                assertEquals(8, period.size());
+                assertEquals(4, bench.size());
+                for (List<ToggleButton> group : List.of(period, bench)) {
+                    assertTrue(group.getFirst().getStyleClass().contains(atlantafx.base.theme.Styles.LEFT_PILL), group.getFirst().getText());
+                    assertTrue(group.getLast().getStyleClass().contains(atlantafx.base.theme.Styles.RIGHT_PILL), group.getLast().getText());
+                    for (ToggleButton t : group.subList(1, group.size() - 1))
+                        assertTrue(t.getStyleClass().contains(atlantafx.base.theme.Styles.CENTER_PILL), t.getText());
+                }
+                List<ToggleButton> all = new ArrayList<>(period);
+                all.addAll(bench);
+                for (ToggleButton t : all)
+                    assertTrue(t.getWidth() + 0.5 >= t.prefWidth(-1), t.getText() + " whole at " + width);
+                if (width >= Breakpoint.WIDE_MIN) {
+                    double y = period.getFirst().localToScene(period.getFirst().getLayoutBounds()).getCenterY();
+                    for (ToggleButton t : all)
+                        assertEquals(y, t.localToScene(t.getLayoutBounds()).getCenterY(), 1, t.getText() + " on the toolbar line at " + width);
+                }
+            }
+        });
+    }
+
+    /** C04 (adapting to the monitor): a taller window gives the evolution chart more height; short ones keep its minimum. */
+    @Test
+    void evolutionChartGrowsWithTheWindowHeight() {
+        FxTestSupport.runAndWait(() -> {
+            LineChart<?, ?> chart = first(LineChart.class);
+            Node plot = field("compWrapper"); // shown once a comparison series exists (the loaded state)
+            plot.setVisible(true);
+            plot.setManaged(true);
+            styledAt(1060, 700);
+            double shortWindow = chart.getHeight();
+            styledAt(1060, 1100);
+            double tallWindow = chart.getHeight();
+            assertTrue(shortWindow >= 300 - 0.5, "minimum kept: " + shortWindow);
+            assertTrue(tallWindow >= shortWindow + 80, "taller window, taller chart: " + shortWindow + " -> " + tallWindow);
         });
     }
 }

@@ -2392,3 +2392,50 @@
     -fx-padding: 8 11;
 }
 .dialog-pane .text-field.field-error:focused { -fx-padding: 7 11; }
+
+/* ── C04 pilot · Carteira workspace (list | detail) ───────────────────────────────── */
+/* Search: AtlantaFX CustomTextField holds the glyph and the clear action inside its own frame;
+   the generic two-class search padding above would otherwise add to the adornment panes. */
+.text-field.search-field.c04-search { -fx-padding: 9 0 9 0; }
+.c04-search > .left-pane  { -fx-padding: 0 8 0 11; }
+.c04-search > .right-pane { -fx-padding: 0 5 0 4; }
+.c04-search .search-clear { -fx-padding: 4; -fx-background-radius: 6; -fx-border-radius: 6; }
+.positions-toolbar .position-count { -fx-padding: 0 2 0 0; }
+/* Native SplitPane: a quiet gutter whose grabber brightens on hover and takes the accent while dragged. */
+.positions-workspace .carteira-split { -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: 0; }
+.positions-workspace .carteira-split > .split-pane-divider { -fx-background-color: transparent; -fx-padding: 0 5 0 5; -fx-opacity: 1; }
+.positions-workspace .carteira-split > .split-pane-divider > .horizontal-grabber,
+.positions-workspace .carteira-split > .split-pane-divider > .vertical-grabber {
+    -fx-background-color: -color-text-3; -fx-background-radius: 2; -fx-padding: 16 1.5 16 1.5; -fx-opacity: 0.55;
+}
+.positions-workspace .carteira-split > .split-pane-divider:hover > .horizontal-grabber,
+.positions-workspace .carteira-split > .split-pane-divider:hover > .vertical-grabber { -fx-opacity: 1; }
+.positions-workspace .carteira-split > .split-pane-divider:pressed > .horizontal-grabber,
+.positions-workspace .carteira-split > .split-pane-divider:pressed > .vertical-grabber { -fx-background-color: -color-accent; -fx-opacity: 1; }
+/* The detail scrolls inside its own pane: no second frame around the details card. */
+.positions-workspace .details-scroll,
+.positions-workspace .details-scroll > .viewport { -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 0; }
+
+/* ── C04 pilot · Dashboard: content ahead of the frame ────────────────────────────── */
+/* Token warning: one compact line, said once, with its action. */
+.warning-banner.token-warning-row { -fx-padding: 5 6 5 12; }
+.warning-banner .warning-banner-text { -fx-text-fill: -color-warning-text; -fx-font-size: 12px; }
+.warning-banner .warning-banner-text .ikonli-font-icon { -fx-icon-color: -color-warning-text; }
+.warning-banner .warning-banner-action {
+    -fx-background-color: transparent; -fx-text-fill: -color-warning-text; -fx-font-size: 12px; -fx-font-weight: 600;
+    -fx-padding: 4 10; -fx-background-radius: 6; -fx-border-radius: 6; -fx-border-color: -color-warning-a22; -fx-border-width: 1; -fx-cursor: hand;
+}
+.warning-banner .warning-banner-action:hover   { -fx-background-color: -color-warning-a22; }
+.warning-banner .warning-banner-action:focused { -fx-border-color: -color-info; -fx-border-width: 1.5; -fx-effect: null; }
+/* Summary band: the same content in less height. */
+.portfolio-summary { -fx-padding: 14 20; }
+/* Chart toolbar: period and comparison as segmented pills on one line (no rule under them). */
+.chart-toolbar .filter-toggle, .chart-toolbar .bench-toggle {
+    -fx-background-color: -color-surface; -fx-text-fill: -color-text-2; -fx-font-size: 12px; -fx-font-weight: 700;
+    -fx-padding: 5 10; -fx-background-radius: 0; -fx-border-radius: 0; -fx-border-color: -color-border; -fx-border-width: 1 0 1 1;
+}
+.chart-toolbar .left-pill  { -fx-background-radius: 8 0 0 8; -fx-border-radius: 8 0 0 8; }
+.chart-toolbar .right-pill { -fx-background-radius: 0 8 8 0; -fx-border-radius: 0 8 8 0; -fx-border-width: 1; }
+.chart-toolbar .filter-toggle:hover, .chart-toolbar .bench-toggle:hover { -fx-background-color: -color-surface-2; -fx-text-fill: -color-text-1; }
+.chart-toolbar .filter-toggle:selected, .chart-toolbar .bench-toggle:selected { -fx-background-color: -color-accent-soft; -fx-text-fill: -color-accent; }
+.chart-toolbar .filter-toggle:focused, .chart-toolbar .bench-toggle:focused { -fx-border-color: -color-info; -fx-border-width: 1; -fx-effect: null; }

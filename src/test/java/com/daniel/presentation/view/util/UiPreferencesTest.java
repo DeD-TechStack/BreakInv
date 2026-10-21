@@ -51,6 +51,19 @@ class UiPreferencesTest {
         assertEquals("window", p.windowNode().name());
     }
 
+    /** C04: the Carteira detail width chosen on the divider is a UI preference; absent = the page's default. */
+    @Test
+    void carteiraDetailWidth_isAbsentUntilChosen_thenSurvivesANewInstance() {
+        MemoryPreferences node = new MemoryPreferences();
+        UiPreferences p = new UiPreferences(node);
+        assertTrue(Double.isNaN(p.carteiraDetailWidth()), "never chosen");
+        p.setCarteiraDetailWidth(412.5);
+        assertEquals(412.5, new UiPreferences(node).carteiraDetailWidth(), 1e-9);
+        assertTrue(node.flushCount() >= 1, "flushed so it survives a crash");
+        p.setCarteiraDetailWidth(Double.NaN);
+        assertTrue(Double.isNaN(new UiPreferences(node).carteiraDetailWidth()), "an unusable width clears the choice");
+    }
+
     @Test
     void defaultNodePath_isDedicatedToBreakInvUi() {
         assertEquals("/com/daniel/breakinv/ui", UiPreferences.NODE_PATH);

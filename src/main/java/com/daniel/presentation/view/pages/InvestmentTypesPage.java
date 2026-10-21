@@ -25,6 +25,7 @@ import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.Dialogs;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.UiPreferences;
 import com.daniel.presentation.viewmodel.MovementForm;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -35,7 +36,10 @@ import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.*;
+import atlantafx.base.controls.CustomTextField;
 import org.kordamp.ikonli.feather.Feather;
 import org.kordamp.ikonli.javafx.FontIcon;
 
@@ -62,6 +66,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class InvestmentTypesPage implements ResponsivePage {
 
     static final double ROW_HEIGHT = 42;
+    /** Name column minimum in compact rows (status and quantity move into the row). */
+    static final double COMPACT_NAME_MIN = 110;
     static final String STAT_CASH = "Caixa";
     static final String STAT_COST = "Custo das posições";
     static final String STAT_COUNT = "Ativos";
@@ -72,6 +78,36 @@ public final class InvestmentTypesPage implements ResponsivePage {
     private final BorderPane body = new BorderPane();
     private final TableView<InvestmentType> table = new TableView<>();
     private final DetailsPane details = new DetailsPane();
+    /**
+     * C04 (Portfolio Performance pattern, native SplitPane): wide, the table and the detail share a
+     * divider the user adjusts; the width is a UI preference. Before each layout the panes get the
+     * minimum their content needs and a pending width (restore, keyboard, clamp) is applied.
+     */
+    private final SplitPane split = new SplitPane() {
+        @Override protected void layoutChildren() {
+            // Converge within this pass: a requestLayout issued during layout would be cleared (R4-01).
+            for (int pass = 0; pass < 3; pass++) {
+                boolean moved = fitSplitToContent(getWidth() - snappedLeftInset() - snappedRightInset());
+                super.layoutChildren();
+                if (!moved) break;
+            }
+        }
+    };
+    private final VBox tableCard = new VBox(0);
+    private final ScrollPane detailsScroll = new ScrollPane();
+    private final UiPreferences prefs;
+    /** Rows a wide table keeps before the page scrolls (header + four rows). */
+    static final double TABLE_HEADER = 44;
+    /** Field label + value and "Comprar · Vender" side by side still fit at this width. */
+    static final double DETAIL_MIN_WIDTH = 280;
+    static final double DEFAULT_DETAIL_WIDTH = 340;
+    static final double DETAIL_KEY_STEP = 40;
+    private Boolean placedBeside;
+    private double chosenDetailWidth = Double.NaN;
+    private double appliedDetailWidth = Double.NaN;
+    private double detailTarget = Double.NaN;
+    private int detailCorrections;
+    private TableColumn<InvestmentType, String> valueColRef;
 
     private final ObservableList<InvestmentType> allItems = FXCollections.observableArrayList();
     private FilteredList<InvestmentType> filteredItems;
@@ -83,7 +119,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
     private CashStatus cashStatus;
     private Breakpoint breakpoint = Breakpoint.WIDE;
 
-    private final TextField searchField = new TextField();
+    private final CustomTextField searchField = new CustomTextField();
     private final ComboBox<String> categoryFilter = new ComboBox<>();
     private final CheckBox showArchived = new CheckBox("Mostrar arquivados");
 
@@ -116,7 +152,13 @@ public final class InvestmentTypesPage implements ResponsivePage {
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     public InvestmentTypesPage(DailyTrackingUseCase dailyTrackingUseCase) {
+        this(dailyTrackingUseCase, UiPreferences.forUser());
+    }
+
+    /** Production composition passes the app's single preferences instance; tests pass an in-memory node. */
+    public InvestmentTypesPage(DailyTrackingUseCase dailyTrackingUseCase, UiPreferences prefs) {
         this.daily = dailyTrackingUseCase;
+        this.prefs = prefs;
 
         root.getStyleClass().add("page-root");
 
@@ -156,32 +198,24 @@ public final class InvestmentTypesPage implements ResponsivePage {
         cashStateLabel.setWrapText(true);
 
         // ── Filter toolbar ───────────────────────────────────────────────────
+        // C04: AtlantaFX CustomTextField (already in the product) holds the glyph and the clear action
+        // inside the field's own frame; clearing is a real button, reachable from the keyboard.
         searchField.setPromptText("Buscar por nome ou ticker");
         searchField.setAccessibleText("Buscar por nome ou ticker");
         FontIcon searchIcon = Icons.search();
         searchIcon.setIconSize(13);
         Button clearBtn = new Button(null, Icons.close());
-        clearBtn.getStyleClass().add("icon-btn");
+        clearBtn.getStyleClass().addAll("icon-btn", "search-clear");
         clearBtn.setTooltip(new Tooltip("Limpar busca"));
         clearBtn.setAccessibleText("Limpar busca");
         clearBtn.setVisible(false);
-        clearBtn.setManaged(false);
-        clearBtn.setPadding(new Insets(2));
-        clearBtn.setOnAction(e -> searchField.clear());
-        searchField.textProperty().addListener((obs, old, val) -> {
-            boolean hasText = val != null && !val.isBlank();
-            clearBtn.setVisible(hasText);
-            clearBtn.setManaged(hasText);
-        });
-        StackPane searchBox = new StackPane(searchField, searchIcon, clearBtn);
-        StackPane.setAlignment(searchIcon, Pos.CENTER_LEFT);
-        StackPane.setMargin(searchIcon, new Insets(0, 0, 0, 10));
-        StackPane.setAlignment(clearBtn, Pos.CENTER_RIGHT);
-        StackPane.setMargin(clearBtn, new Insets(0, 4, 0, 0));
-        searchField.getStyleClass().add("search-field");
-        searchBox.setMinWidth(180);
-        searchBox.setPrefWidth(320);
-        HBox.setHgrow(searchBox, Priority.ALWAYS);
+        clearBtn.setOnAction(e -> { searchField.clear(); searchField.requestFocus(); });
+        searchField.textProperty().addListener((obs, old, val) -> clearBtn.setVisible(val != null && !val.isBlank()));
+        searchField.setLeft(searchIcon);
+        searchField.setRight(clearBtn);
+        searchField.getStyleClass().addAll("search-field", "c04-search");
+        searchField.setMinWidth(180);
+        searchField.setPrefWidth(320);
 
         categoryFilter.getItems().add("Todas categorias");
         for (CategoryEnum cat : CategoryEnum.values()) categoryFilter.getItems().add(cat.getDisplayName());
@@ -203,10 +237,10 @@ public final class InvestmentTypesPage implements ResponsivePage {
 
         FlowPane filterRow = new FlowPane(10, 8);
         filterRow.setMinWidth(0);
-        searchBox.maxWidthProperty().bind(filterRow.widthProperty());
+        searchField.maxWidthProperty().bind(filterRow.widthProperty());
         filterRow.getStyleClass().add("filter-flow");
         filterRow.setAlignment(Pos.CENTER_LEFT);
-        filterRow.getChildren().addAll(searchBox, categoryFilter, showArchived, clearFiltersBtn);
+        filterRow.getChildren().addAll(searchField, categoryFilter, showArchived, clearFiltersBtn);
 
         filteredItems = new FilteredList<>(allItems, p -> true);
         table.setItems(filteredItems);
@@ -218,9 +252,9 @@ public final class InvestmentTypesPage implements ResponsivePage {
         table.setMinHeight(Region.USE_PREF_SIZE);
         table.setMaxHeight(Region.USE_PREF_SIZE);
         table.prefHeightProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
-                () -> filteredItems.isEmpty() ? 240 : 44 + ROW_HEIGHT * Math.min(10, filteredItems.size()),
+                () -> filteredItems.isEmpty() ? 240 : TABLE_HEADER + ROW_HEIGHT * Math.min(10, filteredItems.size()),
                 filteredItems));
-        VBox tableCard = new VBox(0, table);
+        tableCard.getChildren().setAll(table);
         tableCard.getStyleClass().add("table-card");
         VBox.setVgrow(table, Priority.ALWAYS);
 
@@ -229,20 +263,33 @@ public final class InvestmentTypesPage implements ResponsivePage {
             table.requestFocus();
         });
 
-        body.setCenter(tableCard);
+        // C04: wide, table | detail in one native SplitPane; the detail scrolls inside its own pane and
+        // keeps its width when the window changes (the table takes the difference).
+        split.getStyleClass().add("carteira-split");
+        detailsScroll.getStyleClass().add("details-scroll");
+        detailsScroll.setFitToWidth(true);
+        detailsScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        detailsScroll.setAccessibleHelp("Ctrl+Shift+← e Ctrl+Shift+→ ajustam a largura do detalhe");
+        SplitPane.setResizableWithParent(detailsScroll, false);
+        details.visibleProperty().addListener((o, was, is) -> syncSplitItems());
+        split.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> rememberDetailWidth());
+        split.addEventFilter(KeyEvent.KEY_PRESSED, this::onSplitKey);
+        chosenDetailWidth = prefs.carteiraDetailWidth();
+
         body.getStyleClass().add("carteira-body");
 
-        Label positionsTitle = new Label("Posições");
-        positionsTitle.getStyleClass().add("panel-title");
+        // C04: one toolbar — the filters, and the count of what they show, in the same line.
         Label positionCount = new Label();
         positionCount.getStyleClass().addAll("position-count", "text-secondary");
+        positionCount.setMinWidth(Region.USE_PREF_SIZE);
         positionCount.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(
                 () -> filteredItems.size() + " de " + allItems.size() + (allItems.size() == 1 ? " ativo" : " ativos"), // R2-15
                 filteredItems, allItems));
-        Region countSpacer = new Region();
-        HBox.setHgrow(countSpacer, Priority.ALWAYS);
-        HBox positionsHeading = new HBox(12, positionsTitle, countSpacer, positionCount);
-        positionsHeading.setAlignment(Pos.CENTER_LEFT);
+        HBox toolbar = new HBox(12, filterRow, positionCount);
+        toolbar.getStyleClass().add("positions-toolbar");
+        toolbar.setAlignment(Pos.CENTER_LEFT);
+        toolbar.setMinWidth(0);
+        HBox.setHgrow(filterRow, Priority.ALWAYS);
         Label selectionHint = new Label("Selecione um ativo para ver posição, situação e ações.");
         selectionHint.getStyleClass().add("text-secondary");
         selectionHint.setWrapText(true);
@@ -254,9 +301,11 @@ public final class InvestmentTypesPage implements ResponsivePage {
         selectionHint.visibleProperty().bind(hintNeeded);
         selectionHint.managedProperty().bind(hintNeeded);
         allItems.addListener((javafx.collections.ListChangeListener<InvestmentType>) c -> updateEmptyState());
-        VBox workspace = new VBox(12, positionsHeading, filterRow, body, selectionHint);
+        VBox workspace = new VBox(12, toolbar, body, selectionHint);
         workspace.setMinWidth(0);
         workspace.getStyleClass().addAll("panel", "positions-workspace");
+        VBox.setVgrow(body, Priority.ALWAYS);
+        VBox.setVgrow(workspace, Priority.ALWAYS);
         root.getChildren().addAll(headerRow, warningBanner, strip, cashStateLabel, workspace);
 
         // Selection lost because the DATA changed (filter/refresh): only hide, never touch the focus.
@@ -309,22 +358,166 @@ public final class InvestmentTypesPage implements ResponsivePage {
         root.getStyleClass().add(bp.styleClass());
     }
 
-    /** Details beside the table when wide, below it otherwise — same node, no re-creation. */
+    /**
+     * Details beside the table when wide (C04: in the SplitPane), below it otherwise — same nodes, no
+     * re-creation; restructured only when the arrangement changes, so selection, filter, table scroll
+     * and the chosen width survive repeated breakpoint calls.
+     */
     private void placeDetails() {
         boolean beside = breakpoint == Breakpoint.WIDE;
-        body.setRight(null);
-        body.setBottom(null);
-        if (beside) {
-            body.setRight(details);
-            BorderPane.setMargin(details, new Insets(0, 0, 0, 16));
-            details.setPrefWidth(320);
-            details.setMaxWidth(360);
-        } else {
-            body.setBottom(details);
-            BorderPane.setMargin(details, new Insets(16, 0, 0, 0));
+        if (placedBeside == null || placedBeside != beside) {
+            body.setRight(null);
+            body.setBottom(null);
+            body.setCenter(null);
+            split.getItems().clear();
+            detailsScroll.setContent(null);
+            BorderPane.setMargin(details, null);
             details.setPrefWidth(Region.USE_COMPUTED_SIZE);
             details.setMaxWidth(Double.MAX_VALUE);
+            if (beside) {
+                detailsScroll.setContent(details);
+                split.getItems().add(tableCard);
+                body.setCenter(split);
+            } else {
+                body.setCenter(tableCard);
+                body.setBottom(details);
+                BorderPane.setMargin(details, new Insets(16, 0, 0, 0));
+            }
+            placedBeside = beside;
         }
+        syncSplitItems();
+        // One scroll per region when wide: the workspace takes the window height and the table grows in
+        // it (at least four rows before the page scrolls); otherwise the page scrolls and the table keeps
+        // its bounded box that follows the visible volume.
+        scrollPane.setFitToHeight(beside);
+        table.setMinHeight(beside ? TABLE_HEADER + ROW_HEIGHT * 4 : Region.USE_PREF_SIZE);
+        table.setMaxHeight(beside ? Double.MAX_VALUE : Region.USE_PREF_SIZE);
+        tableCard.setMaxHeight(beside ? Double.MAX_VALUE : Region.USE_COMPUTED_SIZE);
+    }
+
+    /** Wide: the detail pane is the split's second item exactly while the detail is open. */
+    private void syncSplitItems() {
+        if (!Boolean.TRUE.equals(placedBeside)) return;
+        boolean open = details.isVisible();
+        boolean present = split.getItems().contains(detailsScroll);
+        if (open && !present) {
+            split.getItems().add(detailsScroll);
+            setDetailTarget(Double.isFinite(chosenDetailWidth) ? chosenDetailWidth : DEFAULT_DETAIL_WIDTH);
+        } else if (!open && present) {
+            split.getItems().remove(detailsScroll);
+        }
+    }
+
+    private void setDetailTarget(double width) {
+        detailTarget = width;
+        detailCorrections = 0;
+        split.requestLayout();
+    }
+
+    /** Compact priority columns (identity + cost + row actions) and the vertical scrollbar stay whole. */
+    private double tableMinWidth() {
+        double scrollbar = 16;
+        for (javafx.scene.Node n : table.lookupAll(".scroll-bar")) {
+            if (n instanceof ScrollBar bar && bar.getOrientation() == javafx.geometry.Orientation.VERTICAL && bar.getWidth() > 0)
+                scrollbar = bar.getWidth();
+        }
+        double cost = valueColRef == null ? 110 : valueColRef.getMinWidth();
+        double actions = actionsColRef == null ? 48 : actionsColRef.getMinWidth();
+        return COMPACT_NAME_MIN + cost + actions + scrollbar + table.snappedLeftInset() + table.snappedRightInset() + 2;
+    }
+
+    private double detailMinWidth() {
+        return Math.max(DETAIL_MIN_WIDTH, details.minWidth(-1) + detailsScroll.snappedLeftInset() + detailsScroll.snappedRightInset());
+    }
+
+    /**
+     * Width the split skin gave the detail pane. The skin resizes its own wrapper during the split's
+     * layout, while the pane itself only follows in the children pass, so reading the pane there is
+     * one correction late; a pane just re-added sits in a new wrapper (0 = not laid out yet), never
+     * at the width it had in its previous attachment.
+     */
+    private double detailPaneWidth() {
+        javafx.scene.Node wrapper = detailsScroll.getParent();
+        return wrapper instanceof Region r && wrapper != split ? r.getWidth() : 0;
+    }
+
+    private double dividerWidth() {
+        javafx.scene.Node divider = split.lookup(".split-pane-divider");
+        return divider instanceof Region r && r.getWidth() > 0 ? r.getWidth() : 6;
+    }
+
+    /**
+     * Runs before every split layout: the panes get the minimum their content needs, and a pending
+     * width (restored, keyboard, or a clamp after the window narrowed) is reached by correcting the
+     * divider from the width actually laid out, whatever the skin's divider geometry.
+     */
+    private boolean fitSplitToContent(double size) {
+        if (!(size > 0)) return false;
+        double tableMin = tableMinWidth();
+        tableCard.setMinWidth(tableMin);
+        if (split.getItems().size() < 2) return false;
+        double detailMin = detailMinWidth();
+        detailsScroll.setMinWidth(detailMin);
+        double divider = dividerWidth();
+        double detailMax = Math.max(detailMin, size - tableMin - divider);
+        double current = detailPaneWidth();
+        if (!Double.isFinite(detailTarget) && current > 0 && (current < detailMin - 0.5 || current > detailMax + 0.5)) {
+            detailTarget = current;
+            detailCorrections = 0;
+        }
+        if (!Double.isFinite(detailTarget)) return false;
+        double goal = Math.max(detailMin, Math.min(detailMax, detailTarget));
+        if (current > 0 && Math.abs(current - goal) <= 0.5) {
+            appliedDetailWidth = current;
+            detailTarget = Double.NaN;
+            return false;
+        }
+        if (detailCorrections++ > 8) { detailTarget = Double.NaN; return false; }
+        double position = current > 0 && split.getDividers().size() == 1
+                ? split.getDividerPositions()[0] + (current - goal) / size
+                : 1 - (goal + divider / 2) / size;
+        split.setDividerPosition(0, Math.max(0.02, Math.min(0.98, position)));
+        return true;
+    }
+
+    /** The user let go of the divider: the width they chose becomes the preference. */
+    private void rememberDetailWidth() {
+        if (split.getItems().size() < 2) return;
+        double width = detailPaneWidth();
+        if (!(width > 0) || Double.isFinite(detailTarget)) return;
+        if (Double.isFinite(appliedDetailWidth) && Math.abs(width - appliedDetailWidth) <= 0.5) return;
+        appliedDetailWidth = width;
+        chosenDetailWidth = width;
+        prefs.setCarteiraDetailWidth(width);
+    }
+
+    /** The FX 21 divider answers only the mouse: Ctrl+Shift+← / → widen or narrow the detail. */
+    private void onSplitKey(KeyEvent e) {
+        if (split.getItems().size() < 2 || !e.isShortcutDown() || !e.isShiftDown()) return;
+        if (e.getCode() != KeyCode.LEFT && e.getCode() != KeyCode.RIGHT) return;
+        double size = split.getWidth() - split.snappedLeftInset() - split.snappedRightInset();
+        double base = Double.isFinite(detailTarget) ? detailTarget : detailPaneWidth();
+        double wanted = base + (e.getCode() == KeyCode.LEFT ? DETAIL_KEY_STEP : -DETAIL_KEY_STEP);
+        double detailMin = detailMinWidth();
+        double detailMax = Math.max(detailMin, size - tableMinWidth() - dividerWidth());
+        double width = Math.max(detailMin, Math.min(detailMax, wanted));
+        setDetailTarget(width);
+        chosenDetailWidth = width;
+        prefs.setCarteiraDetailWidth(width);
+        e.consume();
+    }
+
+    /** Below the table (medium/narrow), a newly opened detail is scrolled into view, not left below the fold. */
+    private void revealDetails() {
+        if (breakpoint == Breakpoint.WIDE || !details.isVisible() || details.getScene() == null) return;
+        scrollPane.applyCss();
+        scrollPane.layout();
+        double content = root.getHeight();
+        double viewport = scrollPane.getViewportBounds().getHeight();
+        if (!(content > viewport) || !(viewport > 0)) return;
+        double top = details.localToScene(details.getLayoutBounds()).getMinY() - root.localToScene(root.getLayoutBounds()).getMinY();
+        double fraction = Math.max(0, Math.min(1, (top - 12) / (content - viewport)));
+        scrollPane.setVvalue(scrollPane.getVmin() + fraction * (scrollPane.getVmax() - scrollPane.getVmin()));
     }
 
     // =====================================================================
@@ -432,6 +625,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         qtyCol.getStyleClass().add("num-col");
 
         TableColumn<InvestmentType, String> valueCol = new TableColumn<>("Custo");
+        valueColRef = valueCol;
         valueCol.setCellValueFactory(c -> {
             BigDecimal val = c.getValue().investedValue();
             if (val == null) return new javafx.beans.property.SimpleStringProperty("—");
@@ -503,7 +697,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         boolean compact = table.getWidth() < 820;
         boolean changed = compactRows != compact;
         compactRows = compact;
-        table.getColumns().getFirst().setMinWidth(compact ? 110 : 220);
+        table.getColumns().getFirst().setMinWidth(compact ? COMPACT_NAME_MIN : 220);
         statusColRef.setVisible(!compact);
         qtyColRef.setVisible(!compact);
         catColRef.setVisible(!compact && breakpoint != Breakpoint.NARROW);
@@ -791,6 +985,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
 
         placeDetails();
         details.open(breakpoint == Breakpoint.WIDE);
+        if (breakpoint != Breakpoint.WIDE) Platform.runLater(this::revealDetails);
     }
 
     private static String categoryText(InvestmentType inv) {

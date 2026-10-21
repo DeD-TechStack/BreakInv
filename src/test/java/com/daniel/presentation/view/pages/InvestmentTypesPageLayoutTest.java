@@ -44,6 +44,8 @@ class InvestmentTypesPageLayoutTest {
         out.add(n);
         if (n instanceof Parent p) for (Node c : p.getChildrenUnmodifiable()) out.addAll(flatten(c));
         if (n instanceof ScrollPane sp && sp.getContent() != null) out.addAll(flatten(sp.getContent()));
+        // C04: an unskinned SplitPane (no Scene yet) exposes its panes only as items
+        if (n instanceof SplitPane split && split.getSkin() == null) for (Node item : split.getItems()) out.addAll(flatten(item));
         return out;
     }
 
@@ -68,20 +70,28 @@ class InvestmentTypesPageLayoutTest {
             var region = (javafx.scene.layout.Region) view;
             region.resize(584, 600);
             TextField search = field("searchField");
+            // C04 (AtlantaFX CustomTextField, already in the product): glyph and clear action live inside the field's frame
+            assertTrue(search instanceof atlantafx.base.controls.CustomTextField, "search field is " + search.getClass());
+            var custom = (atlantafx.base.controls.CustomTextField) search;
+            Node icon = custom.getLeft();
+            assertTrue(icon instanceof org.kordamp.ikonli.javafx.FontIcon, "left node is the search glyph: " + icon);
+            assertTrue(custom.getRight() instanceof Button, "right node is the clear action: " + custom.getRight());
+            Button clear = (Button) custom.getRight();
+            assertTrue(clear.isFocusTraversable(), "clearing is reachable from the keyboard, not only by mouse");
+            assertEquals("Limpar busca", clear.getAccessibleText());
             for (String input : List.of("", "FICT1", "")) {
                 search.setText(input);
                 for (int pass = 0; pass < 3; pass++) { region.applyCss(); region.layout(); }
-                var icon = search.getParent().getChildrenUnmodifiable().stream()
-                        .filter(org.kordamp.ikonli.javafx.FontIcon.class::isInstance).findFirst().orElseThrow();
                 var iconBounds = search.sceneToLocal(icon.localToScene(icon.getBoundsInLocal()));
-                assertTrue(search.getInsets().getLeft() >= iconBounds.getMaxX() + 4,
-                        "search glyph overlaps input/placeholder: inset=" + search.getInsets() + ", icon=" + iconBounds);
-                var clear = search.getParent().getChildrenUnmodifiable().stream()
-                        .filter(Button.class::isInstance).map(Button.class::cast).findFirst().orElseThrow();
+                javafx.scene.text.Text text = (javafx.scene.text.Text) search.lookup(".text");
+                var textBounds = search.sceneToLocal(text.localToScene(text.getBoundsInLocal()));
+                assertTrue(textBounds.getMinX() >= iconBounds.getMaxX() + 4,
+                        "search glyph overlaps input/placeholder: text=" + textBounds + ", icon=" + iconBounds);
+                assertEquals(!input.isEmpty(), clear.isVisible(), "the clear action appears only when there is text");
                 if (!input.isEmpty()) {
-                    assertTrue(clear.isVisible());
                     var clearBounds = search.sceneToLocal(clear.localToScene(clear.getBoundsInLocal()));
-                    assertTrue(search.getWidth() - search.getInsets().getRight() <= clearBounds.getMinX() - 2);
+                    assertTrue(clearBounds.getMinX() >= textBounds.getMaxX() && clearBounds.getMaxX() <= search.getWidth() + 0.5,
+                            "clear action inside the field, after the text: clear=" + clearBounds + ", text=" + textBounds);
                     clear.fire();
                     assertEquals("", search.getText());
                 }
@@ -532,20 +542,26 @@ class InvestmentTypesPageLayoutTest {
         });
     }
 
+    /** C04: beside the table in a native SplitPane when wide, below it otherwise — same node, no re-creation. */
     @Test
     void detailsBesideTheTableWhenWide_belowItOtherwise() throws Exception {
         FxTestSupport.runAndWait(() -> {
             BorderPane body = field("body");
             DetailsPane details = field("details");
+            SplitPane split = field("split");
             page.showDetails(sample());
             page.onBreakpoint(Breakpoint.WIDE);
-            assertSame(details, body.getRight(), "wide: details on the right");
+            assertSame(split, body.getCenter(), "wide: table and details share one split");
+            assertTrue(inSplit(split, details), "wide: details are the split's second pane");
+            assertNull(body.getRight());
             assertNull(body.getBottom());
             page.onBreakpoint(Breakpoint.MEDIUM);
             assertSame(details, body.getBottom(), "medium: details below");
-            assertNull(body.getRight());
+            assertFalse(inSplit(split, details));
             page.onBreakpoint(Breakpoint.NARROW);
             assertSame(details, body.getBottom());
+            page.onBreakpoint(Breakpoint.WIDE);
+            assertTrue(inSplit(split, details), "back to wide: beside again");
         });
     }
 
@@ -599,6 +615,270 @@ class InvestmentTypesPageLayoutTest {
                 return s.contains("ledger") || s.contains("replay") || s.contains("schema");
             }).toList();
             assertTrue(bad.isEmpty(), bad.toString());
+        });
+    }
+
+    // ── C04 pilot: a list/detail workspace that uses the monitor ──────────────
+
+    static boolean inSplit(SplitPane split, Node node) {
+        return split.getItems().stream().anyMatch(item -> flatten(item).contains(node));
+    }
+
+    static com.daniel.presentation.view.util.UiPreferences memoryPrefs() {
+        return new com.daniel.presentation.view.util.UiPreferences(new com.daniel.presentation.view.window.MemoryPreferences());
+    }
+
+    /** The page over its own preferences, so a remembered width never leaks between tests. */
+    void usePrefs(com.daniel.presentation.view.util.UiPreferences prefs) {
+        page = new InvestmentTypesPage(FxStubs.emptyDaily(), prefs);
+        view = page.view();
+    }
+
+    static List<InvestmentType> numbered(int count) {
+        List<InvestmentType> out = new ArrayList<>();
+        for (int i = 1; i <= count; i++) {
+            out.add(new InvestmentType(100 + i, "Ativo sintético " + i, "ACOES", "ALTA", LocalDate.of(2026, 10, 15),
+                    null, new BigDecimal("120.00"), "ACAO", null, null, "FIC" + i, new BigDecimal("20.00"), 6, null));
+        }
+        return out;
+    }
+
+    void layOut(double width, double height) {
+        page.onBreakpoint(Breakpoint.of(width));
+        ((javafx.scene.layout.Region) view).resize(width, height);
+        for (int pass = 0; pass < 8; pass++) { view.applyCss(); view.layout(); }
+    }
+
+    javafx.scene.Scene styledScene(double width, double height) {
+        var scene = new javafx.scene.Scene(view, width, height);
+        scene.getStylesheets().add(getClass().getResource("/styles/app.css").toExternalForm());
+        return scene;
+    }
+
+    double detailWidth(SplitPane split) {
+        return split.getItems().get(split.getItems().size() - 1).getLayoutBounds().getWidth();
+    }
+
+    /**
+     * C04 (Portfolio Performance pattern, native SplitPane): the detail beside the table has a width the
+     * user adjusts on the divider; the limits come from what each side shows, and moving the divider keeps
+     * the selection and the detail open.
+     */
+    @Test
+    void wideDetailSitsInAnAdjustableSplitBoundedByWhatEachSideShows() {
+        FxTestSupport.runAndWait(() -> {
+            usePrefs(memoryPrefs());
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(numbered(75));
+            styledScene(1060, 800);
+            TableView<InvestmentType> table = field("table");
+            DetailsPane details = field("details");
+            SplitPane split = field("split");
+            layOut(1060, 800);
+            table.getSelectionModel().select(3);
+            layOut(1060, 800);
+            assertEquals(2, split.getItems().size(), "table and detail are the split's two panes");
+            assertTrue(inSplit(split, table) && inSplit(split, details));
+            assertFalse(SplitPane.isResizableWithParent(split.getItems().get(1)), "a wider window widens the table, not the detail");
+            double start = detailWidth(split);
+            split.setDividerPositions(split.getDividerPositions()[0] - 0.12);
+            layOut(1060, 800);
+            assertTrue(detailWidth(split) > start + 60, "the divider widens the detail: " + start + " -> " + detailWidth(split));
+            split.setDividerPositions(0.99);
+            layOut(1060, 800);
+            assertTrue(detailWidth(split) + 1 >= details.minWidth(-1) && details.getWidth() + 1 >= details.prefWidth(-1) * 0.5
+                            && detailWidth(split) >= 240,
+                    "the detail keeps the room its fields need: " + detailWidth(split) + " min=" + details.minWidth(-1));
+            split.setDividerPositions(0.02);
+            layOut(1060, 800);
+            for (Node n : table.lookupAll(".scroll-bar")) {
+                if (((ScrollBar) n).getOrientation() == javafx.geometry.Orientation.HORIZONTAL)
+                    assertFalse(n.isVisible(), "the table keeps its priority columns whole at " + table.getWidth());
+            }
+            for (Node action : table.lookupAll(".row-more-btn"))
+                assertTrue(action.localToScene(action.getLayoutBounds()).getMaxX() <= table.localToScene(table.getLayoutBounds()).getMaxX(),
+                        "row action stays inside the narrowed table");
+            assertSame(items.get(3), table.getSelectionModel().getSelectedItem(), "adjusting the divider keeps the selection");
+            assertTrue(details.isVisible(), "and keeps the detail open");
+        });
+    }
+
+    /** C04: the width chosen on the divider is a UI preference (synthetic home in tests), restored on the next open. */
+    @Test
+    void theDetailWidthChosenOnTheDividerIsRememberedForTheNextOpen() {
+        var prefs = memoryPrefs();
+        double[] chosen = new double[1];
+        FxTestSupport.runAndWait(() -> {
+            usePrefs(prefs);
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(numbered(10));
+            styledScene(1060, 800);
+            TableView<InvestmentType> table = field("table");
+            SplitPane split = field("split");
+            layOut(1060, 800);
+            table.getSelectionModel().select(0);
+            layOut(1060, 800);
+            split.setDividerPositions(split.getDividerPositions()[0] - 0.1);
+            layOut(1060, 800);
+            split.fireEvent(new javafx.scene.input.MouseEvent(javafx.scene.input.MouseEvent.MOUSE_RELEASED, 0, 0, 0, 0,
+                    javafx.scene.input.MouseButton.PRIMARY, 1, false, false, false, false, false, false, false, false, false, false, null));
+            chosen[0] = detailWidth(split);
+            assertEquals(chosen[0], prefs.carteiraDetailWidth(), 1.0, "released divider stores the detail width");
+            table.getSelectionModel().clearSelection();
+            table.getSelectionModel().select(1);
+            layOut(1060, 800);
+            assertEquals(chosen[0], detailWidth(split), 1.5, "reopening keeps the chosen width");
+        });
+        FxTestSupport.runAndWait(() -> {
+            usePrefs(prefs); // a new page over the same preferences = the next start of the app
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(numbered(10));
+            styledScene(1180, 800);
+            TableView<InvestmentType> table = field("table");
+            SplitPane split = field("split");
+            layOut(1180, 800);
+            table.getSelectionModel().select(2);
+            layOut(1180, 800);
+            assertEquals(chosen[0], detailWidth(split), 1.5, "the next start restores the width, whatever the window width");
+        });
+    }
+
+    /** C04: the FX 21 divider only answers the mouse, so the keyboard gets its own way to resize the detail. */
+    @Test
+    void theDetailWidthCanAlsoBeAdjustedFromTheKeyboard() {
+        var prefs = memoryPrefs();
+        FxTestSupport.runAndWait(() -> {
+            usePrefs(prefs);
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(numbered(10));
+            styledScene(1060, 800);
+            TableView<InvestmentType> table = field("table");
+            DetailsPane details = field("details");
+            SplitPane split = field("split");
+            layOut(1060, 800);
+            table.getSelectionModel().select(0);
+            layOut(1060, 800);
+            double start = detailWidth(split);
+            javafx.event.Event.fireEvent(details, new javafx.scene.input.KeyEvent(javafx.scene.input.KeyEvent.KEY_PRESSED, "", "",
+                    javafx.scene.input.KeyCode.LEFT, true, true, false, false));
+            layOut(1060, 800);
+            double wider = detailWidth(split);
+            assertTrue(wider >= start + 20, "Ctrl+Shift+← widens the detail: " + start + " -> " + wider);
+            assertEquals(wider, prefs.carteiraDetailWidth(), 1.0, "the keyboard choice is remembered too");
+            javafx.event.Event.fireEvent(details, new javafx.scene.input.KeyEvent(javafx.scene.input.KeyEvent.KEY_PRESSED, "", "",
+                    javafx.scene.input.KeyCode.RIGHT, true, true, false, false));
+            layOut(1060, 800);
+            assertEquals(start, detailWidth(split), 1.5, "Ctrl+Shift+→ narrows it back");
+            assertSame(items.get(0), table.getSelectionModel().getSelectedItem());
+        });
+    }
+
+    /**
+     * C04 (one scroll per region): wide, the positions table takes the height the window gives the
+     * workspace instead of a fixed ten-row box inside a scrolling page; the detail scrolls on its own.
+     */
+    @Test
+    void wideTableTakesTheWindowHeightAndThePageDoesNotScrollAroundIt() {
+        FxTestSupport.runAndWait(() -> {
+            usePrefs(memoryPrefs());
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(numbered(75));
+            styledScene(1060, 900);
+            TableView<InvestmentType> table = field("table");
+            DetailsPane details = field("details");
+            ScrollPane scroll = (ScrollPane) view;
+            layOut(1060, 900);
+            table.getSelectionModel().select(0);
+            layOut(1060, 900);
+            assertTrue(scroll.getContent().getLayoutBounds().getHeight() <= scroll.getViewportBounds().getHeight() + 1,
+                    "the page itself does not scroll at 1060×900: content " + scroll.getContent().getLayoutBounds().getHeight()
+                            + " in " + scroll.getViewportBounds().getHeight());
+            double rows = (table.getHeight() - 44) / InvestmentTypesPage.ROW_HEIGHT;
+            assertTrue(rows > 11, "the table shows more than the old ten-row box: " + rows + " rows in " + table.getHeight());
+            assertTrue(table.localToScene(table.getLayoutBounds()).getMaxY() >= 900 - 90,
+                    "the table reaches down the window: bottom " + table.localToScene(table.getLayoutBounds()).getMaxY());
+            ScrollPane detailScroll = null;
+            for (Node p = details.getParent(); p != null; p = p.getParent()) if (p instanceof ScrollPane sp) { detailScroll = sp; break; }
+            assertNotNull(detailScroll, "the detail scrolls inside its own pane");
+            assertNotSame(scroll, detailScroll);
+            assertTrue(table.lookupAll(".table-row-cell").size() < 75, "still virtualized");
+        });
+    }
+
+    /** C04: crossing breakpoints keeps what the user was doing — selection, filter, open detail, chosen width. */
+    @Test
+    void crossingBreakpointsKeepsTheSelectionTheFilterAndTheChosenWidth() {
+        var prefs = memoryPrefs();
+        FxTestSupport.runAndWait(() -> {
+            usePrefs(prefs);
+            javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+            items.setAll(numbered(30));
+            styledScene(1060, 800);
+            TableView<InvestmentType> table = field("table");
+            DetailsPane details = field("details");
+            SplitPane split = field("split");
+            TextField search = field("searchField");
+            BorderPane body = field("body");
+            layOut(1060, 800);
+            search.setText("sintético 2");
+            table.getSelectionModel().select(0);
+            layOut(1060, 800);
+            InvestmentType picked = table.getSelectionModel().getSelectedItem();
+            split.setDividerPositions(split.getDividerPositions()[0] - 0.08);
+            layOut(1060, 800);
+            split.fireEvent(new javafx.scene.input.MouseEvent(javafx.scene.input.MouseEvent.MOUSE_RELEASED, 0, 0, 0, 0,
+                    javafx.scene.input.MouseButton.PRIMARY, 1, false, false, false, false, false, false, false, false, false, false, null));
+            double chosen = detailWidth(split);
+            for (double width : new double[]{740, 544, 740, 1060}) {
+                layOut(width, 800);
+                assertSame(picked, table.getSelectionModel().getSelectedItem(), "selection kept at " + width);
+                assertEquals("sintético 2", search.getText(), "filter kept at " + width);
+                assertTrue(details.isVisible(), "detail still open at " + width);
+                if (width < 960) assertSame(details, body.getBottom(), "below the table at " + width);
+            }
+            assertTrue(inSplit(split, details), "beside the table again when wide");
+            assertEquals(chosen, detailWidth(split), 1.5, "with the width the user chose");
+        });
+    }
+
+    /** Waits (bounded) for the page's own first load, so later FX turns are not overwritten by it. */
+    void awaitLoadedItems(int count) throws Exception {
+        for (int attempt = 0; attempt < 150; attempt++) {
+            int[] size = new int[1];
+            FxTestSupport.runAndWait(() -> {
+                javafx.collections.ObservableList<InvestmentType> items = field("allItems");
+                size[0] = items.size();
+            });
+            if (size[0] == count) return;
+            Thread.sleep(20);
+        }
+        fail("the page's first load never delivered " + count + " registrations");
+    }
+
+    /** C04: narrow, opening a detail brings it into view instead of leaving it below the fold. */
+    @Test
+    void narrowDetailIsBroughtIntoViewWhenOpened() throws Exception {
+        List<InvestmentType> registrations = numbered(10);
+        FxTestSupport.runAndWait(() -> {
+            page = new InvestmentTypesPage(FxStubs.dailyWithTypes(registrations), memoryPrefs());
+            view = page.view();
+            styledScene(584, 600);
+        });
+        awaitLoadedItems(registrations.size());
+        FxTestSupport.runAndWait(() -> {
+            layOut(584, 600);
+            TableView<InvestmentType> table = field("table");
+            table.getSelectionModel().select(0);
+            layOut(584, 600);
+        });
+        FxTestSupport.runAndWait(() -> {}); // the reveal is posted once the detail has opened
+        FxTestSupport.runAndWait(() -> {
+            for (int pass = 0; pass < 4; pass++) { view.applyCss(); view.layout(); }
+            DetailsPane details = field("details");
+            ScrollPane scroll = (ScrollPane) view;
+            var top = scroll.sceneToLocal(details.localToScene(details.getLayoutBounds())).getMinY();
+            assertTrue(top >= -1 && top < scroll.getViewportBounds().getHeight() - 40,
+                    "the opened detail starts inside the viewport: " + top + " of " + scroll.getViewportBounds().getHeight());
         });
     }
 }

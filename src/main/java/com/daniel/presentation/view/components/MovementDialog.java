@@ -15,6 +15,7 @@ import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
@@ -130,7 +131,18 @@ public final class MovementDialog extends Dialog<Movement> {
             amountField.getStyleClass().add("movement-amount");
             financialFields.getChildren().add(field(label, amountField, "amount"));
         }
-        content.getChildren().add(field("Data", datePicker, "date"));
+        // C04: what (context), how much (values), when: the date and the note share one record line
+        // (adjustments and reversals keep their own order: sign, classification and reason).
+        VBox dateBox = field("Data", datePicker, "date");
+        HBox recordRow = null;
+        if (!form.isAdjustment() && !form.isReversal()) {
+            dateBox.setMinWidth(Region.USE_PREF_SIZE);
+            recordRow = new HBox(12, dateBox);
+            recordRow.getStyleClass().add("movement-record");
+            content.getChildren().add(recordRow);
+        } else {
+            content.getChildren().add(dateBox);
+        }
         if (form.isAdjustment()) {
             inflowBtn.setToggleGroup(signGroup);
             outflowBtn.setToggleGroup(signGroup);
@@ -159,7 +171,13 @@ public final class MovementDialog extends Dialog<Movement> {
         if (!form.isReversal()) {
             noteField.setPromptText("Observação (opcional)");
             noteField.textProperty().addListener((o, a, v) -> form.setNote(v));
-            content.getChildren().add(field("Observação", noteField, "note"));
+            VBox noteBox = field("Observação", noteField, "note");
+            if (recordRow != null) {
+                HBox.setHgrow(noteBox, Priority.ALWAYS);
+                recordRow.getChildren().add(noteBox);
+            } else {
+                content.getChildren().add(noteBox);
+            }
         }
 
         errorLabel.getStyleClass().add("warning-banner");

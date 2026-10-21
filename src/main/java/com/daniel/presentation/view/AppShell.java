@@ -78,12 +78,15 @@ public final class AppShell {
         this.daily = dailyTrackingUseCase;
         this.prefs = prefs;
         this.pages.putAll(pages);
+        // C04: the Dashboard's token warning leads straight to the setting it names
+        if (this.pages.get("Dashboard") instanceof DashboardPage dashboard)
+            dashboard.setOnConfigureToken(() -> go("Configurações"));
     }
 
     private static Map<String, Page> defaultPages(DailyTrackingUseCase daily, UiPreferences prefs) {
         Map<String, Page> p = new LinkedHashMap<>();
         p.put("Dashboard",                 new DashboardPage(daily));
-        p.put("Cadastrar Investimento",    new InvestmentTypesPage(daily));
+        p.put("Cadastrar Investimento",    new InvestmentTypesPage(daily, prefs));
         p.put("Diversificação",            new DiversificationPage(daily));
         p.put("Análise de Ativo",          new AssetAnalysisPage());
         p.put("Ranking",                   new RankingPage(daily));
