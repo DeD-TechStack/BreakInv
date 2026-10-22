@@ -75,8 +75,8 @@ class MotionTest {
 
     @Test
     void swap_withReduceMotion_showsTheNewNodeInItsFinalStateAtOnce() {
-        prefs.setReduceMotion(true);
         FxTestSupport.runAndWait(() -> {
+            prefs.setReduceMotion(true); // on the FX thread: settling running animations must not race it
             StackPane host = new StackPane();
             Region a = new Region(), b = new Region();
             Motion.swap(host, a, 1);
@@ -92,8 +92,8 @@ class MotionTest {
 
     @Test
     void fadeSlideIn_withReduceMotion_leavesNoRunningAnimation_andKeepsFeedbackVisible() {
-        prefs.setReduceMotion(true);
         FxTestSupport.runAndWait(() -> {
+            prefs.setReduceMotion(true); // on the FX thread: settling running animations must not race it
             Region r = new Region();
             Motion.fadeSlideIn(r, 180, 10);
             assertEquals(1.0, r.getOpacity(), 1e-9);

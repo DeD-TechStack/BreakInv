@@ -2,6 +2,7 @@ package com.daniel.presentation.view.pages;
 
 import com.daniel.infrastructure.api.BcbClient;
 import com.daniel.infrastructure.api.BrapiClient;
+import com.daniel.infrastructure.persistence.backup.DataProtection;
 import com.daniel.infrastructure.persistence.repository.AppSettingsRepository;
 import com.daniel.presentation.view.PageHeader;
 import com.daniel.presentation.view.components.Panel;
@@ -10,6 +11,7 @@ import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.components.WelcomeOverlay;
 import com.daniel.presentation.view.layout.AdaptivePair;
 import com.daniel.presentation.view.util.Breakpoint;
+import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.view.util.UiPreferences;
 
 import javafx.application.Platform;
@@ -33,7 +35,7 @@ import java.util.concurrent.CompletableFuture;
  * as panel blocks. Controls are named, the plan toggles wrap, the rates are a value strip
  * that reflows, and texts speak the user's language.
  */
-public final class ConfiguracoesPage implements ResponsivePage {
+public final class ConfiguracoesPage implements ResponsivePage, DataOperations {
 
     private static final DateTimeFormatter DT_FMT =
             DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
@@ -42,6 +44,7 @@ public final class ConfiguracoesPage implements ResponsivePage {
     private final ScrollPane scrollPane = new ScrollPane();
     private final VBox root = new VBox(16);
     private final AdaptivePair integrationsPair;
+    private final BackupSection backupSection;
 
     public static final String SETTINGS_KEY_BRAPI_DELAY = "brapi_refresh_delay_minutes";
 
@@ -75,7 +78,19 @@ public final class ConfiguracoesPage implements ResponsivePage {
 
     /** The shell injects the app-wide preferences; tests inject an in-memory node. */
     public ConfiguracoesPage(UiPreferences uiPrefs) {
+        this(uiPrefs, (BackupSection) null);
+    }
+
+    /** Production: copies and restoration of the local data (BRK-30); null = unavailable. */
+    public ConfiguracoesPage(UiPreferences uiPrefs, DataProtection data) {
+        this(uiPrefs, BackupSection.standard(data, UiExecutor.get(), Platform::runLater));
+    }
+
+    /** Test seam: the backup block is injected (null = unavailable). */
+    ConfiguracoesPage(UiPreferences uiPrefs, BackupSection backupSection) {
         this.uiPrefs = uiPrefs;
+        this.backupSection = backupSection != null ? backupSection
+                : BackupSection.standard(null, Runnable::run, Runnable::run);
         root.getStyleClass().add("page-root");
 
         PageHeader header = new PageHeader("Configurações",
@@ -100,6 +115,7 @@ public final class ConfiguracoesPage implements ResponsivePage {
     public void onShow() {
         reduceMotionCheck.setSelected(uiPrefs.reduceMotion());
         loadSavedSettings();
+        backupSection.refresh();
     }
 
     @Override
@@ -110,6 +126,18 @@ public final class ConfiguracoesPage implements ResponsivePage {
         ratesStrip.setColumns(3);
         root.getStyleClass().removeAll(Breakpoint.allStyleClasses());
         root.getStyleClass().add(bp.styleClass());
+    }
+
+    /** The shell reloads the visible page after a restore replaced the data. */
+    @Override
+    public void setOnDataReplaced(Runnable onDataReplaced) {
+        backupSection.setOnDataReplaced(onDataReplaced);
+    }
+
+    /** The shell blocks navigation and closing while a restore replaces the data. */
+    @Override
+    public void setOnDataBusy(java.util.function.Consumer<Boolean> onDataBusy) {
+        backupSection.setOnDataBusy(onDataBusy);
     }
 
     private void loadSavedSettings() {
@@ -320,7 +348,8 @@ public final class ConfiguracoesPage implements ResponsivePage {
         local.getStyleClass().add("text-secondary");
         local.setWrapText(true);
 
-        return new Panel("Dados e sobre o aplicativo", version, local);
+        // the copies stand apart from the version and privacy text below them
+        return new Panel("Dados e sobre o aplicativo", backupSection.view(), new Separator(), version, local);
     }
 
     private void testToken() {

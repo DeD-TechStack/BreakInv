@@ -66,6 +66,26 @@ public final class SchemaMigrator {
         new SchemaMigrator(Schema.migrations()).migrateAll(conn);
     }
 
+    /**
+     * True when {@link #migrate} would change an EXISTING database: it already has tables and its
+     * recorded version (none for a pre-versioning database) is below {@link Schema#CURRENT_VERSION}.
+     * A brand-new file (no tables) and a database of a newer application (refused anyway) are false.
+     * Reads only.
+     */
+    public static boolean wouldChangeExisting(Connection conn) {
+        List<String> tables = new ArrayList<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT name FROM sqlite_master WHERE type = 'table' "
+                     + "AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'")) {
+            while (rs.next()) tables.add(rs.getString(1));
+        } catch (SQLException e) {
+            return true; // unknown state: let the hook decide (it copies or reports)
+        }
+        if (tables.isEmpty()) return false;
+        if (!tables.contains("schema_migrations")) return true;
+        return Schema.appliedVersion(conn) < Schema.CURRENT_VERSION;
+    }
+
     /** Applies every version above the recorded one, in order, one transaction each. */
     public void migrateAll(Connection conn) {
         ensureVersionTable(conn);

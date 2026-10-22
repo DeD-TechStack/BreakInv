@@ -17,10 +17,22 @@ import java.util.Optional;
 public final class Dialogs {
     private Dialogs() {}
 
+    /** Width of the shared dialog frame. */
+    static final double FRAME_WIDTH = 440;
+    /**
+     * Width a wrapped dialog text is measured at. The window takes its height from the dialog's
+     * preferred height asked for no width, and a wrapped Label measured without a width reports a
+     * single line, so a long message got one line of room and a scrollbar. JavaFX's own dialog
+     * text has a fixed preferred width for the same reason. The frame leaves 396 px for text
+     * (pane, scroll and body paddings); 4 px of slack keeps the measure valid when rounded.
+     */
+    static final double TEXT_WIDTH = FRAME_WIDTH - 48;
+
     private static void applyTheme(Alert a) {
         Label message = new Label(a.getContentText());
         message.setWrapText(true);
         message.setMinWidth(0);
+        message.setPrefWidth(TEXT_WIDTH);
         applySimpleFrame(a, message);
     }
 
@@ -37,6 +49,7 @@ public final class Dialogs {
         if (d.getHeaderText() != null && !d.getHeaderText().isBlank()) {
             Label question = new Label(d.getHeaderText());
             question.setWrapText(true);
+            question.setPrefWidth(TEXT_WIDTH);
             question.getStyleClass().add("dialog-question");
             body.getChildren().add(question);
         }
@@ -46,7 +59,7 @@ public final class Dialogs {
         d.getDialogPane().getStylesheets().add(Dialogs.class.getResource("/styles/app.css").toExternalForm());
         d.getDialogPane().getStyleClass().add("dark-dialog");
         DialogChrome.frame(d, d.getTitle(), body, () -> true);
-        d.getDialogPane().setPrefWidth(440);
+        d.getDialogPane().setPrefWidth(FRAME_WIDTH);
         for (ButtonType type : d.getDialogPane().getButtonTypes()) {
             d.getDialogPane().lookupButton(type).getStyleClass().add(type.getButtonData().isCancelButton() ? "ghost-btn" : "primary-btn");
         }
@@ -118,11 +131,13 @@ public final class Dialogs {
             Label question = new Label(header);
             question.getStyleClass().add("dialog-question");
             question.setWrapText(true);
+            question.setPrefWidth(TEXT_WIDTH);
             body.getChildren().add(question);
         }
         Label consequence = new Label(message == null ? "" : message);
         consequence.getStyleClass().add("text-secondary");
         consequence.setWrapText(true);
+        consequence.setPrefWidth(TEXT_WIDTH);
         body.getChildren().add(consequence);
 
         String label = actionLabel == null || actionLabel.isBlank() ? "Confirmar" : actionLabel;
@@ -130,7 +145,7 @@ public final class Dialogs {
         ButtonType cancel = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
         d.getDialogPane().getButtonTypes().setAll(primary, cancel);
         DialogChrome.frame(d, d.getTitle(), body, () -> true);
-        d.getDialogPane().setPrefWidth(440);
+        d.getDialogPane().setPrefWidth(FRAME_WIDTH);
 
         Button primaryBtn = (Button) d.getDialogPane().lookupButton(primary);
         boolean destructive = label.toLowerCase().startsWith("excluir") || label.toLowerCase().startsWith("apagar");

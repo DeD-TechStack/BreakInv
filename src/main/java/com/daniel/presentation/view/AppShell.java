@@ -1,6 +1,7 @@
 package com.daniel.presentation.view;
 
 import com.daniel.core.service.DailyTrackingUseCase;
+import com.daniel.infrastructure.persistence.backup.DataProtection;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.components.WelcomeOverlay;
 import com.daniel.presentation.view.pages.*;
@@ -60,6 +61,7 @@ public final class AppShell {
     private final Button toggleBtn = new Button();
     private Consumer<String> pageChangeListener;
     private String currentKey;
+    private boolean dataBusy;
     private Breakpoint breakpoint;
     private boolean collapsed;
     private double lastSceneWidth = Double.NaN;
@@ -70,7 +72,12 @@ public final class AppShell {
 
     /** Production composition: the SAME preferences instance the app gave Motion reaches every page. */
     public AppShell(DailyTrackingUseCase dailyTrackingUseCase, UiPreferences prefs) {
-        this(dailyTrackingUseCase, defaultPages(dailyTrackingUseCase, prefs), prefs);
+        this(dailyTrackingUseCase, prefs, null);
+    }
+
+    /** Production composition with copies and restoration of the local data (BRK-30). */
+    public AppShell(DailyTrackingUseCase dailyTrackingUseCase, UiPreferences prefs, DataProtection data) {
+        this(dailyTrackingUseCase, defaultPages(dailyTrackingUseCase, prefs, data), prefs);
     }
 
     /** Test seam: pages and preferences are injected so no database or registry is touched. */
@@ -81,9 +88,18 @@ public final class AppShell {
         // C04: the Dashboard's token warning leads straight to the setting it names
         if (this.pages.get("Dashboard") instanceof DashboardPage dashboard)
             dashboard.setOnConfigureToken(() -> go("Configurações"));
+        // BRK-30: after a restore the visible page reads the replaced data at once; while it runs,
+        // nothing else in the window can be used (and App refuses to close it)
+        for (Page page : this.pages.values()) {
+            if (page instanceof DataOperations ops) {
+                ops.setOnDataReplaced(this::reloadCurrent);
+                ops.setOnDataBusy(this::setDataBusy);
+            }
+        }
     }
 
-    private static Map<String, Page> defaultPages(DailyTrackingUseCase daily, UiPreferences prefs) {
+    private static Map<String, Page> defaultPages(DailyTrackingUseCase daily, UiPreferences prefs,
+                                                  DataProtection data) {
         Map<String, Page> p = new LinkedHashMap<>();
         p.put("Dashboard",                 new DashboardPage(daily));
         p.put("Cadastrar Investimento",    new InvestmentTypesPage(daily, prefs));
@@ -92,7 +108,7 @@ public final class AppShell {
         p.put("Ranking",                   new RankingPage(daily));
         p.put("Simulação",                 new SimulationPage());
         p.put("Extrato de Investimentos",  new ReportsPage(daily));
-        p.put("Configurações",             new ConfiguracoesPage(prefs));
+        p.put("Configurações",             new ConfiguracoesPage(prefs, data));
         return p;
     }
 
@@ -351,5 +367,20 @@ public final class AppShell {
         if (!samePage) Motion.swap(content, view, direction);
         if (p instanceof ResponsivePage rp && breakpoint != null) rp.onBreakpoint(breakpoint);
         p.onShow();
+    }
+
+    /** After a restore: the visible page reloads now; the others reload on their next show. */
+    private void reloadCurrent() {
+        if (currentKey != null) go(currentKey);
+    }
+
+    /** True while a restore replaces the data: the window must not close. */
+    public boolean isDataBusy() {
+        return dataBusy;
+    }
+
+    private void setDataBusy(boolean busy) {
+        dataBusy = busy;
+        frame.setDisable(busy); // no navigation or other action on data that are being replaced
     }
 }

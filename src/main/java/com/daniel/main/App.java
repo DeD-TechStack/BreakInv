@@ -44,7 +44,7 @@ public class App extends Application {
         DialogChrome.ownerSupplier(() -> stage);
 
         DailyTrackingUseCase dailyTrackingUseCase = appConfig.getDailyTrackingUseCase();
-        AppShell shell = new AppShell(dailyTrackingUseCase, uiPrefs);
+        AppShell shell = new AppShell(dailyTrackingUseCase, uiPrefs, appConfig.getDataProtection());
         shell.setPageChangeListener(key -> stage.setTitle("BreakInv — " + key));
 
         stage.initStyle(StageStyle.DECORATED);
@@ -60,16 +60,27 @@ public class App extends Application {
         } catch (Exception ignored) {}
 
         WindowChrome.install(stage, uiPrefs.windowNode());
+        // BRK-30: closing in the middle of a restore would stop it half-way
+        stage.addEventFilter(javafx.stage.WindowEvent.WINDOW_CLOSE_REQUEST, e -> {
+            if (shell.isDataBusy()) {
+                e.consume();
+                com.daniel.presentation.view.components.ToastHost.showWarn(
+                        "Aguarde o fim da restauração para fechar o BreakInv.");
+            }
+        });
         stage.show();
 
         UiExecutor.get().execute(
                 () -> dailyTrackingUseCase.takeSnapshotIfNeeded(java.time.LocalDate.now()));
+        // BRK-30: one verified copy at the first opening of the day, after the day's snapshot
+        UiExecutor.get().execute(appConfig::runDailyBackup);
     }
 
     @Override
     public void stop() {
         UiExecutor.shutdown();
         try { if (conn != null) conn.close(); } catch (Exception ignored) {}
+        if (appConfig != null) appConfig.close();
     }
 
     public static void main(String[] args) {

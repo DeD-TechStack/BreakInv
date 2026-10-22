@@ -38,8 +38,8 @@ class WelcomeOverlayTest {
 
     @Test
     void animateIn_withReduceMotion_isImmediate_andEscapeRemovesTheOverlayAtOnce() {
-        prefs.setReduceMotion(true);
         FxTestSupport.runAndWait(() -> {
+            prefs.setReduceMotion(true); // on the FX thread: settling running animations must not race it
             AtomicInteger create = new AtomicInteger();
             WelcomeOverlay w = new WelcomeOverlay(create::incrementAndGet, () -> {});
             StackPane host = new StackPane(new StackPane(), w.getNode());

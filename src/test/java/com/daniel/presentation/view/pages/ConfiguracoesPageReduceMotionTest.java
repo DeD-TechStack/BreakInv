@@ -68,8 +68,10 @@ class ConfiguracoesPageReduceMotionTest {
                 assertFalse(Motion.reduced());
             });
         } finally {
-            appPrefs.setReduceMotion(original);
+            // detach Motion first: restoring "true" here (JUnit thread) would settle the toast still
+            // fading on the FX thread
             Motion.configure(null);
+            appPrefs.setReduceMotion(original);
         }
     }
 }

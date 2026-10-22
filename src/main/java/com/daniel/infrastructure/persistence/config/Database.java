@@ -3,9 +3,11 @@ package com.daniel.infrastructure.persistence.config;
 import org.sqlite.SQLiteConfig;
 
 import java.io.File;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
@@ -40,6 +42,7 @@ public final class Database {
     private static String jdbcUrl = DEFAULT_URL;
     private static String migratedUrl = null;
     private static Connection connection = null;
+    private static PreMigrationHook preMigrationHook = null;
 
     private static String buildDefaultUrl() {
         String dir = System.getProperty("user.home") + File.separator + "BreakInv";
@@ -55,6 +58,76 @@ public final class Database {
     @FunctionalInterface
     public interface TransactionBody<T> {
         T run(Connection conn) throws Exception;
+    }
+
+    /**
+     * Called once, before a migration changes an EXISTING database file (one with tables whose
+     * recorded version is below {@link Schema#CURRENT_VERSION}). Throwing aborts the migration and
+     * the open, leaving the file untouched. {@code candidate} is in auto-commit mode and must not be
+     * closed by the hook.
+     */
+    @FunctionalInterface
+    public interface PreMigrationHook {
+        void beforeMigration(Connection candidate, Path databaseFile) throws Exception;
+    }
+
+    /** What {@link #runExclusive(ExclusiveBody)} offers while every other caller waits. */
+    public interface ExclusiveAccess {
+        /** Configured connection on the current URL, WITHOUT running migrations. Caller closes it. */
+        Connection newConnection() throws SQLException;
+
+        /** Re-creates the shared connection, migrating the current content if needed. */
+        Connection reopenShared();
+    }
+
+    @FunctionalInterface
+    public interface ExclusiveBody<T> {
+        T run(ExclusiveAccess access) throws Exception;
+    }
+
+    /** Installs (or clears, with null) the hook run before migrating an existing database. */
+    public static synchronized void setPreMigrationHook(PreMigrationHook hook) {
+        preMigrationHook = hook;
+    }
+
+    /** Database file behind the configured URL; empty for in-memory databases. */
+    public static synchronized Optional<Path> currentFile() {
+        return fileOf(jdbcUrl);
+    }
+
+    static Optional<Path> fileOf(String url) {
+        if (url == null || !url.startsWith("jdbc:sqlite:")) return Optional.empty();
+        String rest = url.substring("jdbc:sqlite:".length());
+        if (rest.isEmpty() || rest.contains(":memory:") || rest.contains("mode=memory")) return Optional.empty();
+        int query = rest.indexOf('?');
+        if (query >= 0) rest = rest.substring(0, query);
+        if (rest.startsWith("file:")) rest = rest.substring("file:".length());
+        if (rest.isEmpty()) return Optional.empty();
+        return Optional.of(Path.of(rest).toAbsolutePath().normalize());
+    }
+
+    /**
+     * Runs {@code body} with the shared connection closed and every other {@link #open()},
+     * {@link #newConnection()} and {@link #inTransaction} caller waiting. Used to replace the
+     * database content (restore). After the body, the next {@link #open()} migrates whatever content
+     * is there; the body may call {@link ExclusiveAccess#reopenShared()} itself to see a migration
+     * failure while it can still undo its change. In-memory databases are refused.
+     */
+    public static synchronized <T> T runExclusive(ExclusiveBody<T> body) throws Exception {
+        if (fileOf(jdbcUrl).isEmpty()) throw new IllegalStateException("exclusive access needs a database file");
+        close();
+        migratedUrl = null;
+        return body.run(new ExclusiveAccess() {
+            @Override
+            public Connection newConnection() throws SQLException {
+                return createConfiguredConnection();
+            }
+
+            @Override
+            public Connection reopenShared() {
+                return open();
+            }
+        });
     }
 
     /**
@@ -160,6 +233,16 @@ public final class Database {
 
     private static void migrateIfNeeded(Connection conn) {
         if (migratedUrl != null && migratedUrl.equals(jdbcUrl)) return;
+        Optional<Path> file = fileOf(jdbcUrl);
+        if (preMigrationHook != null && file.isPresent() && SchemaMigrator.wouldChangeExisting(conn)) {
+            try {
+                preMigrationHook.beforeMigration(conn, file.get());
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalStateException(e.getMessage(), e);
+            }
+        }
         SchemaMigrator.migrate(conn);
         migratedUrl = jdbcUrl;
     }

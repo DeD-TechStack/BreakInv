@@ -37,7 +37,52 @@ Cada conexão criada por `Database` habilita FK e timeout de bloqueio. Operaçõ
 
 Uma falha na versão atual reverte essa versão. Versões anteriores já concluídas podem continuar registradas: o conjunto inteiro não é prometido como uma única transação. Órfãos provocam interrupção com diagnóstico, sem apagamento automático. Não desligue FK nem altere `schema_migrations` para contornar um erro. Uma base de versão futura é recusada; restaurar requer também um executável compatível.
 
-Não existe backup automático antes da migração. Abrir o aplicativo pode migrar a base; por isso, faça o procedimento abaixo antes de uma atualização. Não se recomenda abrir o banco migrado com uma versão antiga do aplicativo.
+Antes de uma migração que altere uma base existente com dados, o aplicativo cria e confere uma cópia de segurança do tipo `pre-migracao` (veja a seção seguinte). Se a cópia falhar, a migração não roda e a base fica como estava. Base nova ou vazia não gera cópia. Não se recomenda abrir o banco migrado com uma versão antiga do aplicativo.
+
+## Cópias de segurança no aplicativo
+
+Em Configurações → Dados e sobre o aplicativo → Cópias de segurança:
+
+- "Criar cópia de segurança" grava a cópia por `VACUUM INTO` num arquivo temporário (`.partial`). Antes de publicá-la com um nome novo, o aplicativo confere, numa conexão nova e somente leitura:
+  - integridade (`integrity_check`);
+  - versão dos dados;
+  - mesmo conteúdo da origem: impressão digital de todas as linhas e do esquema.
+
+  Chaves estrangeiras e reprodução do livro também são conferidas; uma falha nelas aparece como aviso. Se outra conexão gravar durante a cópia, ela é recusada. Sem mudança desde a última cópia, nenhuma cópia nova é feita.
+- Cópias automáticas:
+  - uma na primeira abertura do dia, se os dados mudaram;
+  - antes de uma migração;
+  - antes de restaurar.
+- A pasta gerenciada é `${user.home}/BreakInv/backups`, no mesmo disco dos dados: ela não protege contra falha do disco. "Salvar cópia em outro local…" grava uma cópia conferida numa pasta escolhida, que o aplicativo nunca apaga.
+- O registro `breakinv-copias.json` lista as cópias da pasta gerenciada, sem token e sem valores. A retenção só apaga cópias automáticas listadas nele, com o nome no padrão do recurso. Por padrão, mantém as 10 automáticas mais recentes, num limite de 1 GB.
+- A retenção nunca apaga:
+  - a cópia válida mais recente;
+  - a mais recente sem avisos, porque a restauração recusa cópias com avisos;
+  - a pré-migração mais recente;
+  - a pré-restauração mais recente, que é o caminho de volta da última restauração;
+  - as cópias manuais;
+  - nenhum arquivo que não esteja no registro.
+
+  Acima do limite, as automáticas mais antigas saem primeiro, e o resultado diz quantas foram apagadas. Se só as protegidas já passam do limite, nenhuma cópia é apagada para caber, e a tela mostra o conflito.
+
+  Uma cópia que não pode ser apagada (somente leitura ou aberta em outro programa) gera um aviso e continua no registro; a cópia nova vale do mesmo jeito. As cópias feitas durante uma restauração não rodam a retenção: ela fica para a próxima cópia.
+
+  Um registro ilegível é guardado com outro nome e nada antigo é apagado. O aviso continua na tela enquanto o aplicativo estiver aberto. A limpeza de temporários interrompidos só roda quando nenhuma outra janela do BreakInv está aberta.
+- "Restaurar…":
+  1. copia o arquivo escolhido para um temporário, sem alterá-lo, e o confere;
+  2. recusa arquivo que não seja do BreakInv, versão mais nova, dano, referências inconsistentes, livro que não se reproduz e arquivo com `-journal` ou `-wal` ao lado;
+  3. mostra uma prévia e pede confirmação; numa cópia anterior ao livro de movimentações, a prévia conta as tabelas do formato anterior;
+  4. só continua se nenhuma outra janela do BreakInv estiver aberta (`breakinv-instancia.lock`, ao lado do banco). Uma janela aberta nesse intervalo espera o fim da restauração para abrir;
+  5. guarda uma cópia conferida dos dados atuais;
+  6. confirma que os dados não estão em uso e que nada foi gravado depois dessa cópia. Se algo foi gravado, recusa e pede para tentar de novo;
+  7. faz a troca e confere o banco contra a impressão digital do arquivo escolhido;
+  8. se algo falhar, volta para a cópia dos dados atuais.
+
+  Uma cópia de versão anterior é migrada normalmente. Enquanto a troca acontece, o resto da janela fica bloqueado e o BreakInv não fecha.
+- Dados atuais danificados: se a cópia conferida dos dados atuais falhar porque eles estão danificados (`integrity_check`, que também acha entradas de índice que não batem com as linhas), o aplicativo pergunta de novo. Com a confirmação, o arquivo atual é guardado como está, byte a byte, como `breakinv-danificado-<data>-<sufixo>.db` na pasta das cópias. Esse arquivo não entra no registro nem na retenção, e o aplicativo nunca o apaga. Só então a cópia escolhida substitui os dados. Se a troca falhar, as páginas danificadas voltam e são comparadas com o arquivo guardado. Dados sem dano nunca seguem por esse caminho. Se o arquivo atual nem abre para a troca (cabeçalho danificado, por exemplo), a restauração dentro do aplicativo não é possível: a mensagem diz o motivo, nada é alterado e o caminho é a restauração deliberada abaixo, com o aplicativo fechado, levando junto o `-journal`, o `-wal` e o `-shm` que estiverem ao lado do arquivo. "Em uso" só aparece quando outro acesso segura o arquivo naquele momento.
+- As cópias contêm todos os dados, inclusive o token BRAPI, sem criptografia. Elas não incluem as preferências de Java Preferences.
+
+O procedimento manual abaixo continua válido como alternativa, com o aplicativo fechado.
 
 ## Backup antes de uma atualização
 
@@ -64,6 +109,8 @@ Copy-Item -LiteralPath $source -Destination $backup -Recurse -ErrorAction Stop
 Os dois hashes do exemplo devem coincidir, mas também confira todos os demais arquivos da pasta, se houver. Não abra a aplicação durante a comparação.
 
 ## Restauração deliberada
+
+Para uma cópia feita pelo aplicativo (um arquivo `breakinv-<tipo>-<data>-<sufixo>.db` na pasta das cópias), o caminho manual é mais curto: com o BreakInv fechado, mova o `breakinv.db` atual, e os `breakinv.db-journal`, `breakinv.db-wal` e `breakinv.db-shm` que houver ao lado dele, para outra pasta; depois copie o arquivo da cópia para o lugar dele, com o nome `breakinv.db`. Os arquivos `breakinv-danificado-*` guardam dados danificados e não servem para restaurar. A mensagem do aplicativo mostra os dois caminhos completos. Os passos abaixo valem para o backup manual de pasta inteira.
 
 1. Feche o BreakInv. Escolha um backup previamente validado e a versão compatível do executável.
 2. Mova a pasta atual para outra pasta de quarentena, com nome novo, em vez de sobrescrever ou apagar. Preserve os arquivos auxiliares junto do banco correspondente; não misture WAL de uma versão com DB de outra.

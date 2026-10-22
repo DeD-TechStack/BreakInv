@@ -118,8 +118,8 @@ class DialogChromeMotionTest {
 
     @Test
     void withReduceMotion_theDialogAppearsAtOnce() {
-        prefs.setReduceMotion(true);
         FxTestSupport.runAndWait(() -> {
+            prefs.setReduceMotion(true); // on the FX thread: settling running animations must not race it
             Dialog<ButtonType> d = Dialogs.buildConfirm("Excluir", "Excluir?", "Nada é alterado.", "Excluir");
             DialogPane pane = d.getDialogPane();
             Event.fireEvent(d, new DialogEvent(d, DialogEvent.DIALOG_SHOWN));

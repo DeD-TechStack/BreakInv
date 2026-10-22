@@ -241,8 +241,8 @@ class AppShellTest {
 
     @Test
     void userToggle_withReduceMotion_jumpsToTheTargetWithoutAnimation() {
-        prefs.setReduceMotion(true);
         FxTestSupport.runAndWait(() -> {
+            prefs.setReduceMotion(true); // on the FX thread: settling running animations must not race it
             toggle().fire();
             root.layout();
             assertFalse(Motion.isAnimating(sidebar()));

@@ -40,8 +40,8 @@ class ToastHostMotionTest {
 
     @Test
     void reducedMotion_dimAndToastAppearAndLeaveAtOnce() {
-        prefs.setReduceMotion(true);
         FxTestSupport.runAndWait(() -> {
+            prefs.setReduceMotion(true); // on the FX thread: settling running animations must not race it
             ToastHost.showDim();
             Node dim = root.lookup(".overlay-dim");
             assertNotNull(dim, "the dim is there");
