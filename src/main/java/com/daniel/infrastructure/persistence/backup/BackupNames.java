@@ -22,6 +22,7 @@ final class BackupNames {
             "breakinv-(manual|diaria|pre-migracao|pre-restauracao|pre-manutencao)-\\d{8}-\\d{6}-[0-9a-f]{6}\\.db");
     private static final Pattern TEMP = Pattern.compile(
             "breakinv-(copia|restauracao)-\\d{8}-\\d{6}-[0-9a-f]{6}\\.db\\.partial");
+    private static final Pattern DAMAGED = Pattern.compile("breakinv-danificado-\\d{8}-\\d{6}-[0-9a-f]{6}\\.db");
     private static final Pattern SUFFIX = Pattern.compile("[0-9a-f]{6}");
 
     private BackupNames() {
@@ -52,6 +53,11 @@ final class BackupNames {
 
     static boolean isTemp(String fileName) {
         return fileName != null && TEMP.matcher(fileName).matches();
+    }
+
+    /** A name {@link #damagedName} produces: inventoried and counted, never deleted by the application. */
+    static boolean isDamaged(String fileName) {
+        return fileName != null && DAMAGED.matcher(fileName).matches();
     }
 
     private static String requireSuffix(String suffix) {
