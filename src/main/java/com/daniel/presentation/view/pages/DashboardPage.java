@@ -427,12 +427,14 @@ public final class DashboardPage implements ResponsivePage {
         final long epoch = refreshEpoch.incrementAndGet();
 
         CompletableFuture.supplyAsync(() -> {
-            List<InvestmentType> investments = daily.listTypes();
+            // BRK-36: one consistent read and at most one ledger replay for the whole refresh; it stays in this task
+            DailyTrackingUseCase.PortfolioRead r = daily.read();
+            List<InvestmentType> investments = r.listTypes();
 
             if (investments.isEmpty()) {
-                long cashPatrimony = daily.getTotalPatrimony(today);
-                List<StatementEntry> txs = daily.hasLedger() ? daily.statement(YearMonth.now()) : legacyRows(YearMonth.now());
-                return new DashData(investments, null, cashPatrimony, 0, 0, null, null, null, txs, safeMetrics(today), safeCash());
+                long cashPatrimony = r.getTotalPatrimony(today);
+                List<StatementEntry> txs = daily.hasLedger() ? r.statement(YearMonth.now()) : legacyRows(YearMonth.now());
+                return new DashData(investments, null, cashPatrimony, 0, 0, null, null, null, txs, safeMetrics(r, today), safeCash(r));
             }
 
             LocalDate dataFim = today;
@@ -450,16 +452,16 @@ public final class DashboardPage implements ResponsivePage {
                 if (maisAntiga.isAfter(dataInicio)) dataInicio = maisAntiga;
             }
 
-            Map<Long, Long> currentValues = daily.getAllCurrentValues(today);
-            long totalPatrimony = daily.getTotalPatrimony(today);
-            long totalProfit = daily.getTotalProfit(today);
-            long totalInvestmentValue = daily.getTotalInvestmentValue(today);
+            Map<Long, Long> currentValues = r.getAllCurrentValues(today);
+            long totalPatrimony = r.getTotalPatrimony(today);
+            long totalProfit = r.getTotalProfit(today);
+            long totalInvestmentValue = r.getTotalInvestmentValue(today);
             java.util.TreeMap<LocalDate, Long> snaps =
                     daily.getInvestmentSnapshotSeries(dataInicio, dataFim);
-            List<StatementEntry> txs = daily.hasLedger() ? daily.statement(YearMonth.now()) : legacyRows(YearMonth.now());
+            List<StatementEntry> txs = daily.hasLedger() ? r.statement(YearMonth.now()) : legacyRows(YearMonth.now());
 
             return new DashData(investments, currentValues, totalPatrimony, totalProfit,
-                    totalInvestmentValue, snaps, dataInicio, dataFim, txs, safeMetrics(today), safeCash());
+                    totalInvestmentValue, snaps, dataInicio, dataFim, txs, safeMetrics(r, today), safeCash(r));
         }, UiExecutor.get()).thenAcceptAsync(data -> {
             if (refreshEpoch.get() != epoch) return;
             Platform.runLater(() -> {
@@ -476,20 +478,20 @@ public final class DashboardPage implements ResponsivePage {
     }
 
     /** Ledger metrics for the stat strip; null without the ledger or when it cannot be read. */
-    private PortfolioMetrics safeMetrics(LocalDate today) {
+    private PortfolioMetrics safeMetrics(DailyTrackingUseCase.PortfolioRead r, LocalDate today) {
         if (!daily.hasLedger()) return null;
         try {
-            return daily.metrics(today);
+            return r.metrics(today);
         } catch (RuntimeException e) {
             return null;
         }
     }
 
     /** Cash state for the strip qualifier (same source Carteira uses); null without the ledger or on failure. */
-    private DailyTrackingUseCase.CashStatus safeCash() {
+    private DailyTrackingUseCase.CashStatus safeCash(DailyTrackingUseCase.PortfolioRead r) {
         if (!daily.hasLedger()) return null;
         try {
-            return daily.cashStatus();
+            return r.cashStatus();
         } catch (RuntimeException e) {
             return null;
         }

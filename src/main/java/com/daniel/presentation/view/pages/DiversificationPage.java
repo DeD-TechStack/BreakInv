@@ -878,12 +878,14 @@ public final class DiversificationPage implements ResponsivePage {
         final long epoch = refreshEpoch.incrementAndGet();
 
         CompletableFuture.supplyAsync(() -> {
-            List<InvestmentType> investments = daily.listTypes();
+            // BRK-36: one consistent read and at most one ledger replay for the whole refresh; it stays in this task
+            DailyTrackingUseCase.PortfolioRead r = daily.read();
+            List<InvestmentType> investments = r.listTypes();
             if (investments.isEmpty()) {
                 return new DivData(investments, Map.of(), 0);
             }
-            Map<Long, Long> currentValues = daily.getAllCurrentValues(today);
-            long totalPatrimony = daily.getTotalPatrimony(today);
+            Map<Long, Long> currentValues = r.getAllCurrentValues(today);
+            long totalPatrimony = r.getTotalPatrimony(today);
             return new DivData(investments, currentValues, totalPatrimony);
         }, worker).whenComplete((data, err) -> {
             if (refreshEpoch.get() != epoch) return;

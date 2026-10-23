@@ -1092,18 +1092,20 @@ public final class InvestmentTypesPage implements ResponsivePage {
         final long epoch = refreshEpoch.incrementAndGet();
         final boolean includeArchived = showArchived.isSelected();
         CompletableFuture.supplyAsync(() -> {
-            List<InvestmentType> items = daily.listTypes(includeArchived);
+            // BRK-36: one consistent read and at most one ledger replay for the whole refresh; it stays in this task
+            DailyTrackingUseCase.PortfolioRead r = daily.read();
+            List<InvestmentType> items = r.listTypes(includeArchived);
             Map<Long, InvestmentStatus> statuses = new HashMap<>();
             CashStatus cash = null;
             int pending = 0, legacy = 0;
             if (daily.hasLedger()) {
                 for (InvestmentType t : items) {
-                    InvestmentStatus st = daily.investmentStatus(t.id());
+                    InvestmentStatus st = r.investmentStatus(t.id());
                     statuses.put((long) t.id(), st);
                     if (!st.archived() && st.reconciliationPending()) pending++;
                     if (!st.archived() && !st.opened() && st.hasLegacyData()) legacy++;
                 }
-                cash = daily.cashStatus();
+                cash = r.cashStatus();
             }
             long total = 0;
             for (InvestmentType inv : items) {

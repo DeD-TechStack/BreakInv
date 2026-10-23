@@ -468,16 +468,18 @@ public final class ReportsPage implements ResponsivePage {
         final long epoch = reloadEpoch.incrementAndGet();
 
         CompletableFuture.supplyAsync(() -> {
-            List<StatementEntry> entries = daily.hasLedger() ? daily.statement(month) : legacyOnly(month);
+            // BRK-36: one consistent read for the month; a month still to come needs no replay
+            DailyTrackingUseCase.PortfolioRead r = daily.read();
+            List<StatementEntry> entries = daily.hasLedger() ? r.statement(month) : legacyOnly(month);
             long lucroTotal = 0;
             Long patrimony = null;
             // R2-18: gain and wealth are values AT a date, not sums of the month's movements — a month
             // without movements has them too (it said "— / sem lançamentos no mês" beside a known
             // wealth). Only a month still to come has neither (showEntries says so).
             if (!month.isAfter(YearMonth.now())) {
-                lucroTotal = daily.getTotalProfit(refDate);
+                lucroTotal = r.getTotalProfit(refDate);
                 if (isCurrentMonth) {
-                    patrimony = daily.getTotalPatrimony(LocalDate.now());
+                    patrimony = r.getTotalPatrimony(LocalDate.now());
                 } else {
                     TreeMap<LocalDate, Long> snaps = daily.getPortfolioSnapshotSeries(month.atDay(1), month.atEndOfMonth());
                     patrimony = snaps.isEmpty() ? null : snaps.lastEntry().getValue(); // no record → unknown, not zero
