@@ -121,10 +121,11 @@ class DatabaseLedgerAccessReadTest {
             w.setAutoCommit(false);
             insertRegistration(w, "PENDENTE");
             long t0 = System.nanoTime();
-            int seen = access.read((repo, regs) -> {
+            // a read that asked for the write lock would wait the 5 s busy timeout and fail with SQLITE_BUSY
+            int seen = assertDoesNotThrow(() -> access.read((repo, regs) -> {
                 repo.listAll();
                 return regs.listAll().size();
-            });
+            }), "a read must neither take nor wait for the write lock");
             long elapsed = System.nanoTime() - t0;
             assertEquals(before, seen, "uncommitted rows are not visible");
             assertTrue(elapsed < 2_000_000_000L, "the read did not wait for the writer (" + elapsed / 1_000_000 + " ms)");

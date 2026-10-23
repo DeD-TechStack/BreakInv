@@ -8,6 +8,7 @@ import com.daniel.core.domain.ledger.AdjustmentClassification;
 import com.daniel.core.domain.ledger.LedgerException;
 import com.daniel.core.domain.ledger.Movement;
 import com.daniel.core.domain.ledger.MovementRequest;
+import com.daniel.core.domain.ledger.OpeningRequest;
 import com.daniel.core.domain.ledger.PortfolioMetrics;
 import com.daniel.core.domain.ledger.PositionMode;
 import com.daniel.core.domain.ledger.ReconciliationRequest;
@@ -140,11 +141,15 @@ class ScreenQueriesCharacterizationTest {
     }
 
     DailyTrackingUseCase open(String name) {
+        return open(name, PRICES);
+    }
+
+    DailyTrackingUseCase open(String name, IStockPriceProvider prices) {
         Database.configure("jdbc:sqlite:" + tempDir.resolve(name).toString().replace("\\", "/"));
         Database.open();
         snapshots = new SnapshotRepository();
         uc = new DailyTrackingUseCase(new FlowRepository(), new InvestmentTypeRepository(), snapshots,
-                new TransactionRepository(), PRICES, new DatabaseLedgerAccess());
+                new TransactionRepository(), prices, new DatabaseLedgerAccess());
         return uc;
     }
 
@@ -480,6 +485,98 @@ class ScreenQueriesCharacterizationTest {
         assertThrows(LedgerException.class, read::cashStatus);
         assertEquals(3, read.statement(OCT).size());
         assertCanonical("LIVRO-INVALIDO-leitura", INVALID_LEDGER_TEXT, render(viaRead(read), List.of(x), uc));
+    }
+
+    // =====================================================================
+    // Price calls and failure paths (independent review, finding BRK36-R1-02)
+    // =====================================================================
+
+    /**
+     * The provider is asked for the same tickers, in the same order, by the old signatures and by one read. The
+     * expected lists for K4 at D come from the valuation code at d8702a3, unchanged by BRK-36:
+     * <ul>
+     *   <li>getAllCurrentValues walks the active list by name: AAA1 (A, 13 units); B is closed (quantity 0, no
+     *       call); the CDB is valued by its rate; LEG1 (L1 recognised); ERRO4 and SEMQ3 (legacy estimates); C has
+     *       no ticker; the pension fund has no rate;</li>
+     *   <li>metrics walks the replayed positions in opening order: LEG1 (opened in K2) then AAA1;</li>
+     *   <li>investment value, wealth and profit add the unrecognised legacy registrations by name: ERRO4, SEMQ3
+     *       (L2 has no ticker; the archived L5 is out);</li>
+     *   <li>lists, statuses, cash and statement ask for no quote.</li>
+     * </ul>
+     */
+    @Test
+    void priceCalls_sameTickersInTheSameOrder_bothApis() throws Exception {
+        List<String> calls = new ArrayList<>();
+        open("cotacoes.db", ticker -> {
+            calls.add(ticker);
+            return PRICES.fetchPrice(ticker);
+        });
+        buildK1();
+        buildK2();
+        buildK3();
+        buildK4();
+        Map<String, List<String>> expected = new java.util.LinkedHashMap<>();
+        expected.put("listTypes", List.of());
+        expected.put("investmentStatus", List.of());
+        expected.put("cashStatus", List.of());
+        expected.put("getAllCurrentValues", List.of("AAA1", "LEG1", "ERRO4", "SEMQ3"));
+        expected.put("getTotalInvestmentValue", List.of("LEG1", "AAA1", "ERRO4", "SEMQ3"));
+        expected.put("getTotalPatrimony", List.of("LEG1", "AAA1", "ERRO4", "SEMQ3"));
+        expected.put("getTotalProfit", List.of("LEG1", "AAA1", "ERRO4", "SEMQ3"));
+        expected.put("metrics", List.of("LEG1", "AAA1"));
+        expected.put("statement", List.of());
+        for (Queries q : List.of(api(uc), viaRead(uc.read()))) {
+            Map<String, List<String>> got = new java.util.LinkedHashMap<>();
+            got.put("listTypes", recorded(calls, () -> q.listTypes(true)));
+            got.put("investmentStatus", recorded(calls, () -> List.of(q.investmentStatus(a), q.investmentStatus(l1))));
+            got.put("cashStatus", recorded(calls, q::cashStatus));
+            got.put("getAllCurrentValues", recorded(calls, () -> q.getAllCurrentValues(D)));
+            got.put("getTotalInvestmentValue", recorded(calls, () -> q.getTotalInvestmentValue(D)));
+            got.put("getTotalPatrimony", recorded(calls, () -> q.getTotalPatrimony(D)));
+            got.put("getTotalProfit", recorded(calls, () -> q.getTotalProfit(D)));
+            got.put("metrics", recorded(calls, () -> q.metrics(D)));
+            got.put("statement", recorded(calls, () -> q.statement(OCT)));
+            assertEquals(expected, got);
+        }
+    }
+
+    static List<String> recorded(List<String> calls, Callable<?> query) throws Exception {
+        calls.clear();
+        query.call();
+        return List.copyOf(calls);
+    }
+
+    /**
+     * An unknown id and a valuation overflow fail with the same field and message through both APIs (the messages
+     * are the literals of the code at d8702a3). The overflow follows PortfolioBoundaryTest through the use case:
+     * opening capital at the long limit and a position quoted above its cost, so wealth no longer fits in a long.
+     * At d8702a3 getTotalPatrimony reaches it through ledgerMetrics (getTotalInvestmentValue).
+     */
+    @Test
+    void failurePaths_sameFieldAndMessage_bothApis() throws Exception {
+        open("falhas.db");
+        buildK1();
+        List<Callable<?>> unknown = List.of(() -> uc.investmentStatus(999L), () -> uc.read().investmentStatus(999L));
+        for (Callable<?> call : unknown) {
+            LedgerException e = assertThrows(LedgerException.class, call::call);
+            assertEquals("investmentTypeId", e.field());
+            assertEquals("investimento inexistente: 999", e.getMessage());
+        }
+        Database.close();
+
+        open("limite.db");
+        // opening cash + imported cost = Long.MAX_VALUE exactly (accepted); the quote (25.00 per unit) is above the
+        // cost, so wealth = MAX - 100 + 2500 no longer fits in a long
+        uc.registerOpening(OpeningRequest.cash("caixa-max", day(9, 1), Long.MAX_VALUE - 100, false, "teste de limite"));
+        uc.createInvestment(stock("ACAO LIMITE", "AAA1"), DailyTrackingUseCase.OpeningSpec.imported(
+                "acao-limite", day(9, 1), PositionMode.QUANTITY, 1L, 100L, null));
+        List<Callable<?>> overflow = List.of(() -> uc.metrics(D), () -> uc.read().metrics(D),
+                () -> uc.getTotalPatrimony(D), () -> uc.read().getTotalPatrimony(D));
+        for (Callable<?> call : overflow) {
+            LedgerException e = assertThrows(LedgerException.class, call::call);
+            assertEquals("value", e.field());
+            assertEquals("valor agregado excede o limite suportado", e.getMessage());
+        }
     }
 
     // =====================================================================
