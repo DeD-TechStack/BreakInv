@@ -111,7 +111,13 @@ public final class BackupService {
         /** Another data operation is running. */
         BUSY,
         /** Nothing was published; {@link Result#message()} says why. */
-        FAILED
+        FAILED,
+        /** BRK-31: the measured free space is below the estimate of the copy; nothing was copied. */
+        NO_SPACE,
+        /** BRK-31: the free space could not be measured; a manual copy needs an explicit confirmation. */
+        UNMEASURED,
+        /** BRK-31: automatic copy postponed (not enough measured space, or no measure). */
+        POSTPONED
     }
 
     /**
@@ -158,6 +164,7 @@ public final class BackupService {
     private final Supplier<String> suffixes;
     private final ReentrantLock busy = new ReentrantLock();
     private volatile Hooks hooks = new Hooks() { };
+    private volatile SpaceCheck spaceCheck = (estimate, places) -> new StorageGuard.Allowed(-1);
     private volatile Result lastAutomatic;
     /** Link folder or budget conflict, from the last rotation (shown on the screen). */
     private volatile String rotationNotice;
@@ -205,13 +212,33 @@ public final class BackupService {
         return busy;
     }
 
+    /** BRK-31: whether an operation fits the measured free space; installed by AppConfig (StorageGuard). */
+    @FunctionalInterface
+    public interface SpaceCheck {
+        StorageGuard.Decision check(SpaceEstimate.Estimate estimate, Map<SpaceEstimate.Place, Path> places);
+    }
+
+    /** Without one, every operation is allowed (the copy itself still fails cleanly on a full disk). */
+    public void spaceCheck(SpaceCheck check) {
+        this.spaceCheck = check;
+    }
+
+    StorageGuard.Decision checkSpace(SpaceEstimate.Estimate estimate, Map<SpaceEstimate.Place, Path> places) {
+        return spaceCheck.check(estimate, places);
+    }
+
     // ------------------------------------------------------------------
     // Entry points
     // ------------------------------------------------------------------
 
     /** "Criar cópia de segurança": skipped when empty or unchanged since the last valid copy. */
     public Result createManual() {
-        return create(BackupKind.MANUAL, source);
+        return create(BackupKind.MANUAL, source, false);
+    }
+
+    /** The same, after the user confirmed copying without a measure of the free space (§5.3). */
+    public Result createManual(boolean confirmedWithoutMeasure) {
+        return create(BackupKind.MANUAL, source, confirmedWithoutMeasure);
     }
 
     /** First opening of the day: one daily copy, only when the database changed and has data. */
@@ -240,6 +267,10 @@ public final class BackupService {
     public void beforeMigration(Connection candidate) {
         Result r = create(BackupKind.PRE_MIGRATION, SourceAccess.borrowed(candidate));
         lastAutomatic = r;
+        if (r.outcome() == Outcome.NO_SPACE) {
+            throw new IllegalStateException("A atualização dos dados foi bloqueada antes de começar: " + r.message()
+                    + " Os dados não foram alterados; tente de novo depois de liberar espaço.");
+        }
         if (r.outcome() == Outcome.FAILED || r.outcome() == Outcome.BUSY) {
             throw new IllegalStateException("A cópia de segurança antes de atualizar os dados falhou ("
                     + r.message() + "); os dados não foram alterados.");
@@ -248,14 +279,21 @@ public final class BackupService {
 
     /** "Salvar cópia em outro local": verified manual copy in a folder of the user's choice, unmanaged. */
     public Result createIn(Path destination) {
+        return createIn(destination, false);
+    }
+
+    /** The same, after the user confirmed copying without a measure of the free space (§5.3). */
+    public Result createIn(Path destination, boolean confirmedWithoutMeasure) {
         if (!busy.tryLock()) return simple(Outcome.BUSY, BackupKind.MANUAL, "outra operação com os dados está em andamento");
         try {
             Path dest = destination.toAbsolutePath().normalize();
             if (!Files.isDirectory(dest)) return simple(Outcome.FAILED, BackupKind.MANUAL, "a pasta escolhida não existe");
-            if (dest.equals(folder)) return createLocked(BackupKind.MANUAL, source);
+            if (dest.equals(folder)) return createLocked(BackupKind.MANUAL, source, confirmedWithoutMeasure);
             if (!source.use(c -> DatabaseFingerprint.userRows(DatabaseFingerprint.countRows(c)) > 0)) {
                 return simple(Outcome.EMPTY, BackupKind.MANUAL, "ainda não há dados para copiar");
             }
+            Result noRoom = spaceRefusal(BackupKind.MANUAL, dest, SpaceEstimate.Place.DESTINATION, confirmedWithoutMeasure);
+            if (noRoom != null) return noRoom;
             return copy(BackupKind.MANUAL, source, dest, null);
         } catch (Exception e) {
             return failure(BackupKind.MANUAL, e, destination);
@@ -430,9 +468,13 @@ public final class BackupService {
     // ------------------------------------------------------------------
 
     Result create(BackupKind kind, SourceAccess via) {
+        return create(kind, via, false);
+    }
+
+    private Result create(BackupKind kind, SourceAccess via, boolean confirmedWithoutMeasure) {
         if (!busy.tryLock()) return simple(Outcome.BUSY, kind, "outra operação com os dados está em andamento");
         try {
-            return createLocked(kind, via);
+            return createLocked(kind, via, confirmedWithoutMeasure);
         } catch (Exception e) {
             return failure(kind, e, folder);
         } finally {
@@ -440,7 +482,7 @@ public final class BackupService {
         }
     }
 
-    private Result createLocked(BackupKind kind, SourceAccess via) throws Exception {
+    private Result createLocked(BackupKind kind, SourceAccess via, boolean confirmedWithoutMeasure) throws Exception {
         boolean mayBeEmpty = kind == BackupKind.PRE_RESTORE || kind == BackupKind.PRE_MAINTENANCE;
         if (!mayBeEmpty && !via.use(c -> DatabaseFingerprint.userRows(DatabaseFingerprint.countRows(c)) > 0)) {
             return simple(Outcome.EMPTY, kind, "ainda não há dados para copiar");
@@ -466,7 +508,36 @@ public final class BackupService {
             return new Result(o, kind, folder.resolve(e.file()), e.created(), e.fingerprint(), e.changeCounter(),
                     "nada mudou desde a última cópia, que continua válida", asideWarnings());
         }
+        Result noRoom = spaceRefusal(kind, folder, SpaceEstimate.Place.COPIES, confirmedWithoutMeasure);
+        if (noRoom != null) return noRoom;
         return copy(kind, via, folder, entries);
+    }
+
+    /**
+     * BRK-31 §5.3, before anything is copied: a manual copy is refused below the estimate and, without a measure,
+     * waits for an explicit confirmation; an automatic copy is postponed in both cases; a pre-migration copy is
+     * refused below the estimate (the migration does not run) and tried without a measure. Pre-restore and
+     * pre-maintenance copies are part of the estimate of the operation that asks for them.
+     */
+    private Result spaceRefusal(BackupKind kind, Path dest, SpaceEstimate.Place place, boolean confirmedWithoutMeasure)
+            throws IOException {
+        if (kind == BackupKind.PRE_RESTORE || kind == BackupKind.PRE_MAINTENANCE) return null;
+        SpaceEstimate.Estimate need = SpaceEstimate.verifiedCopy(Files.size(databaseFile), place);
+        StorageGuard.Decision d = spaceCheck.check(need, Map.of(SpaceEstimate.Place.DATA, databaseFile.getParent(),
+                place, dest));
+        if (d instanceof StorageGuard.Refused r) {
+            if (kind == BackupKind.DAILY) return simple(Outcome.POSTPONED, kind, r.message() + " A cópia automática foi adiada.");
+            return simple(Outcome.NO_SPACE, kind, r.message() + " Nenhuma cópia foi criada.");
+        }
+        if (d instanceof StorageGuard.Unmeasured u) {
+            if (kind == BackupKind.DAILY) {
+                return simple(Outcome.POSTPONED, kind, u.warning() + " A cópia automática foi adiada: nada automático roda sem medida.");
+            }
+            if (kind == BackupKind.MANUAL && !confirmedWithoutMeasure) {
+                return simple(Outcome.UNMEASURED, kind, u.warning() + " Confirme para criar a cópia mesmo assim.");
+            }
+        }
+        return null;
     }
 
     /**

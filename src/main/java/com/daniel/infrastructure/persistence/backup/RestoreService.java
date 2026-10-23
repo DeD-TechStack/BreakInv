@@ -11,6 +11,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
@@ -144,6 +145,10 @@ public final class RestoreService {
                         + "(há um arquivo -journal ou -wal ao lado dele)");
             }
             if (!BackupVerifier.hasSqliteHeader(file)) return refused("o arquivo não é um banco de dados do BreakInv");
+            // BRK-31: the whole restore must fit before anything is staged
+            String noRoom = spaceRefusal(SpaceEstimate.restore(Files.size(file), size(backups.databaseFile()), false, false,
+                    false));
+            if (noRoom != null) return refused(noRoom);
             Path staged = backups.stageForRestore(file);
             BackupVerifier.Report report = BackupVerifier.verify(staged);
             Optional<String> refusal = report.restoreRefusal();
@@ -201,6 +206,11 @@ public final class RestoreService {
                         + "Nada foi alterado.", null);
             }
             // no other window may open or write while the current data are copied and replaced
+            long c = size(preview.staged());
+            long d = size(backups.databaseFile());
+            String noRoom = spaceRefusal(overDamaged ? SpaceEstimate.restoreOverDamaged(c, d, true)
+                    : SpaceEstimate.restore(c, d, true, false, preview.olderVersion()));
+            if (noRoom != null) return new Result(Outcome.REFUSED, noRoom, null);
             if (!guard.tryAcquireExclusive()) return new Result(Outcome.REFUSED, guard.refusal(), null);
             try {
                 BackupService.Result safety = backups.ensureCurrentCopy(BackupKind.PRE_RESTORE);
@@ -406,6 +416,25 @@ public final class RestoreService {
             access.reopenShared();
         } catch (RuntimeException e) {
             LOG.log(Level.WARNING, "could not reopen the shared connection", e);
+        }
+    }
+
+    /** BRK-31 §5.3: a restore is refused below its estimate and also without a measure of the free space. */
+    private String spaceRefusal(SpaceEstimate.Estimate need) {
+        StorageGuard.Decision d = backups.checkSpace(need, Map.of(SpaceEstimate.Place.DATA,
+                backups.databaseFile().getParent(), SpaceEstimate.Place.COPIES, backups.folder()));
+        if (d instanceof StorageGuard.Refused r) return r.message() + " Nada foi alterado.";
+        if (d instanceof StorageGuard.Unmeasured u) {
+            return u.warning() + " A restauração só começa com o espaço livre medido. Nada foi alterado.";
+        }
+        return null;
+    }
+
+    private static long size(Path file) {
+        try {
+            return Files.size(file);
+        } catch (IOException e) {
+            return -1;
         }
     }
 

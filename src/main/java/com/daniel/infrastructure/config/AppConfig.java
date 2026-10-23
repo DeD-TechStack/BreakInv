@@ -62,6 +62,7 @@ public class AppConfig implements AutoCloseable {
         // BRK-31: below the write limit on the data volume, user writes are refused before any SQL
         this.storageGuard = StorageGuard.forDatabase(dbFile, StoragePreferences.forUser());
         Database.setWriteGate(storageGuard.writeGate());
+        backupService.spaceCheck(storageGuard::operation);
         this.connection = Database.open();
 
         IFlowRepository flowRepo = new FlowRepository();
