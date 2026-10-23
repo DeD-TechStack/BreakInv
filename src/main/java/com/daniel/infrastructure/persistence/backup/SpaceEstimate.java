@@ -108,6 +108,18 @@ public final class SpaceEstimate {
     }
 
     /**
+     * Migration of existing data: the verified pre-migration copy, then the migration itself, which journals the
+     * pages it rewrites (at most d) while the copy stays. New columns or tables are small and fall in the margins.
+     */
+    public static Estimate migration(long d) {
+        String op = "atualização dos dados";
+        if (d < 0) return unknown(op, "tamanho dos dados desconhecido");
+        List<Phase> ph = new ArrayList<>(verifiedCopy(d, Place.COPIES).phases());
+        ph.add(phase("migração", Place.COPIES, copyBound(d), Place.DATA, journalBound(d)));
+        return new Estimate(op, ph, null);
+    }
+
+    /**
      * Restore of a c-byte copy over d bytes of current data.
      *
      * @param staged         the chosen copy is already staged in the copies folder (counted as on disk)

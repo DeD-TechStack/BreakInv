@@ -522,7 +522,9 @@ public final class BackupService {
     private Result spaceRefusal(BackupKind kind, Path dest, SpaceEstimate.Place place, boolean confirmedWithoutMeasure)
             throws IOException {
         if (kind == BackupKind.PRE_RESTORE || kind == BackupKind.PRE_MAINTENANCE) return null;
-        SpaceEstimate.Estimate need = SpaceEstimate.verifiedCopy(Files.size(databaseFile), place);
+        long dbBytes = Files.size(databaseFile);
+        SpaceEstimate.Estimate need = kind == BackupKind.PRE_MIGRATION ? SpaceEstimate.migration(dbBytes)
+                : SpaceEstimate.verifiedCopy(dbBytes, place);
         StorageGuard.Decision d = spaceCheck.check(need, Map.of(SpaceEstimate.Place.DATA, databaseFile.getParent(),
                 place, dest));
         if (d instanceof StorageGuard.Refused r) {

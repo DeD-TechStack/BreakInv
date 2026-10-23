@@ -96,6 +96,17 @@ class SpaceEstimateTest {
     }
 
     @Test
+    void migration_addsItsJournal_inTheDataFolder_toThePreMigrationCopy() {
+        long d = 12 * MIB;
+        Estimate e = migration(d);
+
+        assertEquals(copyBound(d), e.peak(Place.COPIES));
+        assertEquals(journalBound(d), e.peak(Place.DATA));
+        assertEquals(sortBound(d), e.peak(Place.TEMP));
+        assertFalse(migration(-1).known());
+    }
+
+    @Test
     void maintenance_isOnlyACalculation_withTempAndJournal() {
         long d = 12 * MIB;
         Estimate e = maintenance(d, false);

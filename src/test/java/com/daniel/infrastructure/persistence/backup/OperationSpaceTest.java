@@ -161,6 +161,25 @@ class OperationSpaceTest {
     }
 
     @Test
+    void preMigration_alsoNeedsRoomForTheMigrationJournal_inTheDataFolder() throws Exception {
+        Database.close();
+        Path legacy = tempDir.resolve("legado2").resolve("breakinv.db");
+        Files.createDirectories(legacy.getParent());
+        PreMigrationBackupTest.legacy(legacy, true);
+        BackupService svc = service(legacy, BackupService.defaultFolder(legacy), clock);
+        // the copies and the temp folder have room; only the data folder (where the journal goes) does not
+        room(svc, FakeSpaceProbe.all(GIB).on(legacy.getParent(),
+                new SpaceProbe.Measured(TINY, legacy.getParent(), "DADOS")));
+        Database.setPreMigrationHook((candidate, file) -> svc.beforeMigration(candidate));
+        Database.configure(url(legacy));
+
+        RuntimeException e = assertThrows(RuntimeException.class, Database::open);
+
+        assertTrue(e.getMessage().contains(legacy.getParent().toString()), e.getMessage());
+        assertEquals(List.of(), copies(BackupService.defaultFolder(legacy)), "nem a cópia foi feita");
+    }
+
+    @Test
     void restore_belowTheEstimate_orWithoutAMeasure_isRefusedBeforeStaging() throws Exception {
         BackupService.Result copy = backups.createManual();
         assertEquals(BackupService.Outcome.CREATED, copy.outcome(), copy.message());
