@@ -50,6 +50,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
 
     @Override
     public void save(String name) {
+        Database.checkWrite();
         String sql = "INSERT INTO investment_type (name) VALUES (?)";
 
         try (PreparedStatement ps = conn().prepareStatement(sql)) {
@@ -65,6 +66,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
                           BigDecimal investedValue, String typeOfInvestment,
                           String indexType, BigDecimal indexPercentage,
                           String ticker, BigDecimal purchasePrice, Integer quantity) {
+        Database.checkWrite();
         String sql = """
             INSERT INTO investment_type
             (name, category, liquidity, investment_date, profitability, invested_value,
@@ -107,6 +109,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
                            BigDecimal investedValue, String typeOfInvestment,
                            String indexType, BigDecimal indexPercentage,
                            String ticker, BigDecimal purchasePrice, Integer quantity) {
+        Database.checkWrite();
         String sql = """
             UPDATE investment_type
             SET name = ?, category = ?, liquidity = ?,
@@ -142,6 +145,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
 
     @Override
     public void rename(int id, String newName) {
+        Database.checkWrite();
         String sql = "UPDATE investment_type SET name = ? WHERE id = ?";
 
         try (PreparedStatement ps = conn().prepareStatement(sql)) {
@@ -155,6 +159,7 @@ public final class InvestmentTypeRepository implements IInvestmentTypeRepository
 
     @Override
     public void delete(int id) {
+        Database.checkWrite();
         String sql = "DELETE FROM investment_type WHERE id = ?";
 
         try (PreparedStatement ps = conn().prepareStatement(sql)) {

@@ -121,4 +121,24 @@ class PreMigrationBackupTest {
             assertEquals(before, DatabaseFingerprint.of(c), "no schema_migrations, no new tables: untouched");
         }
     }
+
+    /** BRK-31 u3a: without the pre-migration copy (no hook installed) an existing database is not migrated. */
+    @Test
+    void withoutTheCopyHook_theMigrationIsRefused_andLeavesTheFileUntouched() throws Exception {
+        Path db = tempDir.resolve("sem-gancho.db");
+        legacy(db, true);
+        DatabaseFingerprint before;
+        try (Connection c = DriverManager.getConnection(url(db))) {
+            before = DatabaseFingerprint.of(c);
+        }
+        Database.setPreMigrationHook(null);
+        Database.configure(url(db));
+
+        RuntimeException e = assertThrows(RuntimeException.class, Database::open);
+
+        assertTrue(e.getMessage().contains("cópia de segurança antes da atualização não está disponível"), e.getMessage());
+        try (Connection c = DriverManager.getConnection(url(db))) {
+            assertEquals(before, DatabaseFingerprint.of(c), "untouched");
+        }
+    }
 }

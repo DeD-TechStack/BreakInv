@@ -13,6 +13,8 @@ import com.daniel.infrastructure.persistence.backup.FileInstanceLock;
 import com.daniel.infrastructure.persistence.backup.InstanceGuard;
 import com.daniel.infrastructure.persistence.backup.RestoreService;
 import com.daniel.infrastructure.persistence.backup.RetentionPolicy;
+import com.daniel.infrastructure.persistence.backup.StorageGuard;
+import com.daniel.infrastructure.persistence.backup.StoragePreferences;
 import com.daniel.infrastructure.persistence.config.Database;
 import com.daniel.infrastructure.persistence.repository.DatabaseLedgerAccess;
 import com.daniel.infrastructure.persistence.repository.FlowRepository;
@@ -36,6 +38,7 @@ public class AppConfig implements AutoCloseable {
     private final FileInstanceLock instanceLock;
     private final BackupService backupService;
     private final DataProtection dataProtection;
+    private final StorageGuard storageGuard;
 
     public AppConfig() {
         Path dbFile = Database.currentFile()
@@ -56,6 +59,9 @@ public class AppConfig implements AutoCloseable {
         }
         // an existing database is copied and verified before any migration changes it
         Database.setPreMigrationHook((candidate, file) -> backupService.beforeMigration(candidate));
+        // BRK-31: below the write limit on the data volume, user writes are refused before any SQL
+        this.storageGuard = StorageGuard.forDatabase(dbFile, StoragePreferences.forUser());
+        Database.setWriteGate(storageGuard.writeGate());
         this.connection = Database.open();
 
         IFlowRepository flowRepo = new FlowRepository();

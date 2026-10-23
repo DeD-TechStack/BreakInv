@@ -41,6 +41,7 @@ public final class DatabaseLedgerStore implements LedgerStore {
         if (fixed == null) {
             return Database.inTransaction(conn -> work.apply(new JdbcPortfolioRepository(conn)));
         }
+        Database.checkWrite();
         try {
             if (!fixed.getAutoCommit()) {
                 return joinCallerTransaction(work);

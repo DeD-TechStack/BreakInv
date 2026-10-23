@@ -25,6 +25,7 @@ class DatabaseMigrationTest {
 
     @AfterEach
     void resetDatabase() {
+        Database.setPreMigrationHook(null);
         Database.close();
     }
 
@@ -51,6 +52,7 @@ class DatabaseMigrationTest {
 
         // Open through the singleton — migration must fire automatically.
         Database.configure(jdbcUrl);
+        Database.setPreMigrationHook((candidate, file) -> { }); // BRK-31: migration logic only; the copy is in PreMigrationBackupTest
         Database.open();
 
         List<String> cols = columnsOf(Database.open(), "investment_type");

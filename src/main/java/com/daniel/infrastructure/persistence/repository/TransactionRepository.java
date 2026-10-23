@@ -13,6 +13,7 @@ public final class TransactionRepository implements ITransactionRepository {
 
     @Override
     public long insert(Transaction t) {
+        Database.checkWrite();
         String sql = """
             INSERT INTO transactions
             (date, investment_type_id, type, name, ticker, quantity, unit_price_cents, total_cents, note)

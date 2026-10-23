@@ -123,6 +123,7 @@ public final class SavedAnalysisRepository {
     }
 
     private AllocationPlan savePlan(AllocationPlan plan, boolean select) {
+        Database.checkWrite();
         String now = nowIso();
         try (Connection c = factory.open()) {
             c.setAutoCommit(false);
@@ -192,6 +193,7 @@ public final class SavedAnalysisRepository {
 
     /** Deletes a plan and its items; selection falls back to the default strategy via ON DELETE SET NULL. */
     public void deletePlan(long id) {
+        Database.checkWrite();
         try (Connection c = factory.open();
              PreparedStatement ps = c.prepareStatement("DELETE FROM allocation_plan WHERE id = ?")) {
             ps.setLong(1, id);
@@ -203,6 +205,7 @@ public final class SavedAnalysisRepository {
 
     /** Selects a saved plan, or {@code null} to use the default (ARCA) strategy. */
     public void selectPlan(Long planId) {
+        Database.checkWrite();
         try (Connection c = factory.open()) {
             if (planId != null && loadPlan(c, planId).isEmpty()) {
                 throw new NotFoundException("Plano " + planId + " não existe.");
@@ -381,6 +384,7 @@ public final class SavedAnalysisRepository {
      * name collision is rejected with {@link DuplicateNameException}.
      */
     public SimulationScenario saveScenario(SimulationScenario scenario) {
+        Database.checkWrite();
         String now = nowIso();
         String json = SimulationParametersJson.toJson(scenario.parameters());
         try (Connection c = factory.open()) {
@@ -473,6 +477,7 @@ public final class SavedAnalysisRepository {
     }
 
     public void deleteScenario(long id) {
+        Database.checkWrite();
         try (Connection c = factory.open();
              PreparedStatement ps = c.prepareStatement("DELETE FROM simulation_scenario WHERE id = ?")) {
             ps.setLong(1, id);

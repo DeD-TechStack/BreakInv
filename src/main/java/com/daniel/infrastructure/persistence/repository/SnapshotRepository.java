@@ -52,6 +52,7 @@ public final class SnapshotRepository implements ISnapshotRepository {
     }
 
     public void upsertCash(LocalDate date, long cashCents) {
+        Database.checkWrite();
         try {
             execUpdate("""
                 INSERT INTO cash_snapshots(date, value_cents)
@@ -88,6 +89,7 @@ public final class SnapshotRepository implements ISnapshotRepository {
     }
 
     public void upsertInvestment(LocalDate date, long investmentTypeId, long valueCents, String note) {
+        Database.checkWrite();
         String normalizedNote = (note == null || note.isBlank()) ? null : note.trim();
 
         try (PreparedStatement ps = Database.open().prepareStatement("""

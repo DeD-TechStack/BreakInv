@@ -23,6 +23,7 @@ public final class AppSettingsRepository {
     }
 
     public void set(String key, String value) {
+        Database.checkWrite();
         String sql = "INSERT INTO app_settings (key, value) VALUES (?, ?) " +
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value";
         try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
@@ -35,6 +36,7 @@ public final class AppSettingsRepository {
     }
 
     public void delete(String key) {
+        Database.checkWrite();
         String sql = "DELETE FROM app_settings WHERE key = ?";
         try (PreparedStatement ps = Database.open().prepareStatement(sql)) {
             ps.setString(1, key);

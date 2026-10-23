@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class DatabaseFailClosedTest {
     @TempDir Path temp;
-    @AfterEach void close() { Database.close(); }
+    @AfterEach void close() { Database.setPreMigrationHook(null); Database.close(); }
 
     @Test
     void futureSchemaIsRefusedWithoutCreatingProductTables() throws Exception {
@@ -37,6 +37,7 @@ class DatabaseFailClosedTest {
             }
         }
         Database.configure(url);
+        Database.setPreMigrationHook((candidate, file) -> { }); // BRK-31: migration logic only; the copy is in PreMigrationBackupTest
         assertThrows(SchemaMigrator.MigrationException.class, Database::open);
         assertThrows(SchemaMigrator.MigrationException.class, Database::open);
         assertThrows(SchemaMigrator.MigrationException.class, Database::newConnection);

@@ -50,6 +50,7 @@ public final class FlowRepository implements IFlowRepository {
     }
 
     public long create(Flow f) {
+        Database.checkWrite();
         String sql = """
             INSERT INTO flows(date, from_kind, from_investment_type_id, to_kind, to_investment_type_id, amount_cents, note)
             VALUES(?, ?, ?, ?, ?, ?, ?)
@@ -80,6 +81,7 @@ public final class FlowRepository implements IFlowRepository {
     }
 
     public void delete(long id) {
+        Database.checkWrite();
         try (PreparedStatement ps = Database.open().prepareStatement("DELETE FROM flows WHERE id = ?")) {
             ps.setLong(1, id);
             ps.executeUpdate();

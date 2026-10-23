@@ -43,6 +43,7 @@ public final class Database {
     private static String migratedUrl = null;
     private static Connection connection = null;
     private static PreMigrationHook preMigrationHook = null;
+    private static volatile WriteGate writeGate = null;
 
     private static String buildDefaultUrl() {
         String dir = System.getProperty("user.home") + File.separator + "BreakInv";
@@ -83,6 +84,31 @@ public final class Database {
     @FunctionalInterface
     public interface ExclusiveBody<T> {
         T run(ExclusiveAccess access) throws Exception;
+    }
+
+    /**
+     * Storage gate consulted at every write boundary (BRK-31, MAPA-ESCRITAS-BRK31): returns the refusal message, or
+     * null to let the write go on.
+     */
+    @FunctionalInterface
+    public interface WriteGate {
+        String refusal();
+    }
+
+    /** Installs (or clears, with null) the storage gate; without one every write goes on. */
+    public static void setWriteGate(WriteGate gate) {
+        writeGate = gate;
+    }
+
+    /**
+     * Called first at each write boundary, before any SQL: throws {@link StorageRefusedException} when the gate
+     * refuses, so nothing is written.
+     */
+    public static void checkWrite() {
+        WriteGate gate = writeGate;
+        if (gate == null) return;
+        String refusal = gate.refusal();
+        if (refusal != null) throw new StorageRefusedException(refusal);
     }
 
     /** Installs (or clears, with null) the hook run before migrating an existing database. */
@@ -202,6 +228,7 @@ public final class Database {
      * connection. The shared connection from {@link #open()} is never involved.
      */
     public static <T> T inTransaction(TransactionBody<T> body) {
+        checkWrite();
         try (Connection conn = newConnection()) {
             conn.setAutoCommit(false);
             try {
@@ -234,7 +261,11 @@ public final class Database {
     private static void migrateIfNeeded(Connection conn) {
         if (migratedUrl != null && migratedUrl.equals(jdbcUrl)) return;
         Optional<Path> file = fileOf(jdbcUrl);
-        if (preMigrationHook != null && file.isPresent() && SchemaMigrator.wouldChangeExisting(conn)) {
+        if (file.isPresent() && SchemaMigrator.wouldChangeExisting(conn)) {
+            if (preMigrationHook == null) {
+                throw new IllegalStateException("Os dados precisam ser atualizados para esta versão, mas a cópia de "
+                        + "segurança antes da atualização não está disponível; os dados não foram alterados.");
+            }
             try {
                 preMigrationHook.beforeMigration(conn, file.get());
             } catch (RuntimeException e) {

@@ -560,6 +560,8 @@ class RestoreServiceTest {
     void olderVersionCopy_isMigratedAfterRestoring() throws Exception {
         Path legacy = tempDir.resolve("antigo.db");
         PreMigrationBackupTest.legacy(legacy, true);
+        // as in production (AppConfig): without the pre-migration copy hook the migration is refused (BRK-31)
+        Database.setPreMigrationHook((candidate, file) -> backups.beforeMigration(candidate));
         RestoreService svc = restore(InstanceGuard.SOLE);
         RestoreService.Prepared prepared = svc.prepare(legacy);
         assertTrue(prepared.ok(), prepared.refusal());
@@ -575,6 +577,8 @@ class RestoreServiceTest {
             assertTrue(rs.next());
             assertEquals("Tesouro legado", rs.getString(1));
         }
+        assertTrue(copies(folder).stream().anyMatch(n -> n.startsWith("breakinv-pre-migracao-")),
+                "the restored older data was copied before migrating");
     }
 
     @Test

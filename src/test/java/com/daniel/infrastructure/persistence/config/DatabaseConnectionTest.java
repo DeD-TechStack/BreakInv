@@ -25,6 +25,7 @@ class DatabaseConnectionTest {
 
     @AfterEach
     void tearDown() {
+        Database.setPreMigrationHook(null);
         Database.close();
     }
 
@@ -68,6 +69,7 @@ class DatabaseConnectionTest {
             st.execute("INSERT INTO investment_type (id, name) VALUES (3, 'Antigo')");
         }
         Database.configure(u);
+        Database.setPreMigrationHook((candidate, file) -> { }); // BRK-31: migration logic only; the copy is in PreMigrationBackupTest
         Connection c = Database.open();
         assertEquals(Schema.CURRENT_VERSION, Schema.appliedVersion(c));
         try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT id, name, position_mode FROM investment_type")) {
