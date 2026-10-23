@@ -101,7 +101,11 @@ public final class PortfolioService {
 
     /** Proposes a cash opening from the latest legacy cash snapshot (flagged, since it is a manual figure). */
     public OpeningRequest proposeCashOpening(String intentKey, LocalDate date) {
-        Optional<Long> legacy = store.read(PortfolioRepository::latestLegacyCashCents);
+        return cashProposal(store.read(PortfolioRepository::latestLegacyCashCents), intentKey, date);
+    }
+
+    /** The same proposal from an already read latest legacy cash snapshot (one read per refresh, BRK-36). */
+    static OpeningRequest cashProposal(Optional<Long> legacy, String intentKey, LocalDate date) {
         return legacy.map(c -> OpeningRequest.cash(intentKey, date, Math.max(0L, c), true, "caixa a partir do último snapshot manual"))
                 .orElseGet(() -> OpeningRequest.cash(intentKey, date, 0L, false, "sem caixa legado"));
     }
@@ -278,14 +282,22 @@ public final class PortfolioService {
     /** Valuation with injected prices; QUANTITY = unit price x qty, VALUE = total value. Missing -> cost, flagged. */
     public PortfolioMetrics metrics(PriceSource prices) {
         try {
-            return metricsChecked(prices);
+            return metricsChecked(state(), prices);
         } catch (ArithmeticException overflow) {
             throw new LedgerException("value", "valor agregado excede o limite suportado");
         }
     }
 
-    private PortfolioMetrics metricsChecked(PriceSource prices) {
-        PortfolioState s = state();
+    /** The same valuation on an already replayed state (one replay per refresh, BRK-36). */
+    static PortfolioMetrics metrics(PortfolioState s, PriceSource prices) {
+        try {
+            return metricsChecked(s, prices);
+        } catch (ArithmeticException overflow) {
+            throw new LedgerException("value", "valor agregado excede o limite suportado");
+        }
+    }
+
+    private static PortfolioMetrics metricsChecked(PortfolioState s, PriceSource prices) {
         long value = 0, cost = 0;
         List<Long> atCost = new ArrayList<>();
         for (Position p : s.positions().values()) {

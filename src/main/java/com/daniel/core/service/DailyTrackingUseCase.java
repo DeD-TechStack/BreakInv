@@ -4,6 +4,7 @@ import com.daniel.core.domain.entity.*;
 import com.daniel.core.domain.ledger.Cents;
 import com.daniel.core.domain.ledger.InvestmentLedgerInfo;
 import com.daniel.core.domain.ledger.LedgerException;
+import com.daniel.core.domain.ledger.LedgerReplay;
 import com.daniel.core.domain.ledger.Movement;
 import com.daniel.core.domain.ledger.MovementKind;
 import com.daniel.core.domain.ledger.MovementRequest;
@@ -167,19 +168,9 @@ public final class DailyTrackingUseCase {
         return listTypes(false);
     }
 
-    /** Active registrations, plus archived ones when asked. Ledger-backed values when recognised. */
+    /** Active registrations, plus archived ones when asked. Ledger-backed values when recognised. One {@link #read()}. */
     public List<InvestmentType> listTypes(boolean includeArchived) {
-        List<InvestmentType> raw = typeRepo.listAll();
-        if (ledger == null) return raw;
-        Map<Long, InvestmentLedgerInfo> infos = infoMap();
-        PortfolioState state = portfolio().state();
-        List<InvestmentType> out = new ArrayList<>();
-        for (InvestmentType t : raw) {
-            InvestmentLedgerInfo info = infos.get((long) t.id());
-            if (info != null && info.archived() && !includeArchived) continue;
-            out.add(overlay(t, info, state));
-        }
-        return out;
+        return read().listTypes(includeArchived);
     }
 
     private Map<Long, InvestmentLedgerInfo> infoMap() {
@@ -203,22 +194,14 @@ public final class DailyTrackingUseCase {
                 t.indexPercentage(), t.ticker(), avg, qty, t.currentPrice());
     }
 
+    /** One {@link #read()}. */
     public InvestmentStatus investmentStatus(long id) {
-        InvestmentLedgerInfo info = portfolio().investmentInfo(id)
-                .orElseThrow(() -> new LedgerException("investmentTypeId", "investimento inexistente: " + id));
-        Position p = portfolio().position(id);
-        boolean opened = info.positionMode() != null && p.isOpen();
-        return new InvestmentStatus(id, info.name(), opened, opened ? p.mode() : null, p.quantity(), p.costCents(),
-                p.reconciliationPending(), info.archived(), info.note(), info.hasLegacyData(),
-                info.legacyTransactionCount(), info.legacyQuantity(), info.legacyInvestedValue());
+        return read().investmentStatus(id);
     }
 
+    /** One {@link #read()}. */
     public CashStatus cashStatus() {
-        PortfolioState s = portfolio().state();
-        OpeningRequest legacy = portfolio().proposeCashOpening("cash-status-probe", LocalDate.now());
-        boolean legacyPresent = !s.cashOpened() && legacy.reconciliationFlag();
-        long cash = legacyPresent ? legacy.costCents() : s.cashCents();
-        return new CashStatus(cash, s.cashOpened(), s.cashReconciliationPending(), legacyPresent);
+        return read().cashStatus();
     }
 
     /**
@@ -390,36 +373,9 @@ public final class DailyTrackingUseCase {
      * plus legacy {@code transactions} rows identified as such. Ordered by date, then id;
      * legacy rows after ledger rows of the same date.
      */
+    /** Ledger rows and legacy rows of the month, as before. One {@link #read()}. */
     public List<StatementEntry> statement(YearMonth month) {
-        LocalDate start = month.atDay(1);
-        LocalDate end = month.atEndOfMonth();
-        List<StatementEntry> out = new ArrayList<>();
-        Map<Long, String> names = new HashMap<>();
-        for (InvestmentType t : typeRepo.listAll()) names.put((long) t.id(), t.name());
-
-        if (ledger != null) {
-            List<Movement> all = portfolio().history();
-            Map<Long, Long> reversedBy = new HashMap<>();
-            for (Movement m : all) if (m.reversesId() != null) reversedBy.put(m.reversesId(), m.id());
-            for (Movement m : all) {
-                if (m.date().isBefore(start) || m.date().isAfter(end)) continue;
-                out.add(new StatementEntry(m.date(), m.kind(), null, m.id(), null, m.investmentTypeId(),
-                        m.investmentTypeId() == null ? null : names.get(m.investmentTypeId()),
-                        m.positionMode(), m.quantity(), m.unitPrice(), m.amountCents(), m.classification(),
-                        m.reason(), m.note(), m.reversesId(), reversedBy.get(m.id()), m.reconciliationFlag(), false));
-            }
-        }
-        for (Transaction tx : txRepo.listBetween(start, end)) {
-            out.add(new StatementEntry(tx.date(), null, tx.type(), null, tx.id(), (long) tx.investmentTypeId(),
-                    names.getOrDefault((long) tx.investmentTypeId(), tx.name()), null,
-                    tx.quantity() == null ? null : tx.quantity().longValue(),
-                    tx.unitPriceCents() == null ? null : Cents.toDecimal(tx.unitPriceCents()),
-                    tx.totalCents(), null, null, tx.note(), null, null, false, true));
-        }
-        out.sort(Comparator.comparing(StatementEntry::date)
-                .thenComparing(StatementEntry::legacy)
-                .thenComparingLong(e -> e.legacy() ? e.legacyTransactionId() : e.movementId()));
-        return out;
+        return read().statement(month);
     }
 
     // =====================================================================
@@ -466,14 +422,9 @@ public final class DailyTrackingUseCase {
     // Valuation
     // =====================================================================
 
+    /** One {@link #read()}: one replay for all registrations instead of one per registration. */
     public Map<Long, Long> getAllCurrentValues(LocalDate date) {
-        Map<Long, Long> values = new HashMap<>();
-        for (InvestmentType inv : listTypes()) {
-            long value = getCurrentValue(inv, date);
-            values.put((long) inv.id(), value);
-            LOG.fine(() -> inv.name() + ": " + (value > 0 ? brl(value) : "SEM VALOR"));
-        }
-        return values;
+        return read().getAllCurrentValues(date);
     }
 
     /** Current value: ledger position × quote (or cost) when recognised, legacy estimate otherwise. */
@@ -518,27 +469,6 @@ public final class DailyTrackingUseCase {
             if (inv == null) return Optional.empty();
             return priceFor(state.position(id), inv, today);
         };
-    }
-
-    private PortfolioMetrics ledgerMetrics(LocalDate today) {
-        Map<Long, InvestmentType> types = new HashMap<>();
-        for (InvestmentType t : typeRepo.listAll()) types.put((long) t.id(), t);
-        PortfolioState state = portfolio().state();
-        return portfolio().metrics(priceSource(today, types, state));
-    }
-
-    /** Registrations the ledger has not recognised (no opening) and not archived. */
-    private List<InvestmentType> unrecognised() {
-        Map<Long, InvestmentLedgerInfo> infos = infoMap();
-        PortfolioState state = portfolio().state();
-        List<InvestmentType> out = new ArrayList<>();
-        for (InvestmentType t : typeRepo.listAll()) {
-            InvestmentLedgerInfo info = infos.get((long) t.id());
-            if (info != null && info.archived()) continue;
-            if (state.position(t.id()).isOpen()) continue;
-            out.add(t);
-        }
-        return out;
     }
 
     private static long compound(long baseCents, BigDecimal annualRatePct, LocalDate from, LocalDate today) {
@@ -602,27 +532,12 @@ public final class DailyTrackingUseCase {
      * balance once opened (legacy snapshot carry-forward before that).
      */
     public long getTotalPatrimony(LocalDate today) {
-        long investmentTotal = getTotalInvestmentValue(today);
-        long cashCents;
-        if (ledger != null) {
-            CashStatus cs = cashStatus();
-            cashCents = cs.legacySnapshotsPresent() ? snapshotRepo.getCashOnOrBefore(today) : cs.cashCents();
-        } else {
-            cashCents = snapshotRepo.getCashOnOrBefore(today);
-        }
-        long total = investmentTotal + cashCents;
-        LOG.fine(() -> "PATRIMONIO TOTAL: " + brl(total));
-        return total;
+        return read().getTotalPatrimony(today);
     }
 
-    /** Sum of current investment values only, without cash. */
+    /** Sum of current investment values only, without cash. One {@link #read()}. */
     public long getTotalInvestmentValue(LocalDate today) {
-        if (ledger == null) {
-            return getAllCurrentValues(today).values().stream().mapToLong(Long::longValue).sum();
-        }
-        long total = ledgerMetrics(today).positionValueCents();
-        for (InvestmentType inv : unrecognised()) total += legacyValue(inv, today);
-        return total;
+        return read().getTotalInvestmentValue(today);
     }
 
     /**
@@ -631,18 +546,7 @@ public final class DailyTrackingUseCase {
      * the ledger has not recognised yet.
      */
     public long getTotalProfit(LocalDate today) {
-        if (ledger != null) {
-            long profit = ledgerMetrics(today).economicGainCents();
-            for (InvestmentType inv : unrecognised()) {
-                profit += legacyProfit(inv, today);
-            }
-            return profit;
-        }
-        long profit = 0L;
-        for (InvestmentType inv : typeRepo.listAll()) profit += legacyProfit(inv, today);
-        final long logged = profit;
-        LOG.fine(() -> "LUCRO/PREJUIZO legado: " + brl(logged));
-        return profit;
+        return read().getTotalProfit(today);
     }
 
     private long legacyProfit(InvestmentType inv, LocalDate today) {
@@ -653,7 +557,235 @@ public final class DailyTrackingUseCase {
 
     /** Ledger metrics with the same price source used by the dashboard; {@code null} without ledger. */
     public PortfolioMetrics metrics(LocalDate today) {
-        return ledger == null ? null : ledgerMetrics(today);
+        return ledger == null ? null : read().metrics(today);
+    }
+
+    // =====================================================================
+    // One consistent portfolio read per refresh (BRK-36)
+    // =====================================================================
+
+    /**
+     * Reads, once and together, what the screen queries derive from: the registrations, the ledger view of each
+     * registration, the whole ledger and the latest legacy cash snapshot. With the ledger they come from ONE read
+     * transaction ({@link LedgerAccess#read}); without it, only the registrations. The ledger is replayed later,
+     * at most once, outside the transaction.
+     *
+     * <p>A read belongs to ONE refresh: keep it in a local variable of the background task, never in a field, and
+     * take a new one for the next refresh (nothing is cached between refreshes). It never validates a write nor
+     * feeds the daily snapshot: writes and {@link #takeSnapshotIfNeeded} read on their own, as before.
+     */
+    public PortfolioRead read() {
+        if (ledger == null) {
+            return new PortfolioRead(List.copyOf(typeRepo.listAll()), null, List.of(), Optional.empty());
+        }
+        return ledger.read((repo, regs) -> {
+            List<InvestmentType> types = List.copyOf(regs.listAll());
+            Map<Long, InvestmentLedgerInfo> infos = new HashMap<>();
+            for (InvestmentLedgerInfo i : repo.listInvestments(true)) infos.put(i.id(), i);
+            List<Movement> movements = List.copyOf(repo.listAll());
+            Optional<Long> legacyCash = repo.latestLegacyCashCents();
+            return new PortfolioRead(types, Map.copyOf(infos), movements, legacyCash);
+        });
+    }
+
+    /**
+     * The screen queries of one refresh (see {@link #read()}): the same names, results and failures as the use
+     * case methods, computed from inputs read once. The ledger replay happens on first need and at most once; a
+     * failed replay is not kept, so every query that needs the state fails as before. Each method returns a new
+     * collection, so a caller cannot change what the next call of the same read sees. Not thread-safe: one task
+     * uses it. Legacy inputs that depend on the asked date or month (cash on or before a date, legacy
+     * {@code transactions} of a month) are still read when asked, as before.
+     */
+    public final class PortfolioRead {
+
+        private final List<InvestmentType> types;
+        /** {@code null} without ledger. */
+        private final Map<Long, InvestmentLedgerInfo> infos;
+        private final List<Movement> movements;
+        private final Optional<Long> legacyCash;
+        private PortfolioState state;
+        private int replays;
+
+        private PortfolioRead(List<InvestmentType> types, Map<Long, InvestmentLedgerInfo> infos,
+                              List<Movement> movements, Optional<Long> legacyCash) {
+            this.types = types;
+            this.infos = infos;
+            this.movements = movements;
+            this.legacyCash = legacyCash;
+        }
+
+        /** Ledger replays attempted by this read: 0 or 1 when the ledger replays (diagnostics and tests). */
+        public int replays() {
+            return replays;
+        }
+
+        private Map<Long, InvestmentLedgerInfo> infos() {
+            if (infos == null) throw new IllegalStateException("ledger não configurado");
+            return infos;
+        }
+
+        private PortfolioState state() {
+            if (infos == null) throw new IllegalStateException("ledger não configurado");
+            if (state == null) {
+                replays++;
+                state = LedgerReplay.replay(movements);
+            }
+            return state;
+        }
+
+        public List<InvestmentType> listTypes() {
+            return listTypes(false);
+        }
+
+        public List<InvestmentType> listTypes(boolean includeArchived) {
+            if (infos == null) return new ArrayList<>(types);
+            PortfolioState s = state();
+            List<InvestmentType> out = new ArrayList<>();
+            for (InvestmentType t : types) {
+                InvestmentLedgerInfo info = infos.get((long) t.id());
+                if (info != null && info.archived() && !includeArchived) continue;
+                out.add(overlay(t, info, s));
+            }
+            return out;
+        }
+
+        public InvestmentStatus investmentStatus(long id) {
+            InvestmentLedgerInfo info = infos().get(id);
+            if (info == null) throw new LedgerException("investmentTypeId", "investimento inexistente: " + id);
+            Position p = state().position(id);
+            boolean opened = info.positionMode() != null && p.isOpen();
+            return new InvestmentStatus(id, info.name(), opened, opened ? p.mode() : null, p.quantity(), p.costCents(),
+                    p.reconciliationPending(), info.archived(), info.note(), info.hasLegacyData(),
+                    info.legacyTransactionCount(), info.legacyQuantity(), info.legacyInvestedValue());
+        }
+
+        public CashStatus cashStatus() {
+            PortfolioState s = state();
+            OpeningRequest legacy = PortfolioService.cashProposal(legacyCash, "cash-status-probe", LocalDate.now());
+            boolean legacyPresent = !s.cashOpened() && legacy.reconciliationFlag();
+            long cash = legacyPresent ? legacy.costCents() : s.cashCents();
+            return new CashStatus(cash, s.cashOpened(), s.cashReconciliationPending(), legacyPresent);
+        }
+
+        public Map<Long, Long> getAllCurrentValues(LocalDate date) {
+            Map<Long, Long> values = new HashMap<>();
+            for (InvestmentType inv : listTypes(false)) {
+                long value = currentValue(inv, date);
+                values.put((long) inv.id(), value);
+                LOG.fine(() -> inv.name() + ": " + (value > 0 ? brl(value) : "SEM VALOR"));
+            }
+            return values;
+        }
+
+        /** {@link DailyTrackingUseCase#getCurrentValue} on this read's state. */
+        private long currentValue(InvestmentType inv, LocalDate today) {
+            if (infos != null) {
+                Position p = state().position(inv.id());
+                if (p.isOpen()) return ledgerValue(p, inv, today);
+            }
+            return legacyValue(inv, today);
+        }
+
+        /**
+         * Total patrimony = investments current value + cash. With the ledger, cash is the replayed balance once
+         * opened (legacy snapshot carry-forward before that).
+         */
+        public long getTotalPatrimony(LocalDate today) {
+            long investmentTotal = getTotalInvestmentValue(today);
+            long cashCents;
+            if (infos != null) {
+                CashStatus cs = cashStatus();
+                cashCents = cs.legacySnapshotsPresent() ? snapshotRepo.getCashOnOrBefore(today) : cs.cashCents();
+            } else {
+                cashCents = snapshotRepo.getCashOnOrBefore(today);
+            }
+            long total = investmentTotal + cashCents;
+            LOG.fine(() -> "PATRIMONIO TOTAL: " + brl(total));
+            return total;
+        }
+
+        /** Sum of current investment values only, without cash. */
+        public long getTotalInvestmentValue(LocalDate today) {
+            if (infos == null) {
+                return getAllCurrentValues(today).values().stream().mapToLong(Long::longValue).sum();
+            }
+            long total = ledgerMetrics(today).positionValueCents();
+            for (InvestmentType inv : unrecognised()) total += legacyValue(inv, today);
+            return total;
+        }
+
+        /** Economic gain, as {@link DailyTrackingUseCase#getTotalProfit}. */
+        public long getTotalProfit(LocalDate today) {
+            if (infos != null) {
+                long profit = ledgerMetrics(today).economicGainCents();
+                for (InvestmentType inv : unrecognised()) {
+                    profit += legacyProfit(inv, today);
+                }
+                return profit;
+            }
+            long profit = 0L;
+            for (InvestmentType inv : types) profit += legacyProfit(inv, today);
+            final long logged = profit;
+            LOG.fine(() -> "LUCRO/PREJUIZO legado: " + brl(logged));
+            return profit;
+        }
+
+        /** Ledger metrics with the dashboard's price source; {@code null} without ledger. */
+        public PortfolioMetrics metrics(LocalDate today) {
+            return infos == null ? null : ledgerMetrics(today);
+        }
+
+        private PortfolioMetrics ledgerMetrics(LocalDate today) {
+            Map<Long, InvestmentType> byId = new HashMap<>();
+            for (InvestmentType t : types) byId.put((long) t.id(), t);
+            PortfolioState s = state();
+            return PortfolioService.metrics(s, priceSource(today, byId, s));
+        }
+
+        /** Registrations the ledger has not recognised (no opening) and not archived. */
+        private List<InvestmentType> unrecognised() {
+            PortfolioState s = state();
+            List<InvestmentType> out = new ArrayList<>();
+            for (InvestmentType t : types) {
+                InvestmentLedgerInfo info = infos.get((long) t.id());
+                if (info != null && info.archived()) continue;
+                if (s.position(t.id()).isOpen()) continue;
+                out.add(t);
+            }
+            return out;
+        }
+
+        /** Ledger rows of the month (reversals linked across months) and legacy rows; needs no replay. */
+        public List<StatementEntry> statement(YearMonth month) {
+            LocalDate start = month.atDay(1);
+            LocalDate end = month.atEndOfMonth();
+            List<StatementEntry> out = new ArrayList<>();
+            Map<Long, String> names = new HashMap<>();
+            for (InvestmentType t : types) names.put((long) t.id(), t.name());
+
+            if (infos != null) {
+                Map<Long, Long> reversedBy = new HashMap<>();
+                for (Movement m : movements) if (m.reversesId() != null) reversedBy.put(m.reversesId(), m.id());
+                for (Movement m : movements) {
+                    if (m.date().isBefore(start) || m.date().isAfter(end)) continue;
+                    out.add(new StatementEntry(m.date(), m.kind(), null, m.id(), null, m.investmentTypeId(),
+                            m.investmentTypeId() == null ? null : names.get(m.investmentTypeId()),
+                            m.positionMode(), m.quantity(), m.unitPrice(), m.amountCents(), m.classification(),
+                            m.reason(), m.note(), m.reversesId(), reversedBy.get(m.id()), m.reconciliationFlag(), false));
+                }
+            }
+            for (Transaction tx : txRepo.listBetween(start, end)) {
+                out.add(new StatementEntry(tx.date(), null, tx.type(), null, tx.id(), (long) tx.investmentTypeId(),
+                        names.getOrDefault((long) tx.investmentTypeId(), tx.name()), null,
+                        tx.quantity() == null ? null : tx.quantity().longValue(),
+                        tx.unitPriceCents() == null ? null : Cents.toDecimal(tx.unitPriceCents()),
+                        tx.totalCents(), null, null, tx.note(), null, null, false, true));
+            }
+            out.sort(Comparator.comparing(StatementEntry::date)
+                    .thenComparing(StatementEntry::legacy)
+                    .thenComparingLong(e -> e.legacy() ? e.legacyTransactionId() : e.movementId()));
+            return out;
+        }
     }
 
     /**

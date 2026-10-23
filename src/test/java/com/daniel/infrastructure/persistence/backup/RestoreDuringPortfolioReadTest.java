@@ -91,4 +91,24 @@ class RestoreDuringPortfolioReadTest {
         int restored = access.read((repo, regs) -> repo.listAll().size());
         assertEquals(stateA.size(), restored, "the next read sees the restored data");
     }
+
+    /** Unit 3: after a restore, the use case's next read shows the restored data; an earlier read keeps its own. */
+    @Test
+    void useCaseRead_afterRestore_showsTheRestoredData() throws Exception {
+        BackupService.Result copy = backups.createManual();
+        assertEquals(BackupService.Outcome.CREATED, copy.outcome(), copy.message());
+        long cashA = uc.read().cashStatus().cashCents();
+        change(uc, "b-1");
+        DailyTrackingUseCase.PortfolioRead readB = uc.read();
+        long cashB = readB.cashStatus().cashCents();
+        assertEquals(cashA + 1_000L, cashB);
+
+        RestoreService svc = new RestoreService(backups, InstanceGuard.SOLE);
+        RestoreService.Result r = svc.restore(svc.prepare(copy.file()).preview());
+        assertEquals(RestoreService.Outcome.RESTORED, r.outcome(), r.message());
+
+        assertEquals(cashA, uc.read().cashStatus().cashCents(), "the next read shows the restored data");
+        assertEquals(cashA, uc.cashStatus().cashCents(), "the old signature too");
+        assertEquals(cashB, readB.cashStatus().cashCents(), "a read taken before the restore keeps what it read");
+    }
 }

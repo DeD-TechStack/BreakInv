@@ -114,6 +114,21 @@ class ScreenQueriesCharacterizationTest {
         };
     }
 
+    /** The same queries through one {@code PortfolioRead}: one read and at most one replay for all of them. */
+    static Queries viaRead(DailyTrackingUseCase.PortfolioRead r) {
+        return new Queries() {
+            public List<InvestmentType> listTypes(boolean a) { return r.listTypes(a); }
+            public DailyTrackingUseCase.InvestmentStatus investmentStatus(long id) { return r.investmentStatus(id); }
+            public DailyTrackingUseCase.CashStatus cashStatus() { return r.cashStatus(); }
+            public Map<Long, Long> getAllCurrentValues(LocalDate d) { return r.getAllCurrentValues(d); }
+            public long getTotalInvestmentValue(LocalDate d) { return r.getTotalInvestmentValue(d); }
+            public long getTotalPatrimony(LocalDate d) { return r.getTotalPatrimony(d); }
+            public long getTotalProfit(LocalDate d) { return r.getTotalProfit(d); }
+            public PortfolioMetrics metrics(LocalDate d) { return r.metrics(d); }
+            public List<StatementEntry> statement(YearMonth m) { return r.statement(m); }
+        };
+    }
+
     @TempDir
     Path tempDir;
     DailyTrackingUseCase uc;
@@ -145,30 +160,51 @@ class ScreenQueriesCharacterizationTest {
         open("dirigida.db");
         // hand values are checked stage by stage; the canonical texts are compared at the end
         Map<String, String> texts = new java.util.LinkedHashMap<>();
+        Map<String, String> readTexts = new java.util.LinkedHashMap<>();
         buildK1();
         checkK1(api(uc));
         texts.put("K1", render(api(uc)));
+        readTexts.put("K1", checkedViaRead(this::checkK1));
 
         buildK2();
         checkK2(api(uc));
         texts.put("K2", render(api(uc)));
+        readTexts.put("K2", checkedViaRead(this::checkK2));
 
         buildK3();
         checkK3(api(uc));
         texts.put("K3", render(api(uc)));
+        readTexts.put("K3", checkedViaRead(this::checkK3));
 
         buildK4();
         checkK4(api(uc));
         texts.put("K4", render(api(uc)));
+        readTexts.put("K4", checkedViaRead(this::checkK4));
 
         buildK5();
         checkK5(api(uc));
         texts.put("K5", render(api(uc)));
+        readTexts.put("K5", checkedViaRead(this::checkK5));
 
         List<String> expected = Arrays.asList(K1_TEXT, K2_TEXT, K3_TEXT, K4_TEXT, K5_TEXT);
         for (Map.Entry<String, String> e : texts.entrySet()) writeActual(e.getKey(), e.getValue());
+        for (Map.Entry<String, String> e : readTexts.entrySet()) writeActual(e.getKey() + "-leitura", e.getValue());
         int i = 0;
         for (Map.Entry<String, String> e : texts.entrySet()) assertCanonical(e.getKey(), expected.get(i++), e.getValue());
+        i = 0;
+        for (Map.Entry<String, String> e : readTexts.entrySet()) {
+            assertCanonical(e.getKey() + "-leitura", expected.get(i++), e.getValue());
+        }
+    }
+
+    /**
+     * From unit 3 on: the same hand checks and the same text through ONE {@code read()} shared by every query
+     * of the stage, as one page refresh does.
+     */
+    String checkedViaRead(java.util.function.Consumer<Queries> check) {
+        Queries r = viaRead(uc.read());
+        check.accept(r);
+        return render(r);
     }
 
     /**
@@ -410,6 +446,13 @@ class ScreenQueriesCharacterizationTest {
         assertNull(q.metrics(D));
         assertThrows(IllegalStateException.class, q::cashStatus);
         assertCanonical("SEM-LIVRO", WITHOUT_LEDGER_TEXT, render(q, List.of(1L, 2L), null));
+
+        Queries r = viaRead(legacy.read());
+        assertEquals(Map.of(1L, 7_500L, 2L, 112_000L), r.getAllCurrentValues(D));
+        assertEquals(126_500L, r.getTotalPatrimony(D));
+        assertEquals(13_500L, r.getTotalProfit(D));
+        assertNull(r.metrics(D));
+        assertCanonical("SEM-LIVRO-leitura", WITHOUT_LEDGER_TEXT, render(r, List.of(1L, 2L), null));
     }
 
     /**
@@ -432,6 +475,11 @@ class ScreenQueriesCharacterizationTest {
         assertThrows(LedgerException.class, () -> q.getTotalPatrimony(D));
         assertEquals(3, q.statement(OCT).size(), "x opening, deposit, withdrawal; the 1900 cash marker is elsewhere");
         assertCanonical("LIVRO-INVALIDO", INVALID_LEDGER_TEXT, render(q, List.of(x), uc));
+
+        DailyTrackingUseCase.PortfolioRead read = uc.read();
+        assertThrows(LedgerException.class, read::cashStatus);
+        assertEquals(3, read.statement(OCT).size());
+        assertCanonical("LIVRO-INVALIDO-leitura", INVALID_LEDGER_TEXT, render(viaRead(read), List.of(x), uc));
     }
 
     // =====================================================================
