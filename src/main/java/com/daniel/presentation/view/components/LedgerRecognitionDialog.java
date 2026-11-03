@@ -9,6 +9,7 @@ import com.daniel.core.util.MoneyFormat;
 import com.daniel.presentation.view.util.DialogChrome;
 import com.daniel.presentation.view.util.UiDates;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.WriteFailureText;
 import com.daniel.presentation.viewmodel.MovementForm;
 
 import javafx.application.Platform;
@@ -274,7 +275,7 @@ public final class LedgerRecognitionDialog extends Dialog<Boolean> {
             }
             setBusy(false);
             Throwable c = err.getCause() != null ? err.getCause() : err;
-            fail(c.getMessage(), null);
+            fail(WriteFailureText.compose(WriteFailureText.Screen.LEDGER_RECOGNITION_DIALOG, c).orElse(c.getMessage()), null);
         }));
     }
 }

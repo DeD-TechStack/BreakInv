@@ -8,6 +8,7 @@ import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.util.DialogChrome;
 import com.daniel.presentation.view.util.UiDates;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.WriteFailureText;
 import com.daniel.presentation.viewmodel.MovementForm;
 
 import javafx.application.Platform;
@@ -344,7 +345,10 @@ public final class MovementDialog extends Dialog<Movement> {
                     setBusy(false);
                     helperLabel.setText("Corrija e confirme novamente; o mesmo conteúdo não duplica o lançamento.");
                     Throwable cause = err instanceof java.util.concurrent.CompletionException && err.getCause() != null ? err.getCause() : err;
-                    if (cause instanceof LedgerException le) {
+                    java.util.Optional<String> composed = WriteFailureText.compose(WriteFailureText.Screen.MOVEMENT_DIALOG, cause);
+                    if (composed.isPresent()) {
+                        showMessage(composed.get(), null);
+                    } else if (cause instanceof LedgerException le) {
                         showError(le);
                     } else {
                         showMessage("Falha ao gravar: " + cause.getMessage(), null);

@@ -12,9 +12,9 @@ import java.util.Locale;
  * of a {@link SQLiteException}, then the primary code ({@code getErrorCode() & 0xFF}); the message
  * decides only when the code says nothing specific, because its wording changes between versions.
  */
-final class SqliteErrors {
+public final class SqliteErrors {
 
-    enum Category { SPACE, IO, CANT_OPEN, WRITE_DENIED, BUSY, DAMAGED, OTHER }
+    public enum Category { SPACE, IO, CANT_OPEN, WRITE_DENIED, BUSY, DAMAGED, OTHER }
 
     /** A word of the message; {@code driverOnly} words count only on a {@link SQLException}. */
     private record Word(String text, Category category, boolean driverOnly) {
@@ -52,7 +52,7 @@ final class SqliteErrors {
     }
 
     /** The first category other than OTHER in the exception and its causes, from the outside in. */
-    static Category ofChain(Throwable e) {
+    public static Category ofChain(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             Category c = of(t);
             if (c != Category.OTHER) return c;

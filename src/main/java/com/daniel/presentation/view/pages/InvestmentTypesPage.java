@@ -27,6 +27,7 @@ import com.daniel.presentation.view.util.Dialogs;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.view.util.UiPreferences;
+import com.daniel.presentation.view.util.WriteFailureText;
 import com.daniel.presentation.viewmodel.MovementForm;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -1165,6 +1166,11 @@ public final class InvestmentTypesPage implements ResponsivePage {
 
     /** Runs a mutation on the worker and refreshes; shows the rejection without losing state. */
     private void runMutation(Runnable work, String successMessage) {
+        runMutation(work, successMessage, false);
+    }
+
+    /** {@code twoPaths}: the operation writes by two paths (the edition), so the failure text stays as it was. */
+    private void runMutation(Runnable work, String successMessage, boolean twoPaths) {
         CompletableFuture.runAsync(work, UiExecutor.get()).whenComplete((v, err) -> Platform.runLater(() -> {
             if (err == null) {
                 ToastHost.showSuccess(successMessage);
@@ -1172,8 +1178,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
                 return;
             }
             Throwable c = err.getCause() != null ? err.getCause() : err;
-            if (c instanceof LedgerException le) Dialogs.error("Operação recusada (" + le.field() + "): " + le.getMessage());
-            else Dialogs.error("Erro: " + c.getMessage());
+            Dialogs.error(WriteFailureText.investmentTypes(c, twoPaths));
         }));
     }
 
@@ -1232,7 +1237,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
                         ledgerOwned && raw != null ? raw.purchasePrice() : data.purchasePrice(),
                         ledgerOwned && raw != null ? raw.quantity() : data.quantity());
                 if (daily.hasLedger()) daily.attachNote(sel.id(), data.note());
-            }, ledgerOwned ? "Cadastro atualizado (posição e custo continuam no histórico)." : "Investimento atualizado!");
+            }, ledgerOwned ? "Cadastro atualizado (posição e custo continuam no histórico)." : "Investimento atualizado!", true);
         });
     }
 

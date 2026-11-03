@@ -231,7 +231,7 @@ public final class RestoreService {
                 return Database.runExclusive(access -> replace(access, preview, verified));
             } catch (Exception e) {
                 LOG.log(Level.SEVERE, "restore failed outside the verified path", e);
-                return new Result(Outcome.FAILED_CRITICAL, "a restauração foi interrompida (" + firstLine(e)
+                return new Result(Outcome.FAILED_CRITICAL, "a restauração foi interrompida (" + reason(e)
                         + "). Os dados anteriores estão guardados na pasta das cópias.", null);
             } finally {
                 guard.releaseExclusive();
@@ -266,7 +266,7 @@ public final class RestoreService {
                     Path live = backups.databaseFile();
                     String name = String.valueOf(live.getFileName());
                     return new Result(Outcome.FAILED_KEPT, "o arquivo de dados não pôde ser aberto para a troca ("
-                            + firstLine(e) + "). Nada foi alterado. Se for um bloqueio passageiro, como um antivírus, "
+                            + reason(e) + "). Nada foi alterado. Se for um bloqueio passageiro, como um antivírus, "
                             + "tente de novo. Se continuar, com o BreakInv fechado, mova " + live + ", e os arquivos "
                             + name + "-journal, " + name + "-wal e " + name + "-shm que houver ao lado dele, para outra "
                             + "pasta; depois copie " + preview.chosen() + " para " + live + ".",
@@ -293,7 +293,7 @@ public final class RestoreService {
                     .restore("main", preview.staged().toString(), NO_PROGRESS);
             why = rc == 0 ? null : "o SQLite recusou a restauração (código " + rc + ")";
         } catch (SQLException e) {
-            why = "erro ao restaurar: " + firstLine(e);
+            why = "erro ao restaurar: " + reason(e);
         }
         if (!attempted) {
             // failed before the replacement started: nothing to go back from
@@ -451,6 +451,11 @@ public final class RestoreService {
 
     private static Prepared refused(String why) {
         return new Prepared(null, why);
+    }
+
+    /** The reason of a failed restore step (U4B:RF-05): by category, and the first line of the message for OTHER. */
+    static String reason(Throwable e) {
+        return WriteFailureReason.of(e, firstLine(e));
     }
 
     private static String firstLine(Throwable e) {

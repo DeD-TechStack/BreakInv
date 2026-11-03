@@ -7,9 +7,14 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.Collections;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -226,27 +231,126 @@ public final class Database {
      * transaction. Commits when the body returns, rolls back on any exception (rethrown as-is
      * when unchecked, wrapped in {@link RuntimeException} otherwise) and always closes the
      * connection. The shared connection from {@link #open()} is never involved.
+     *
+     * <p>Every failure of the write (BRK-31 u4b) carries the {@link RollbackState} fixed by
+     * {@link RollbackDecision}, read from the exception that is thrown with
+     * {@link #rollbackStateOf(Throwable)}; the exception itself is the same as it always was. A failure of
+     * the closing alone, after a commit without error, is logged and the result is returned.
      */
     public static <T> T inTransaction(TransactionBody<T> body) {
         checkWrite();
-        try (Connection conn = newConnection()) {
+        Connection conn = null;
+        RollbackDecision.Stage stage = RollbackDecision.Stage.BEFORE_BODY;
+        RollbackDecision.RollbackResult rollback = RollbackDecision.RollbackResult.NOT_RUN;
+        RuntimeException failure = null;
+        T result = null;
+        try {
+            conn = newConnection();
             conn.setAutoCommit(false);
-            try {
-                T result = body.run(conn);
-                conn.commit();
-                return result;
-            } catch (Exception e) {
-                try {
-                    conn.rollback();
-                } catch (SQLException rb) {
-                    e.addSuppressed(rb);
-                }
-                if (e instanceof RuntimeException re) throw re;
-                throw new RuntimeException(e.getMessage(), e);
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("Erro de transação: " + e.getMessage(), e);
+            stage = RollbackDecision.Stage.BODY;
+            result = body.run(conn);
+            stage = RollbackDecision.Stage.COMMIT;
+            conn.commit();
+            stage = RollbackDecision.Stage.CLOSE;
+        } catch (Exception e) {
+            failure = thrownFor(stage, e);
+            if (stage != RollbackDecision.Stage.BEFORE_BODY) rollback = rollbackStatement(conn, failure);
+        } catch (Error e) {
+            closeSuppressing(conn, e);
+            throw e;
         }
+        SQLException closeFailure = closeConnection(conn);
+        if (failure == null) return committed(result, closeFailure);
+        if (closeFailure != null) failure.addSuppressed(closeFailure);
+        RollbackState state = RollbackDecision.decide(stage, rollback) == RollbackDecision.Outcome.CONFIRMED
+                ? RollbackState.CONFIRMED : RollbackState.UNCONFIRMED;
+        int rule = RollbackDecision.ruleOf(stage, rollback);
+        STATES.put(failure, new Recorded(state, rule));
+        LOG.log(Level.WARNING, "Falha ao gravar; desfazimento " + state + " (regra " + rule + " do RF-01)", failure);
+        throw failure;
+    }
+
+    /**
+     * Rule 5 of {@link RollbackDecision}: the commit went without error, so the write is done. A failure of the
+     * closing alone ({@code closeFailure}, or null) is logged and the result is returned.
+     */
+    static <T> T committed(T result, SQLException closeFailure) {
+        if (closeFailure == null) return result;
+        if (RollbackDecision.decide(RollbackDecision.Stage.CLOSE, RollbackDecision.RollbackResult.NOT_RUN)
+                == RollbackDecision.Outcome.SUCCESS_WITH_WARNING) {
+            LOG.log(Level.WARNING, "Falha ao fechar a conexão depois de gravar; os dados foram gravados.", closeFailure);
+        }
+        return result;
+    }
+
+    /** The exception {@link #inTransaction} has always thrown for a failure at {@code stage}. */
+    private static RuntimeException thrownFor(RollbackDecision.Stage stage, Exception e) {
+        if (stage == RollbackDecision.Stage.BEFORE_BODY) {
+            if (e instanceof RuntimeException re) return re; // opening the connection
+            return new RuntimeException("Erro de transação: " + e.getMessage(), e); // the BEGIN
+        }
+        if (e instanceof RuntimeException re) return re;
+        return new RuntimeException(e.getMessage(), e);
+    }
+
+    /**
+     * The ROLLBACK statement itself, not {@code Connection.rollback()}: the driver adds a new {@code begin
+     * immediate} to that one and the two errors could not be told apart. Its failure goes on {@code failure}.
+     */
+    private static RollbackDecision.RollbackResult rollbackStatement(Connection conn, RuntimeException failure) {
+        try (Statement st = conn.createStatement()) {
+            st.execute("ROLLBACK");
+            return RollbackDecision.RollbackResult.OK;
+        } catch (SQLException | RuntimeException rb) {
+            failure.addSuppressed(rb);
+            return rb instanceof SQLException sql
+                    ? RollbackDecision.resultOf(sql) : RollbackDecision.RollbackResult.FAILED;
+        }
+    }
+
+    private static SQLException closeConnection(Connection conn) {
+        if (conn == null) return null;
+        try {
+            conn.close();
+            return null;
+        } catch (SQLException e) {
+            return e;
+        }
+    }
+
+    private static void closeSuppressing(Connection conn, Error error) {
+        SQLException closeFailure = closeConnection(conn);
+        if (closeFailure != null) error.addSuppressed(closeFailure);
+    }
+
+    /** Failures of ledger writes and the state of their undoing; weak, so a thrown exception is not kept alive. */
+    private static final Map<Throwable, Recorded> STATES = Collections.synchronizedMap(new WeakHashMap<>());
+
+    /** What is known of the undoing of one failed write: the state and the number of the rule that fixed it. */
+    private record Recorded(RollbackState state, int rule) {
+    }
+
+    private static Optional<Recorded> recordedFor(Throwable failure) {
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            Recorded recorded = STATES.get(t);
+            if (recorded != null) return Optional.of(recorded);
+            if (t.getCause() == t) break;
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The state of the undoing of a failed ledger write, read from the exception {@link #inTransaction} threw or
+     * from any exception that wraps it (the first one found, from the outside in); empty when the failure is
+     * not from such a write.
+     */
+    public static Optional<RollbackState> rollbackStateOf(Throwable failure) {
+        return recordedFor(failure).map(Recorded::state);
+    }
+
+    /** Number (1 to 5) of the rule of U4B:RF-01 that fixed the state read by {@link #rollbackStateOf}; for the log and tests. */
+    public static Optional<Integer> rollbackRuleOf(Throwable failure) {
+        return recordedFor(failure).map(Recorded::rule);
     }
 
     private static Connection createConfiguredConnection() throws SQLException {
