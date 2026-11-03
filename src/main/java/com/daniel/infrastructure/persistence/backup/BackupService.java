@@ -852,23 +852,22 @@ public final class BackupService {
         return simple(Outcome.FAILED, kind, describe(e, where));
     }
 
-    /** pt-BR reason, without row values. */
+    /** pt-BR reason, without row values: the SQLite code decides before the words of the message. */
     static String describe(Throwable e, Path where) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             if (t instanceof CopyFailure cf) return cf.getMessage();
             if (t instanceof AccessDeniedException) return "sem permissão para gravar em " + where;
-            String m = String.valueOf(t.getMessage());
-            String lower = m.toLowerCase(Locale.ROOT);
-            if (lower.contains("sqlite_full") || lower.contains("disk is full") || lower.contains("not enough space")
-                    || lower.contains("espaço insuficiente")) {
-                return "o disco está cheio";
-            }
-            if (lower.contains("sqlite_cantopen") || lower.contains("unable to open")) {
-                return "não foi possível criar o arquivo da cópia em " + where + " (verifique a permissão de gravação)";
-            }
-            if (lower.contains("sqlite_busy") || lower.contains("database is locked")) {
-                return "os dados estavam em uso; tente de novo";
-            }
+            String reason = switch (SqliteErrors.of(t)) {
+                case SPACE -> "o disco está cheio";
+                case IO -> "erro de leitura ou gravação no disco em " + where;
+                case CANT_OPEN -> "não foi possível criar o arquivo da cópia em " + where
+                        + " (verifique a permissão de gravação)";
+                case WRITE_DENIED -> "sem permissão para gravar em " + where;
+                case BUSY -> "os dados estavam em uso; tente de novo";
+                case DAMAGED -> "o arquivo está danificado ou não é um banco de dados do BreakInv";
+                case OTHER -> null;
+            };
+            if (reason != null) return reason;
             if (t instanceof FileSystemException fse && fse.getReason() != null) {
                 return "erro ao gravar a cópia: " + fse.getReason();
             }

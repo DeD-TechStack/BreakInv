@@ -382,19 +382,26 @@ public final class RestoreService {
      * read failing as corrupt. Only asked after the verified copy has failed.
      */
     private static boolean currentDataDamaged() {
-        try (Connection c = Database.newConnection(); Statement st = c.createStatement();
+        return currentDataDamaged(Database::newConnection);
+    }
+
+    /** Opens a connection to the live database (test seam of {@link #currentDataDamaged(LiveConnection)}). */
+    interface LiveConnection {
+        Connection open() throws SQLException;
+    }
+
+    static boolean currentDataDamaged(LiveConnection live) {
+        try (Connection c = live.open(); Statement st = c.createStatement();
              java.sql.ResultSet rs = st.executeQuery("PRAGMA integrity_check(1)")) {
             return !(rs.next() && "ok".equalsIgnoreCase(rs.getString(1)));
         } catch (SQLException | RuntimeException e) {
-            String m = String.valueOf(e.getMessage()).toLowerCase(java.util.Locale.ROOT);
-            return m.contains("malformed") || m.contains("corrupt") || m.contains("not a database");
+            return SqliteErrors.ofChain(e) == SqliteErrors.Category.DAMAGED;
         }
     }
 
-    /** SQLITE_BUSY or SQLITE_LOCKED (primary codes 5 and 6): someone else holds the file right now. */
+    /** SQLITE_BUSY or SQLITE_LOCKED anywhere in the chain: someone else holds the file right now. */
     static boolean busy(SQLException e) {
-        int primary = e.getErrorCode() & 0xFF;
-        return primary == 5 || primary == 6;
+        return SqliteErrors.ofChain(e) == SqliteErrors.Category.BUSY;
     }
 
     /** Null when the live database holds exactly {@code expectedSha}; otherwise the reason. */
