@@ -13,8 +13,10 @@ import com.daniel.infrastructure.persistence.backup.FileInstanceLock;
 import com.daniel.infrastructure.persistence.backup.InstanceGuard;
 import com.daniel.infrastructure.persistence.backup.RestoreService;
 import com.daniel.infrastructure.persistence.backup.RetentionPolicy;
+import com.daniel.infrastructure.persistence.backup.SpaceProbe;
 import com.daniel.infrastructure.persistence.backup.StorageGuard;
 import com.daniel.infrastructure.persistence.backup.StoragePreferences;
+import com.daniel.infrastructure.persistence.backup.StorageReport;
 import com.daniel.infrastructure.persistence.config.Database;
 import com.daniel.infrastructure.persistence.repository.DatabaseLedgerAccess;
 import com.daniel.infrastructure.persistence.repository.FlowRepository;
@@ -72,7 +74,8 @@ public class AppConfig implements AutoCloseable {
             Database.setPreMigrationHook(beforeMigration != null ? beforeMigration
                     : (candidate, file) -> backupService.beforeMigration(candidate));
             // BRK-31: below the write limit on the data volume, user writes are refused before any SQL
-            this.storageGuard = StorageGuard.forDatabase(dbFile, StoragePreferences.forUser());
+            StoragePreferences preferences = StoragePreferences.forUser();
+            this.storageGuard = StorageGuard.forDatabase(dbFile, preferences);
             Database.setWriteGate(storageGuard.writeGate());
             backupService.spaceCheck(storageGuard::operation);
             this.connection = Database.open();
@@ -86,7 +89,10 @@ public class AppConfig implements AutoCloseable {
             // Production wiring: every movement goes through the ledger (portfolio_movement).
             this.dailyTrackingUseCase = new DailyTrackingUseCase(flowRepo, invRepo, snapRepo, txRepo, priceProvider,
                     new DatabaseLedgerAccess());
-            this.dataProtection = DataProtection.of(backupService, new RestoreService(backupService, guard));
+            this.dataProtection = DataProtection.of(backupService, new RestoreService(backupService, guard),
+                    new StorageReport(dbFile, BackupService.defaultFolder(dbFile), StorageGuard.sqliteTempFolder(),
+                            SpaceProbe.fileStores(), preferences, backupService),
+                    preferences);
         } catch (RuntimeException | Error failure) {
             // BRK-31 u4c: an attempt that fails lets go of what it took, the instance lock and the connection
             releaseInstanceLock(held);

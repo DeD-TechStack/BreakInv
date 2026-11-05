@@ -4,13 +4,16 @@ import com.daniel.infrastructure.persistence.config.Database;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -34,6 +37,30 @@ public final class StorageGuard {
     }
 
     public record Refused(String message, long shortfallBytes) implements Decision {
+    }
+
+    /**
+     * What an operation asks of one volume, for a screen that shows it. Measured: {@code freeBytes} is the measured
+     * free space and {@code unmeasuredReason} is null. Not measured: {@code freeBytes} is -1 and the reason says why.
+     *
+     * @param places  the places of the estimate that share this volume (a place without a measure is alone)
+     * @param shownAs the folder of the first of those places
+     */
+    public record NeedItem(Set<SpaceEstimate.Place> places, Path shownAs, long neededBytes, long freeBytes,
+                           String unmeasuredReason) {
+        public boolean measured() {
+            return unmeasuredReason == null;
+        }
+    }
+
+    /**
+     * The need of one operation, a reading with no decision. "Without estimate" is {@code unknownReason} set and no
+     * items: a size is unknown, so the need cannot be split by volume.
+     */
+    public record Need(String operation, List<NeedItem> items, String unknownReason) {
+        public boolean estimated() {
+            return unknownReason == null;
+        }
     }
 
     private record Cached(SpaceProbe.Space space, long atNanos) {
@@ -129,6 +156,61 @@ public final class StorageGuard {
         }
         if (message != null) return new Refused(message, worst);
         return new Allowed(free.values().stream().mapToLong(Long::longValue).min().orElse(-1));
+    }
+
+    /**
+     * The need of an operation, per volume, for a screen: the same places and the same probe as
+     * {@link #operation}, but it only reads. It decides nothing, refuses nothing, and neither records a warning nor
+     * touches the cached measure.
+     */
+    public Need need(SpaceEstimate.Estimate estimate, Map<SpaceEstimate.Place, Path> places) {
+        if (!estimate.known()) return new Need(estimate.operation(), List.of(), estimate.unknownReason());
+        Map<SpaceEstimate.Place, Path> where = new EnumMap<>(SpaceEstimate.Place.class);
+        where.put(SpaceEstimate.Place.DATA, dataFolder);
+        where.put(SpaceEstimate.Place.TEMP, tempFolder);
+        where.putAll(places);
+        Map<SpaceEstimate.Place, Object> volumeOf = new EnumMap<>(SpaceEstimate.Place.class);
+        Map<Object, Long> free = new LinkedHashMap<>();
+        Map<Object, String> unmeasured = new LinkedHashMap<>();
+        Map<Object, Set<SpaceEstimate.Place>> placesOf = new LinkedHashMap<>();
+        Map<Object, Path> shownAs = new LinkedHashMap<>();
+        for (SpaceEstimate.Phase phase : estimate.phases()) {
+            for (SpaceEstimate.Place place : phase.live().keySet()) {
+                if (volumeOf.containsKey(place)) continue;
+                Path at = where.get(place);
+                SpaceProbe.Space s = at == null ? new SpaceProbe.Unavailable("pasta não informada") : probe.usableSpace(at);
+                // a place without a measure gets a volume key of its own: it is never summed with another place
+                Object volume;
+                if (s instanceof SpaceProbe.Measured m && m.volume() != null) {
+                    volume = m.volume();
+                    free.put(volume, m.usableBytes());
+                } else {
+                    volume = new Object();
+                    unmeasured.put(volume, why(s));
+                }
+                volumeOf.put(place, volume);
+                placesOf.computeIfAbsent(volume, v -> EnumSet.noneOf(SpaceEstimate.Place.class)).add(place);
+                shownAs.putIfAbsent(volume, at);
+            }
+        }
+        Map<Object, Long> peak;
+        try {
+            peak = estimate.peakPerVolume(volumeOf);
+        } catch (IllegalStateException | NullPointerException e) {
+            String why = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return new Need(estimate.operation(), List.of(), why);
+        }
+        List<NeedItem> items = new ArrayList<>();
+        for (Map.Entry<Object, Long> entry : peak.entrySet()) {
+            Object volume = entry.getKey();
+            Set<SpaceEstimate.Place> in = Set.copyOf(placesOf.get(volume));
+            if (unmeasured.containsKey(volume)) {
+                items.add(new NeedItem(in, shownAs.get(volume), entry.getValue(), -1, unmeasured.get(volume)));
+            } else {
+                items.add(new NeedItem(in, shownAs.get(volume), entry.getValue(), free.get(volume), null));
+            }
+        }
+        return new Need(estimate.operation(), List.copyOf(items), null);
     }
 
     /**
