@@ -23,6 +23,7 @@ import com.daniel.presentation.view.components.MovementDialog;
 import com.daniel.presentation.view.components.StatStrip;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.util.Breakpoint;
+import com.daniel.presentation.view.util.DailySnapshotNotice;
 import com.daniel.presentation.view.util.Dialogs;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
@@ -50,7 +51,10 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+import java.util.logging.Logger;
 
 /**
  * Carteira: cadastro (metadados) + posição/custo/caixa derivados do ledger.
@@ -74,7 +78,12 @@ public final class InvestmentTypesPage implements ResponsivePage {
     static final String STAT_COST = "Custo das posições";
     static final String STAT_COUNT = "Ativos";
 
+    private static final Logger LOG = Logger.getLogger(InvestmentTypesPage.class.getName());
+
     private final DailyTrackingUseCase daily;
+    private final Executor worker;
+    private final Executor ui;
+    private final Consumer<String> warn;
     private final VBox root = new VBox(16);
     private final ScrollPane scrollPane = new ScrollPane();
     private final BorderPane body = new BorderPane();
@@ -163,8 +172,20 @@ public final class InvestmentTypesPage implements ResponsivePage {
 
     /** Production composition passes the app's single preferences instance; tests pass an in-memory node. */
     public InvestmentTypesPage(DailyTrackingUseCase dailyTrackingUseCase, UiPreferences prefs) {
+        this(dailyTrackingUseCase, prefs, UiExecutor.get(), Platform::runLater, ToastHost::showWarn);
+    }
+
+    /**
+     * Test seam: the executor the background work runs on (worker), the one the answers and the notice run on (ui)
+     * and what shows the notice of a failed daily snapshot (warn).
+     */
+    InvestmentTypesPage(DailyTrackingUseCase dailyTrackingUseCase, UiPreferences prefs, Executor worker, Executor ui,
+                        Consumer<String> warn) {
         this.daily = dailyTrackingUseCase;
         this.prefs = prefs;
+        this.worker = worker;
+        this.ui = ui;
+        this.warn = warn;
 
         root.getStyleClass().add("page-root");
 
@@ -1113,7 +1134,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
                 if (inv.investedValue() != null) total += inv.investedValue().multiply(BigDecimal.valueOf(100)).longValue();
             }
             return new PageData(items, statuses, cash, total, pending, legacy);
-        }, UiExecutor.get()).whenComplete((data, err) -> Platform.runLater(() -> {
+        }, worker).whenComplete((data, err) -> ui.execute(() -> {
             if (refreshEpoch.get() != epoch) return;
             if (err != null) {
                 Throwable c = err.getCause() != null ? err.getCause() : err;
@@ -1182,9 +1203,10 @@ public final class InvestmentTypesPage implements ResponsivePage {
         }));
     }
 
-    private void refreshAndSnapshot() {
-        UiExecutor.get().execute(() -> {
-            try { daily.takeSnapshotIfNeeded(LocalDate.now()); } catch (Exception ignored) {}
+    void refreshAndSnapshot() {
+        worker.execute(() -> {
+            try { daily.takeSnapshotIfNeeded(LocalDate.now()); }
+            catch (RuntimeException failure) { DailySnapshotNotice.report(LOG, failure, ui, warn); }
         });
         refresh();
     }

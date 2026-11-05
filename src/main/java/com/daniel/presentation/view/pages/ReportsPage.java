@@ -12,6 +12,7 @@ import com.daniel.presentation.view.components.Panel;
 import com.daniel.presentation.view.components.StatStrip;
 import com.daniel.presentation.view.components.ToastHost;
 import com.daniel.presentation.view.util.Breakpoint;
+import com.daniel.presentation.view.util.DailySnapshotNotice;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
 import com.daniel.presentation.viewmodel.MovementForm;
@@ -31,7 +32,9 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.logging.Logger;
 
 /**
  * Extrato (direction A): the month is the context of the page (navigation in the header), the
@@ -48,6 +51,9 @@ public final class ReportsPage implements ResponsivePage {
     private final DailyTrackingUseCase daily;
     private final Executor worker;
     private final Executor ui;
+    private final Consumer<String> warn;
+
+    private static final Logger LOG = Logger.getLogger(ReportsPage.class.getName());
 
     private final VBox root = new VBox(16);
     private final ScrollPane scrollPane = new ScrollPane();
@@ -123,9 +129,15 @@ public final class ReportsPage implements ResponsivePage {
 
     /** Test seam: the executors the month load runs on (worker) and answers on (ui). */
     ReportsPage(DailyTrackingUseCase daily, Executor worker, Executor ui) {
+        this(daily, worker, ui, ToastHost::showWarn);
+    }
+
+    /** Test seam: also what shows the notice of a failed daily snapshot (it runs on {@code ui}). */
+    ReportsPage(DailyTrackingUseCase daily, Executor worker, Executor ui, Consumer<String> warn) {
         this.daily = daily;
         this.worker = worker;
         this.ui = ui;
+        this.warn = warn;
 
         root.getStyleClass().add("page-root");
 
@@ -719,10 +731,18 @@ public final class ReportsPage implements ResponsivePage {
                 "Cria um estorno vinculado que desfaz exatamente os efeitos de \"" + row.description() + "\". O original continua no extrato.",
                 MovementForm.reversal(e.movementId()), daily, saved -> {
                     ToastHost.showSuccess("Estorno nº " + saved.id() + " registrado.");
-                    UiExecutor.get().execute(() -> { try { daily.takeSnapshotIfNeeded(LocalDate.now()); } catch (Exception ignored) {} });
-                    reload();
+                    snapshotAndReload();
                 });
         d.showAndWait();
+    }
+
+    /** After a reversal: today's snapshot on the worker, then the statement reloads whatever the snapshot did. */
+    void snapshotAndReload() {
+        worker.execute(() -> {
+            try { daily.takeSnapshotIfNeeded(LocalDate.now()); }
+            catch (RuntimeException failure) { DailySnapshotNotice.report(LOG, failure, ui, warn); }
+        });
+        reload();
     }
 
     /** One row of the statement as shown; {@code number} is the movement number ("—" for old records). */

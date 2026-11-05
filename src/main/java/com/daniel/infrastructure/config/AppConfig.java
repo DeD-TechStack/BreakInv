@@ -41,40 +41,67 @@ public class AppConfig implements AutoCloseable {
     private final StorageGuard storageGuard;
 
     public AppConfig() {
+        this(null);
+    }
+
+    /**
+     * @param beforeMigration only for tests (BRK-31 u4c, U4C:RF-01 item 8): the action that runs before the migration
+     *                        in place of the real copy; production always passes null, the real copy
+     *                        ({@code BackupService.beforeMigration}).
+     */
+    public AppConfig(Database.PreMigrationHook beforeMigration) {
         Path dbFile = Database.currentFile()
                 .orElseThrow(() -> new IllegalStateException("o banco de dados precisa de um arquivo"));
         // BRK-30: every open window holds the data folder; a restore waits until it is the only one
-        this.instanceLock = holdInstanceLock(dbFile);
-        this.backupService = new BackupService(dbFile, BackupService.defaultFolder(dbFile),
-                BackupService.SourceAccess.opening(Database::newConnection), Clock.systemDefaultZone(),
-                RetentionPolicy.defaults());
-        InstanceGuard guard = instanceLock != null ? instanceLock : InstanceGuard.UNVERIFIABLE;
-        // temps of an interrupted copy are removed only when no other window could be writing them
-        if (guard.tryAcquireExclusive()) {
-            try {
-                backupService.cleanupInterrupted();
-            } finally {
-                guard.releaseExclusive();
+        FileInstanceLock held = holdInstanceLock(dbFile);
+        try {
+            this.instanceLock = held;
+            this.backupService = new BackupService(dbFile, BackupService.defaultFolder(dbFile),
+                    BackupService.SourceAccess.opening(Database::newConnection), Clock.systemDefaultZone(),
+                    RetentionPolicy.defaults());
+            InstanceGuard guard = instanceLock != null ? instanceLock : InstanceGuard.UNVERIFIABLE;
+            // temps of an interrupted copy are removed only when no other window could be writing them
+            if (guard.tryAcquireExclusive()) {
+                try {
+                    backupService.cleanupInterrupted();
+                } finally {
+                    guard.releaseExclusive();
+                }
             }
+            // an existing database is copied and verified before any migration changes it
+            Database.setPreMigrationHook(beforeMigration != null ? beforeMigration
+                    : (candidate, file) -> backupService.beforeMigration(candidate));
+            // BRK-31: below the write limit on the data volume, user writes are refused before any SQL
+            this.storageGuard = StorageGuard.forDatabase(dbFile, StoragePreferences.forUser());
+            Database.setWriteGate(storageGuard.writeGate());
+            backupService.spaceCheck(storageGuard::operation);
+            this.connection = Database.open();
+
+            IFlowRepository flowRepo = new FlowRepository();
+            IInvestmentTypeRepository invRepo = new InvestmentTypeRepository();
+            ISnapshotRepository snapRepo = new SnapshotRepository();
+            ITransactionRepository txRepo = new TransactionRepository();
+            IStockPriceProvider priceProvider = new BrapiStockPriceProvider();
+
+            // Production wiring: every movement goes through the ledger (portfolio_movement).
+            this.dailyTrackingUseCase = new DailyTrackingUseCase(flowRepo, invRepo, snapRepo, txRepo, priceProvider,
+                    new DatabaseLedgerAccess());
+            this.dataProtection = DataProtection.of(backupService, new RestoreService(backupService, guard));
+        } catch (RuntimeException | Error failure) {
+            // BRK-31 u4c: an attempt that fails lets go of what it took, the instance lock and the connection
+            releaseInstanceLock(held);
+            Database.close();
+            throw failure;
         }
-        // an existing database is copied and verified before any migration changes it
-        Database.setPreMigrationHook((candidate, file) -> backupService.beforeMigration(candidate));
-        // BRK-31: below the write limit on the data volume, user writes are refused before any SQL
-        this.storageGuard = StorageGuard.forDatabase(dbFile, StoragePreferences.forUser());
-        Database.setWriteGate(storageGuard.writeGate());
-        backupService.spaceCheck(storageGuard::operation);
-        this.connection = Database.open();
+    }
 
-        IFlowRepository flowRepo = new FlowRepository();
-        IInvestmentTypeRepository invRepo = new InvestmentTypeRepository();
-        ISnapshotRepository snapRepo = new SnapshotRepository();
-        ITransactionRepository txRepo = new TransactionRepository();
-        IStockPriceProvider priceProvider = new BrapiStockPriceProvider();
-
-        // Production wiring: every movement goes through the ledger (portfolio_movement).
-        this.dailyTrackingUseCase = new DailyTrackingUseCase(flowRepo, invRepo, snapRepo, txRepo, priceProvider,
-                new DatabaseLedgerAccess());
-        this.dataProtection = DataProtection.of(backupService, new RestoreService(backupService, guard));
+    private static void releaseInstanceLock(FileInstanceLock held) {
+        if (held == null) return;
+        try {
+            held.close();
+        } catch (IOException e) {
+            LOG.log(Level.FINE, "instance lock close", e);
+        }
     }
 
     private static FileInstanceLock holdInstanceLock(Path dbFile) {
