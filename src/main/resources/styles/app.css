@@ -2465,3 +2465,19 @@
 .chart-toolbar .filter-toggle:hover, .chart-toolbar .bench-toggle:hover { -fx-background-color: -color-surface-2; -fx-text-fill: -color-text-1; }
 .chart-toolbar .filter-toggle:selected, .chart-toolbar .bench-toggle:selected { -fx-background-color: -color-accent-soft; -fx-text-fill: -color-accent; }
 .chart-toolbar .filter-toggle:focused, .chart-toolbar .bench-toggle:focused { -fx-border-color: -color-info; -fx-border-width: 1; -fx-effect: null; }
+
+/* ── BRK-31 u4c-vis · the failure window (OpeningFailurePane) follows the DESIGN.md ──────────────────
+   New blocks only, last in the sheet: the pane is the Scene root, so `.root` (bg-0) is overridden by order.
+   Elevated surface (surface-2), radius 0 (a top-level window: the corners are Windows'), no border, no shadow,
+   padding 24. The reason reads in text-1, the file, copies and guidance in text-2; the alert icon is 15 px
+   (the size of .h3) and wins over the 14 px of .icon-warn by specificity. Spacing between the groups is set in
+   the pane (16 / 16 / 24; 8 inside the data group). */
+.opening-failure-pane {
+    -fx-background-color: -color-surface-2;
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
+    -fx-padding: 24;
+}
+.opening-failure-pane .opening-failure-reason { -fx-text-fill: -color-text-1; }
+.opening-failure-pane .opening-failure-detail { -fx-text-fill: -color-text-2; }
+.opening-failure-pane .opening-failure-icon { -fx-icon-size: 15px; }
