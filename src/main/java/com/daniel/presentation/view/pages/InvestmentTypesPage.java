@@ -27,6 +27,7 @@ import com.daniel.presentation.view.util.DailySnapshotNotice;
 import com.daniel.presentation.view.util.Dialogs;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.UiNumbers;
 import com.daniel.presentation.view.util.UiPreferences;
 import com.daniel.presentation.view.util.WriteFailureText;
 import com.daniel.presentation.viewmodel.MovementForm;
@@ -685,7 +686,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         TableColumn<InvestmentType, String> qtyCol = new TableColumn<>("Qtd.");
         qtyColRef = qtyCol;
         qtyCol.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(
-                c.getValue().quantity() == null ? "—" : c.getValue().quantity().toString()));
+                c.getValue().quantity() == null ? "—" : UiNumbers.integer(c.getValue().quantity())));
         qtyCol.setPrefWidth(75);
         qtyCol.setMinWidth(75);
         qtyCol.setMaxWidth(100);
@@ -968,7 +969,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
         long costCents = inv.investedValue() == null ? -1 : inv.investedValue().multiply(BigDecimal.valueOf(100)).longValue();
         String hint;
         if (inv.quantity() != null && inv.purchasePrice() != null) {
-            hint = inv.quantity() + " un. × preço médio R$ " + String.format("%.2f", inv.purchasePrice().doubleValue());
+            hint = UiNumbers.integer(inv.quantity()) + " un. × preço médio " + UiNumbers.moneyExact(inv.purchasePrice());
         } else {
             hint = "Custo da posição";
         }
@@ -978,11 +979,11 @@ public final class InvestmentTypesPage implements ResponsivePage {
         details.addField("Categoria", categoryText(inv));
         details.addField("Liquidez", liquidityText(inv));
         details.addField("Data", inv.investmentDate() != null ? DATE_FMT.format(inv.investmentDate()) : "—");
-        details.addField("Quantidade", inv.quantity() == null ? "—" : inv.quantity().toString());
+        details.addField("Quantidade", inv.quantity() == null ? "—" : UiNumbers.integer(inv.quantity()));
         if (inv.purchasePrice() != null) {
-            details.addField("Preço médio", "R$ " + String.format("%.2f", inv.purchasePrice().doubleValue()));
+            details.addField("Preço médio", UiNumbers.moneyExact(inv.purchasePrice()));
         }
-        details.addField("Rentab. anual", inv.profitability() != null ? String.format("%.2f%%", inv.profitability()) : "—");
+        details.addField("Rentab. anual", inv.profitability() != null ? UiNumbers.pctExact(inv.profitability(), 2) : "—");
         details.addField("Situação", statusBadge(st));
         if (inv.typeOfInvestment() != null) details.addField("Tipo", typeText(inv.typeOfInvestment()));
 
@@ -1154,7 +1155,7 @@ public final class InvestmentTypesPage implements ResponsivePage {
                 refreshingItems = false;
             }
             table.refresh();
-            strip.set(STAT_COUNT, String.valueOf(data.items().size()));
+            strip.set(STAT_COUNT, UiNumbers.integer(data.items().size()));
             strip.set(STAT_COST, daily.brl(data.totalCostCents()));
             applyCashStatus(data.cash());
             if (previous != null) {
@@ -1302,11 +1303,14 @@ public final class InvestmentTypesPage implements ResponsivePage {
         if (sel == null) { ToastHost.showWarn("Selecione um investimento para vender."); return; }
         if (!requireMovable(sel)) return;
         InvestmentStatus st = statusById.get((long) sel.id());
-        openMovement("Venda — " + sel.name(),
-                st.mode() == PositionMode.QUANTITY
-                        ? "Reduz a posição (máx. " + st.quantity() + " un.) e aumenta o caixa. Ganho realizado = venda − custo médio."
-                        : "Resgate ao custo (máx. " + daily.brl(st.costCents()) + "): volta ao caixa sem ganho inferido.",
-                MovementForm.sell(sel.id(), st.mode()));
+        openMovement("Venda — " + sel.name(), sellHint(st), MovementForm.sell(sel.id(), st.mode()));
+    }
+
+    /** The line of the sale dialog that says how much can be sold. */
+    String sellHint(InvestmentStatus st) {
+        return st.mode() == PositionMode.QUANTITY
+                ? "Reduz a posição (máx. " + UiNumbers.integer(st.quantity()) + " un.) e aumenta o caixa. Ganho realizado = venda − custo médio."
+                : "Resgate ao custo (máx. " + daily.brl(st.costCents()) + "): volta ao caixa sem ganho inferido.";
     }
 
     private void onAdjustPosition() {

@@ -19,6 +19,7 @@ import com.daniel.presentation.view.util.ChartCrosshair;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.Motion;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.UiNumbers;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Parent;
@@ -351,10 +352,11 @@ public final class AssetAnalysisPage implements ResponsivePage {
         ChartAxisUtils.installTemporalAxis(xAxis, areaChart, () -> currentDateFmt, () -> lastEpochSecs);
         // R2-16: the axis names the dates and the unit; the crosshair gives the exact point
         yAxis.setLabel("Preço (R$)");
+        yAxis.setTickLabelFormatter(UiNumbers.axisConverter());
 
         StackPane chartWrapper = ChartCrosshair.installTemporal(areaChart,
                 epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(currentDateFmt),
-                y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+                UiNumbers::money);
         VBox.setVgrow(chartWrapper, Priority.ALWAYS);
 
         chartEmptyLabel.getStyleClass().add("text-secondary");
@@ -446,25 +448,27 @@ public final class AssetAnalysisPage implements ResponsivePage {
     /** Result state: assigns every figure at once (the pulse only highlights the change). */
     void renderQuote(StockData data) {
         String name = data.longName() != null ? data.longName() : data.ticker();
-        hero.setValue(money(data.regularMarketPrice()));
+        hero.setValue(UiNumbers.money(data.regularMarketPrice()));
         double chg = data.regularMarketChange();
         double chgPct = data.regularMarketChangePercent();
-        String tone = chgPct > 0 ? "pos" : chgPct < 0 ? "neg" : "muted";
-        hero.setSecondary((chg >= 0 ? "+ " : "- ") + money(Math.abs(chg)) + " · " + signedPct(chgPct) + " hoje", tone);
+        // the tone is the SHOWN percentage's: 0,004 % reads 0,00 % and is neutral
+        hero.setSecondary(UiNumbers.signedMoney(chg) + " · " + UiNumbers.signedPct(chgPct, 2) + " hoje",
+                UiNumbers.tone(chgPct, 2));
         hero.setContext(name + " (" + data.ticker() + ") · cotação BRAPI, atraso típico de 15–30 min no plano gratuito");
 
-        dayStrip.set(STAT_OPEN, money(data.regularMarketOpen()));
-        dayStrip.set(STAT_HIGH, money(data.regularMarketDayHigh()));
-        dayStrip.set(STAT_LOW, money(data.regularMarketDayLow()));
-        dayStrip.set(STAT_VOLUME, volume(data.regularMarketVolume()));
+        dayStrip.set(STAT_OPEN, UiNumbers.money(data.regularMarketOpen()));
+        dayStrip.set(STAT_HIGH, UiNumbers.money(data.regularMarketDayHigh()));
+        dayStrip.set(STAT_LOW, UiNumbers.money(data.regularMarketDayLow()));
+        dayStrip.set(STAT_VOLUME, UiNumbers.volume(data.regularMarketVolume()));
 
-        setOptional(yearStrip, STAT_WEEK_HIGH, data.fiftyTwoWeekHigh() > 0, money(data.fiftyTwoWeekHigh()));
-        setOptional(yearStrip, STAT_WEEK_LOW, data.fiftyTwoWeekLow() > 0, money(data.fiftyTwoWeekLow()));
-        setOptional(yearStrip, STAT_AVG200, data.twoHundredDayAverage() > 0, money(data.twoHundredDayAverage()));
+        setOptional(yearStrip, STAT_WEEK_HIGH, data.fiftyTwoWeekHigh() > 0, UiNumbers.money(data.fiftyTwoWeekHigh()));
+        setOptional(yearStrip, STAT_WEEK_LOW, data.fiftyTwoWeekLow() > 0, UiNumbers.money(data.fiftyTwoWeekLow()));
+        setOptional(yearStrip, STAT_AVG200, data.twoHundredDayAverage() > 0, UiNumbers.money(data.twoHundredDayAverage()));
+        // the dash is for a raw zero (unknown); a change that only SHOWS zero is "0,00%" in the neutral tone
         double yearChg = data.fiftyTwoWeekChange();
-        if (yearChg != 0) yearStrip.set(STAT_YEAR_CHANGE, signedPct(yearChg * 100), yearChg > 0 ? "pos" : "neg");
+        if (yearChg != 0) yearStrip.set(STAT_YEAR_CHANGE, UiNumbers.signedPct(yearChg * 100, 2), UiNumbers.tone(yearChg * 100, 2));
         else yearStrip.set(STAT_YEAR_CHANGE, "—", "muted");
-        setOptional(yearStrip, STAT_DY, data.dividendYield() > 0, pct(data.dividendYield()));
+        setOptional(yearStrip, STAT_DY, data.dividendYield() > 0, UiNumbers.pct(data.dividendYield(), 2));
 
         hide(loadingBox); hide(errorBanner); hide(noResultLabel); hide(emptyState);
         boolean wasVisible = resultBox.isVisible();
@@ -476,24 +480,6 @@ public final class AssetAnalysisPage implements ResponsivePage {
     private static void setOptional(StatStrip strip, String label, boolean present, String text) {
         if (present) strip.set(label, text);
         else strip.set(label, "—", "muted");
-    }
-
-    private static String money(double v) {
-        return String.format("R$ %.2f", v).replace('.', ',');
-    }
-
-    private static String pct(double v) {
-        return String.format("%.2f%%", v).replace('.', ',');
-    }
-
-    private static String signedPct(double v) {
-        return String.format("%s%.2f%%", v >= 0 ? "+" : "", v).replace('.', ',');
-    }
-
-    private static String volume(long vol) {
-        if (vol >= 1_000_000) return String.format("%.1fM", vol / 1_000_000.0).replace('.', ',');
-        if (vol >= 1_000) return String.format("%.1fK", vol / 1_000.0).replace('.', ',');
-        return vol > 0 ? String.valueOf(vol) : "—";
     }
 
     // ── Chart ──────────────────────────────────────────────────────────────

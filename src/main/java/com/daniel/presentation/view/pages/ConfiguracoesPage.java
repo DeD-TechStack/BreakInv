@@ -12,6 +12,7 @@ import com.daniel.presentation.view.components.WelcomeOverlay;
 import com.daniel.presentation.view.layout.AdaptivePair;
 import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.UiNumbers;
 import com.daniel.presentation.view.util.UiPreferences;
 
 import javafx.application.Platform;
@@ -203,7 +204,7 @@ public final class ConfiguracoesPage implements ResponsivePage, DataOperations {
 
     private void setRate(String label, String fraction) {
         if (fraction == null) ratesStrip.set(label, "—", "muted");
-        else ratesStrip.set(label, String.format("%.2f%%", Double.parseDouble(fraction) * 100).replace('.', ','));
+        else ratesStrip.set(label, UiNumbers.pct(Double.parseDouble(fraction) * 100, 2));
     }
 
     private Panel buildAppearanceSection() {

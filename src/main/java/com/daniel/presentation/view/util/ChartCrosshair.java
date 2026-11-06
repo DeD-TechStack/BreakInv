@@ -20,8 +20,7 @@ import java.util.function.Function;
  *
  * <h3>Uso para gráficos com CategoryAxis (ex: BarChart de rentabilidade):</h3>
  * <pre>
- *   StackPane wrapper = ChartCrosshair.install(myLineChart,
- *       y -> String.format("%.2f%%", y));
+ *   StackPane wrapper = ChartCrosshair.install(myLineChart, UiNumbers::signedPct2);
  *   vbox.getChildren().add(wrapper);
  * </pre>
  *
@@ -29,15 +28,17 @@ import java.util.function.Function;
  * <pre>
  *   StackPane wrapper = ChartCrosshair.installTemporal(myAreaChart,
  *       epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(fmt),
- *       y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+ *       UiNumbers::money);
  * </pre>
  *
  * <h3>Uso para gráficos com NumberAxis em ambos os eixos (ex: Simulação):</h3>
  * <pre>
  *   StackPane wrapper = ChartCrosshair.installNumeric(projectionChart,
  *       x -> "Mês " + x,
- *       y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+ *       UiNumbers::money);
  * </pre>
+ *
+ * <p>Os números do tooltip saem sempre de {@link UiNumbers} (pt-BR, qualquer que seja o locale da JVM).</p>
  */
 public final class ChartCrosshair {
 

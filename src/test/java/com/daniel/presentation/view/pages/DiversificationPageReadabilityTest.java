@@ -151,6 +151,19 @@ class DiversificationPageReadabilityTest {
         });
     }
 
+    /** BRK-12 v1 (V1:RF-05.2): with the JVM in en-US no text of the page is en-US or lacks a thousands separator. */
+    @Test
+    void noTextIsEnUsOrWithoutThousandsSeparators() {
+        FxTestSupport.runAndWait(() -> {
+            var previous = java.util.Locale.getDefault();
+            try {
+                java.util.Locale.setDefault(java.util.Locale.US);
+                page.onShow(); drain(); layOutWide();
+                Brk12V1Support.assertPtBr(view, "Diversificação");
+            } finally { java.util.Locale.setDefault(previous); }
+        });
+    }
+
     @Test
     void comparisonRowsApplyTheirSpacingAndNeverSplitALargeMoneyAmount() {
         FxTestSupport.runAndWait(() -> {

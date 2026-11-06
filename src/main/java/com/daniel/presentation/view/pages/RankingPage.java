@@ -14,6 +14,7 @@ import com.daniel.presentation.view.layout.AdaptivePair;
 import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.ChartAxisUtils;
 import com.daniel.presentation.view.util.ChartCrosshair;
+import com.daniel.presentation.view.util.UiNumbers;
 import com.daniel.presentation.view.util.ChartSeriesStyle;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.Motion;
@@ -63,13 +64,14 @@ public final class RankingPage implements ResponsivePage {
     private static final Logger LOG = Logger.getLogger(RankingPage.class.getName());
     private static final DateTimeFormatter MA_DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yy");
 
-    // Day-change lists (A-V5): minimum widths that keep the ticker, a four-digit quote and the
-    // column title whole; the change column takes what is left. Below the full budget the title
-    // shortens, and the lists stack before two of them would have to share a cut row.
+    // Day-change lists (A-V5): minimum widths that keep the ticker, a four-digit quote (with its
+    // thousands dot) and the column title whole; the change column takes what is left. Below the
+    // full budget the title shortens, and the lists stack before two of them would have to share a cut row.
     static final String CHANGE_TITLE = "Variação do dia";
     static final String CHANGE_SHORT_TITLE = "Var. do dia";
     static final double LIST_TICKER_MIN = 72;
-    static final double LIST_PRICE_MIN = 96;
+    /** "R$ 8.888,88" in the 13 px SemiBold figures is 99 px with the cell padding; checked by Brk12V1RankingTest. */
+    static final double LIST_PRICE_MIN = 100;
     static final double LIST_CHANGE_MIN = 124;
     static final double LIST_CHANGE_SHORT_MIN = 100;
     private static final double LIST_GAP = 16;
@@ -346,6 +348,7 @@ public final class RankingPage implements ResponsivePage {
         barChart.getStyleClass().add("bar-chart");
         barYAxis.setAutoRanging(true);
         barYAxis.setLabel("Variação do dia (%)");
+        barYAxis.setTickLabelFormatter(UiNumbers.axisConverter());
         barXAxis.setLabel("");
         // No installSmartAxis on the bar chart — the native CategoryAxis owns the ticker labels;
         // hiding intermediate labels would break its readability.
@@ -386,7 +389,7 @@ public final class RankingPage implements ResponsivePage {
                 super.updateItem(item, empty);
                 getStyleClass().remove("num");
                 if (empty || item == null) { setText(null); return; }
-                setText(money(item.doubleValue()));
+                setText(UiNumbers.money(item.doubleValue()));
                 getStyleClass().add("num");
             }
         });
@@ -400,11 +403,11 @@ public final class RankingPage implements ResponsivePage {
             @Override
             protected void updateItem(Number item, boolean empty) {
                 super.updateItem(item, empty);
-                getStyleClass().removeAll("pos", "neg", "num");
+                getStyleClass().removeAll("pos", "neg", "muted", "num");
                 if (empty || item == null) { setText(null); return; }
                 double v = item.doubleValue();
-                setText(signedPct(v));
-                getStyleClass().addAll("num", v >= 0 ? "pos" : "neg");
+                setText(UiNumbers.signedPct(v, 2));
+                getStyleClass().addAll("num", UiNumbers.tone(v, 2));
             }
         });
         chgCol.setMinWidth(LIST_CHANGE_MIN);
@@ -621,17 +624,17 @@ public final class RankingPage implements ResponsivePage {
         StockData sd = lastStocks.get(row.ticker());
         String name = sd != null && sd.longName() != null ? sd.longName() : row.name();
         details.setTitle(row.ticker(), name);
-        details.setHeadline(money(row.price()), "cotação BRAPI");
+        details.setHeadline(UiNumbers.money(row.price()), "cotação BRAPI");
         details.setPrimaryActions();
         details.setAdvancedActions();
         details.clearFields();
-        details.addField("Variação do dia", signedPct(row.changePct()));
+        details.addField("Variação do dia", UiNumbers.signedPct(row.changePct(), 2));
         if (sd != null) {
-            details.addField("Variação em R$", (sd.regularMarketChange() >= 0 ? "+ " : "- ") + money(Math.abs(sd.regularMarketChange())));
-            details.addField("Abertura", money(sd.regularMarketOpen()));
-            details.addField("Máx. do dia", money(sd.regularMarketDayHigh()));
-            details.addField("Mín. do dia", money(sd.regularMarketDayLow()));
-            details.addField("Volume", volume(sd.regularMarketVolume()));
+            details.addField("Variação em R$", UiNumbers.signedMoney(sd.regularMarketChange()));
+            details.addField("Abertura", UiNumbers.money(sd.regularMarketOpen()));
+            details.addField("Máx. do dia", UiNumbers.money(sd.regularMarketDayHigh()));
+            details.addField("Mín. do dia", UiNumbers.money(sd.regularMarketDayLow()));
+            details.addField("Volume", UiNumbers.volume(sd.regularMarketVolume()));
         }
         details.setNote("Valores da cotação do ativo na B3, não da sua posição.");
         details.open(false);
@@ -713,6 +716,7 @@ public final class RankingPage implements ResponsivePage {
         returnChart.setCreateSymbols(false);
         returnChart.setMinHeight(280);
         retYAxis.setLabel("Variação do preço (%)");
+        retYAxis.setTickLabelFormatter(UiNumbers.axisConverter());
         retXAxis.setLabel("");
 
         // Temporal axis: distribution proportional to the real interval between dates
@@ -722,7 +726,7 @@ public final class RankingPage implements ResponsivePage {
         hide(returnLoadingLabel);
         StackPane returnWrapper = ChartCrosshair.installTemporal(returnChart,
                 epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(currentReturnFmt),
-                y -> signedPct(y));
+                UiNumbers::signedPct2);
         StackPane returnArea = new StackPane(returnWrapper, returnEmpty);
         waiting(returnChart, returnEmpty);
 
@@ -842,45 +846,25 @@ public final class RankingPage implements ResponsivePage {
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private static String money(double v) {
-        return String.format("R$ %.2f", v).replace('.', ',');
-    }
-
-    private static String signedPct(double v) {
-        return String.format("%s%.2f%%", v >= 0 ? "+" : "", v).replace('.', ',');
-    }
-
-    private static String volume(long vol) {
-        if (vol >= 1_000_000) return String.format("%.1fM", vol / 1_000_000.0).replace('.', ',');
-        if (vol >= 1_000) return String.format("%.1fK", vol / 1_000.0).replace('.', ',');
-        return vol > 0 ? String.valueOf(vol) : "—";
-    }
-
     private void applyBarTooltip(XYChart.Data<String, Number> bar, double pct, StockData sd) {
         Node node = bar.getNode();
         if (node == null) return;
 
-        String color      = pct >= 0 ? "#22c55e" : "#ef4444";
-        String hoverColor = pct >= 0 ? "#16a34a" : "#dc2626";
-        String baseStyle  = "-fx-background-color: " + color + "; -fx-background-radius: 3 3 0 0;";
-
-        node.setStyle(baseStyle);
+        // The fill is the tone of the SHOWN change, from the stylesheet (tokens, no hex); the hover is its :hover rule.
+        node.getStyleClass().removeAll("var-bar-pos", "var-bar-neg", "var-bar-muted");
+        node.getStyleClass().add("var-bar-" + UiNumbers.tone(pct, 2));
         // R2-06: no ticker inside the bar (cut to "T1" on a flat bar, "⋮" on thin ones): the axis names each bar
 
         Tooltip tp = new Tooltip(
                 bar.getXValue()
-                + "\n" + signedPct(pct) + " hoje"
-                + "\nCotação:  " + money(sd.regularMarketPrice())
-                + "\nVariação: R$ " + String.format("%+.2f", sd.regularMarketChange()).replace('.', ',')
+                + "\n" + UiNumbers.signedPct(pct, 2) + " hoje"
+                + "\nCotação:  " + UiNumbers.money(sd.regularMarketPrice())
+                + "\nVariação: " + UiNumbers.moneyDelta(sd.regularMarketChange())
         );
         tp.setStyle("-fx-font-size: 12px;");
         tp.setShowDelay(javafx.util.Duration.ZERO);
         tp.setHideDelay(javafx.util.Duration.millis(150));
         Tooltip.install(node, tp);
-
-        node.setOnMouseEntered(e -> node.setStyle(
-                "-fx-background-color: " + hoverColor + "; -fx-background-radius: 3 3 0 0; -fx-opacity: 0.85;"));
-        node.setOnMouseExited(e -> node.setStyle(baseStyle));
     }
 
     // ── Moving average ───────────────────────────────────────────────────────
@@ -1009,6 +993,7 @@ public final class RankingPage implements ResponsivePage {
         maChart.setCreateSymbols(false);
         maChart.setMinHeight(280);
         maYAxis.setLabel("Preço (R$)");
+        maYAxis.setTickLabelFormatter(UiNumbers.axisConverter());
         maXAxis.setLabel("");
         maYAxis.setAutoRanging(false);
 
@@ -1017,7 +1002,7 @@ public final class RankingPage implements ResponsivePage {
 
         StackPane chartWrapper = ChartCrosshair.installTemporal(maChart,
                 epochSec -> LocalDateTime.ofEpochSecond(epochSec, 0, ZoneOffset.UTC).format(MA_DATE_FMT),
-                y -> money(y));
+                UiNumbers::money);
 
         maCrossLabel.getStyleClass().add("text-secondary");
         maCrossLabel.setWrapText(true);

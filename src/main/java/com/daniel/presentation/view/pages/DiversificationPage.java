@@ -38,6 +38,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.UiNumbers;
 
 /**
  * Diversificação (direction A): the wealth is the hero with the computed target beside it;
@@ -943,7 +944,7 @@ public final class DiversificationPage implements ResponsivePage {
             rows.add(new AllocationRow(
                     alloc.category(),
                     daily.brl(alloc.valueCents()),
-                    String.format(java.util.Locale.forLanguageTag("pt-BR"), "%.1f%%", alloc.percentage())
+                    UiNumbers.pct(alloc.percentage(), 1)
             ));
         }
 
@@ -991,7 +992,7 @@ public final class DiversificationPage implements ResponsivePage {
             idealRows.add(new AllocationRow(
                     sug.category(),
                     daily.brl(sug.idealCents()),
-                    String.format(java.util.Locale.forLanguageTag("pt-BR"), "%.1f%%", targetPct)
+                    UiNumbers.pct(targetPct, 1)
             ));
         }
         idealTable.setItems(idealRows);
@@ -1066,7 +1067,7 @@ public final class DiversificationPage implements ResponsivePage {
     }
 
     private static String shareOfIdealBase(double fraction) {
-        return String.format(java.util.Locale.forLanguageTag("pt-BR"), "%.1f%% da base ideal", fraction * 100.0);
+        return UiNumbers.pct(fraction * 100.0, 1) + " da base ideal";
     }
 
     private VBox allocationMetric(String caption, String value, String percentage, double fraction, String style) {

@@ -1589,12 +1589,27 @@
    so without these rules the base text-fill would silently win. */
 .metric-lg.pos        { -fx-text-fill: -color-success; }
 .metric-lg.neg        { -fx-text-fill: -color-danger; }
+.metric-lg.muted      { -fx-text-fill: -color-text-2; }
 .metric-lg.state-info { -fx-text-fill: -color-info; }
 .metric-subtitle {
     -fx-font-size: 11px;
     -fx-font-weight: 600;
     -fx-text-fill: -color-text-3;
 }
+
+/* Ranking, "Variação do dia" bars: the fill follows the tone of the SHOWN change (gain, loss, zero), from the
+   tokens; the hover darkens by opacity. They paint the background, which the text-only .pos/.neg/.muted do not. */
+.chart-bar.var-bar-pos   { -fx-background-color: -color-success; -fx-background-radius: 3 3 0 0; }
+.chart-bar.var-bar-neg   { -fx-background-color: -color-danger;  -fx-background-radius: 3 3 0 0; }
+.chart-bar.var-bar-muted { -fx-background-color: -color-text-2;  -fx-background-radius: 3 3 0 0; }
+.chart-bar.var-bar-pos:hover, .chart-bar.var-bar-neg:hover, .chart-bar.var-bar-muted:hover { -fx-opacity: 0.85; }
+
+/* Ranking, day lists: the change cell is drawn in the tone of its SHOWN value. .table-cell (declared earlier, same
+   specificity as .pos/.neg/.muted) painted it white; these rules are one class more specific. The selected row keeps
+   -color-text-1 through .table-analytic .table-row-cell:filled:selected .table-cell, which is more specific still. */
+.ranking-list .table-cell.pos   { -fx-text-fill: -color-success; }
+.ranking-list .table-cell.neg   { -fx-text-fill: -color-danger; }
+.ranking-list .table-cell.muted { -fx-text-fill: -color-text-2; }
 
 /* ═══════════════════════════════════════════════
    DASHBOARD — Investment Lists + Category Rows
@@ -2164,6 +2179,11 @@
 .hero-chip-value   { -fx-font-size: 13px; -fx-font-weight: 700; -fx-text-fill: -color-text-1; }
 .hero-chip-value.pos { -fx-text-fill: -color-success; }
 .hero-chip-value.neg { -fx-text-fill: -color-danger; }
+
+/* Dashboard, comparison with the CDI: "igual ao CDI" (a tie, or a gap that shows zero) is neutral. .hero-chip-value
+   (declared after .muted, same specificity) painted it in the primary colour; this rule is one class more specific. */
+.hero-chip-value.muted { -fx-text-fill: -color-text-2; }
+
 .bp-narrow .hero-number { -fx-font-size: 30px; }
 .bp-narrow .hero-secondary { -fx-font-size: 15px; }
 

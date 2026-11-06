@@ -208,7 +208,7 @@ class AssetAnalysisPageLayoutTest {
             Node result = field("resultBox");
             assertTrue(result.isVisible() && result.isManaged());
             assertFalse(((Node) field("emptyState")).isVisible());
-            assertEquals("R$ 38,52", hero.valueLabel().getText());
+            assertEquals("R$ 38,52", hero.valueLabel().getText()); // BRK-12 v1: the no-break space of MoneyFormat
             Label secondary = (Label) hero.lookup(".hero-secondary");
             assertTrue(secondary.getText().contains("-1,23%"), secondary.getText());
             assertTrue(secondary.getText().contains("0,48"), secondary.getText());
@@ -220,7 +220,7 @@ class AssetAnalysisPageLayoutTest {
 
             StatStrip day = field("dayStrip");
             assertEquals(List.of("Abertura", "Máx. do dia", "Mín. do dia", "Volume"), day.labels());
-            assertEquals("R$ 39,00", day.valueLabel("Abertura").getText());
+            assertEquals("R$ 39,00", day.valueLabel("Abertura").getText());
             assertEquals("12,3M", day.valueLabel("Volume").getText());
             StatStrip year = field("yearStrip");
             assertTrue(year.labels().contains("Máx. 52 sem."), year.labels().toString());

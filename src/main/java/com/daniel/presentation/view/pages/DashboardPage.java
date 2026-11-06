@@ -8,6 +8,7 @@ import com.daniel.core.service.DailyTrackingUseCase;
 import com.daniel.presentation.view.util.ChartAxisUtils;
 import com.daniel.presentation.view.util.ChartCrosshair;
 import com.daniel.presentation.view.util.Motion;
+import com.daniel.presentation.view.util.UiNumbers;
 import com.daniel.core.service.DiversificationCalculator;
 import com.daniel.core.service.DiversificationCalculator.*;
 import com.daniel.infrastructure.api.BcbClient;
@@ -44,6 +45,8 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicLong;
 import com.daniel.presentation.view.util.UiExecutor;
 
@@ -55,6 +58,11 @@ public final class DashboardPage implements ResponsivePage {
     static final String STAT_UNREALIZED = "Ganho não realizado";
 
     private final DailyTrackingUseCase daily;
+    /** The BRAPI quotes the page reads (a test hands it fixed ones). */
+    private final DashboardQuoteSource quotes;
+    /** Runs the quote work off the FX thread / answers back on it (a test drains the first by hand). */
+    private final Executor worker;
+    private final Executor ui;
     private final ScrollPane scrollPane = new ScrollPane();
     private final VBox root = new VBox(20);
 
@@ -145,11 +153,20 @@ public final class DashboardPage implements ResponsivePage {
     private final Label connectionChip = new Label();
 
     public DashboardPage(DailyTrackingUseCase dailyTrackingUseCase) {
+        this(dailyTrackingUseCase, DashboardQuoteSource.brapi(), defaultAsync(), Platform::runLater);
+    }
+
+    /** Test seam: the quotes the page reads and the executors it works on (worker) and answers on (ui). */
+    DashboardPage(DailyTrackingUseCase dailyTrackingUseCase, DashboardQuoteSource quotes, Executor worker, Executor ui) {
         this.daily = dailyTrackingUseCase;
+        this.quotes = quotes;
+        this.worker = worker;
+        this.ui = ui;
 
         NumberAxis yAxis = new NumberAxis();
         waterfallXAxis.setLabel("Investimentos");
         yAxis.setLabel("Valor (R$)");
+        yAxis.setTickLabelFormatter(UiNumbers.axisConverter());
         waterfallChart = new BarChart<>(waterfallXAxis, yAxis);
         // R2-21: the panel title ("Valor por ativo") names this chart; an inner title competed with it.
         waterfallChart.setTitle(null);
@@ -159,6 +176,7 @@ public final class DashboardPage implements ResponsivePage {
         waterfallChart.getStyleClass().add("value-chart");
         ChartAxisUtils.installSmartAxis(waterfallXAxis, waterfallChart);
 
+        compYAxis.setTickLabelFormatter(UiNumbers.axisConverter());
         comparisonChart.setTitle(null);
         // R2-01: legend symbols follow the same series colours as the lines (app.css .evolution-chart).
         comparisonChart.getStyleClass().add("evolution-chart");
@@ -342,15 +360,15 @@ public final class DashboardPage implements ResponsivePage {
 
     /** Token present or not: the warning line and the data-origin chips follow it. */
     void applyTokenState() {
-        boolean hasToken = BrapiClient.hasToken();
+        boolean hasToken = quotes.hasToken();
         tokenWarningRow.setVisible(!hasToken);
         tokenWarningRow.setManaged(!hasToken);
         updateBrapiChips();
     }
 
     private void updateBrapiChips() {
-        boolean hasToken = BrapiClient.hasToken();
-        long lastFetch = BrapiClient.getLastSuccessfulFetchMs();
+        boolean hasToken = quotes.hasToken();
+        long lastFetch = quotes.lastSuccessfulFetchMs();
         int delayMinutes = Integer.parseInt(
                 settingsRepo.get(ConfiguracoesPage.SETTINGS_KEY_BRAPI_DELAY).orElse("30"));
 
@@ -400,24 +418,24 @@ public final class DashboardPage implements ResponsivePage {
             double selic = BcbClient.fetchSelic().orElse(-1.0);
             double ipca = BcbClient.fetchIpca().orElse(-1.0);
 
-            double ibov = BrapiClient.fetchIbovespaReturn().orElse(Double.NaN);
+            double ibov = quotes.fetchIbovespaReturn().orElse(Double.NaN);
 
             return new double[]{cdi, selic, ipca, ibov};
-        }).thenAcceptAsync(rates -> Platform.runLater(() -> {
+        }, worker).thenAcceptAsync(rates -> ui.execute(() -> {
             if (rates[0] > 0) rateCdi = rates[0];
             if (rates[1] > 0) rateSelic = rates[1];
             if (rates[2] > 0) rateIpca = rates[2];
             if (!Double.isNaN(rates[3])) rateIbov = rates[3];
             ratesFetched = true;
             refreshData();
-        }));
+        }), worker);
     }
 
     private void refreshData() {
         LocalDate today = LocalDate.now();
         referenceDate = today;
         hero.setContext("Referência " + formatDate(today) + " · "
-                + (BrapiClient.hasToken() ? "cotações BRAPI" : "preço de compra como referência"));
+                + (quotes.hasToken() ? "cotações BRAPI" : "preço de compra como referência"));
 
         final int filterMonths = selectedFilterMonths;
         final boolean useCustom = useCustomRange;
@@ -566,7 +584,7 @@ public final class DashboardPage implements ResponsivePage {
 
         hero.setValue(daily.brl(totalPatrimony));
         hero.setSecondary(totalProfit == 0 ? "sem ganho registrado"
-                : ((totalProfit >= 0 ? "+ " : "- ") + daily.brlAbs(Math.abs(totalProfit)) + " de ganho"),
+                : (signed(totalProfit) + (totalProfit > 0 ? " de ganho" : " de perda")),
                 tone(totalProfit));
 
         // CDI comparison uses investment-only value: cash is not invested capital and should not
@@ -603,8 +621,7 @@ public final class DashboardPage implements ResponsivePage {
 
         if (oldestDate == null || totalInvested == 0) {
             cdiComparisonLabel.setText("Sem histórico");
-            cdiComparisonLabel.getStyleClass().removeAll("pos", "neg", "muted");
-            cdiComparisonLabel.getStyleClass().add("muted");
+            UiNumbers.applyTone(cdiComparisonLabel, UiNumbers.MUTED);
             return;
         }
 
@@ -618,17 +635,16 @@ public final class DashboardPage implements ResponsivePage {
                 rateCdi
         );
 
+        // the words and the tone follow the SHOWN gap: a gap that reads 0,00 is a tie, not "above" or "below"
+        double difference = comparison.difference();
+        String tone = UiNumbers.tone(difference, 2);
         String text;
-        if (comparison.outperformsCDI()) {
-            text = String.format("↑ %.2f%% acima", Math.abs(comparison.difference()));
-            cdiComparisonLabel.getStyleClass().removeAll("pos", "neg", "muted");
-            cdiComparisonLabel.getStyleClass().add("pos");
-        } else {
-            text = String.format("↓ %.2f%% abaixo", Math.abs(comparison.difference()));
-            cdiComparisonLabel.getStyleClass().removeAll("pos", "neg", "muted");
-            cdiComparisonLabel.getStyleClass().add("neg");
-        }
+        if (Double.isNaN(difference) || Double.isInfinite(difference)) text = UiNumbers.DASH;
+        else if (UiNumbers.POS.equals(tone)) text = "↑ " + UiNumbers.pct(Math.abs(difference), 2) + " acima";
+        else if (UiNumbers.NEG.equals(tone)) text = "↓ " + UiNumbers.pct(Math.abs(difference), 2) + " abaixo";
+        else text = "igual ao CDI";
 
+        UiNumbers.applyTone(cdiComparisonLabel, tone);
         cdiComparisonLabel.setText(text);
     }
 
@@ -650,9 +666,7 @@ public final class DashboardPage implements ResponsivePage {
         List<CategoryAllocation> validAllocs = new ArrayList<>();
         for (CategoryAllocation alloc : data.allocations()) {
             if (alloc.valueCents() > 0) {
-                String label = String.format("%s (%.1f%%)",
-                        alloc.category().getDisplayName(),
-                        alloc.percentage());
+                String label = alloc.category().getDisplayName() + " (" + UiNumbers.pct(alloc.percentage(), 1) + ")";
                 pieChart.getData().add(new PieChart.Data(label, alloc.valueCents() / 100.0));
                 validAllocs.add(alloc);
             }
@@ -667,7 +681,7 @@ public final class DashboardPage implements ResponsivePage {
                 String color   = alloc.category().getColor();
                 String tipText = alloc.category().getDisplayName()
                         + "\n" + daily.brl(alloc.valueCents())
-                        + String.format("\n%.1f%%", alloc.percentage());
+                        + "\n" + UiNumbers.pct(alloc.percentage(), 1);
                 applyPieStyle(slice, color, tipText);
             }
         });
@@ -692,6 +706,11 @@ public final class DashboardPage implements ResponsivePage {
 
     /** No investment to compare: the reason, without the evolution grid or the sparse-history hint. */
     private void showComparisonEmpty() {
+        // nothing to compare: the two variation metrics say so (a dash, neutral); no value of an earlier result stays
+        metricRendimentoLabel.setText(UiNumbers.DASH);
+        UiNumbers.applyTone(metricRendimentoLabel, UiNumbers.MUTED);
+        metricRentabilidadeLabel.setText(UiNumbers.DASH);
+        UiNumbers.applyTone(metricRentabilidadeLabel, UiNumbers.MUTED);
         noComparisonHint.setVisible(true);
         noComparisonHint.setManaged(true);
         sparseChartHint.setVisible(false);
@@ -805,8 +824,9 @@ public final class DashboardPage implements ResponsivePage {
         }
 
         // Painel de métricas lateral
-        metricRendimentoLabel.getStyleClass().addAll("metric-lg", "pos");
-        metricRentabilidadeLabel.getStyleClass().addAll("metric-lg", "pos");
+        // no data yet: a dash in the neutral tone (the first result gives each its own tone)
+        metricRendimentoLabel.getStyleClass().addAll("metric-lg", UiNumbers.MUTED);
+        metricRentabilidadeLabel.getStyleClass().addAll("metric-lg", UiNumbers.MUTED);
         metricBenchmarkLabel.getStyleClass().addAll("metric-lg", "state-info");
         metricBenchmarkTitleLabel.getStyleClass().add("metric-subtitle");
 
@@ -836,8 +856,7 @@ public final class DashboardPage implements ResponsivePage {
         // Instala listener de largura para atualizar labels automaticamente no resize
         ChartAxisUtils.installSmartAxis(compXAxis, comparisonChart);
 
-        compWrapper = ChartCrosshair.install(comparisonChart,
-                y -> String.format("%s%.2f%%", y >= 0 ? "+" : "", y).replace('.', ','));
+        compWrapper = ChartCrosshair.install(comparisonChart, UiNumbers::signedPct2);
         VBox chartRow = new VBox(0, compWrapper);
         VBox.setVgrow(compWrapper, Priority.ALWAYS);
         chartRow.setAlignment(Pos.TOP_LEFT);
@@ -1114,19 +1133,17 @@ public final class DashboardPage implements ResponsivePage {
         }
 
         // ── Métricas laterais ────────────────────────────────────────────────
+        // each metric takes the tone of its OWN shown value: R$ 0,40 is a gain while 0,004 % reads 0,00 %
         long rendimentoPeriodo = Math.round(totalInvestido * rentCartFinal / 100.0);
-        String corClass = rendimentoPeriodo >= 0 ? "pos" : "neg";
 
         metricRendimentoLabel.setText(daily.brl(rendimentoPeriodo));
-        metricRendimentoLabel.getStyleClass().removeAll("pos", "neg");
-        metricRendimentoLabel.getStyleClass().add(corClass);
+        UiNumbers.applyTone(metricRendimentoLabel, UiNumbers.toneOfCents(rendimentoPeriodo));
 
-        metricRentabilidadeLabel.setText(String.format("%.2f%%", rentCartFinal));
-        metricRentabilidadeLabel.getStyleClass().removeAll("pos", "neg");
-        metricRentabilidadeLabel.getStyleClass().add(corClass);
+        metricRentabilidadeLabel.setText(UiNumbers.pct(rentCartFinal, 2));
+        UiNumbers.applyTone(metricRentabilidadeLabel, UiNumbers.tone(rentCartFinal, 2));
 
         boolean ibovUnavailable = "IBOVESPA".equals(selectedBenchmark) && Double.isNaN(rateIbov);
-        metricBenchmarkLabel.setText(ibovUnavailable ? "—" : String.format("%.2f%%", rentBenchFinal));
+        metricBenchmarkLabel.setText(ibovUnavailable ? "—" : UiNumbers.pct(rentBenchFinal, 2));
     }
 
     private long calcTotalInvestido(List<InvestmentType> investments) {
@@ -1168,7 +1185,7 @@ public final class DashboardPage implements ResponsivePage {
                 String tickersStr = String.join(",", tickerGroups.keySet());
                 Map<String, BrapiClient.StockData> rawMap = new HashMap<>();
                 try {
-                    rawMap = BrapiClient.fetchMultipleStocks(tickersStr);
+                    rawMap = quotes.fetchMultipleStocks(tickersStr);
                 } catch (Exception ignored) {}
 
                 // Normalizar chaves para uppercase — evita falha de lookup por casing da API
@@ -1198,9 +1215,9 @@ public final class DashboardPage implements ResponsivePage {
                 }
             }
 
-            // Retornar lista completa; separação em altas/baixas feita no Platform.runLater
+            // Retornar lista completa; separação em altas/baixas feita na thread de UI
             return entries;
-        }).thenAcceptAsync(entries -> Platform.runLater(() -> {
+        }, worker).thenAcceptAsync(entries -> ui.execute(() -> {
             if (refreshEpoch.get() != rankEpoch) return;
             rankPanelAltas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
             rankPanelBaixas.getChildren().removeIf(n -> !(n instanceof Label l && l.getStyleClass().contains("rank-title")));
@@ -1210,14 +1227,15 @@ public final class DashboardPage implements ResponsivePage {
                 return;
             }
 
+            // by the SHOWN change: a move that reads 0,00 % is neither a rise nor a fall
             List<RankEntry> altas = entries.stream()
-                    .filter(e -> e.changePercent() >= 0)
+                    .filter(e -> UiNumbers.POS.equals(UiNumbers.tone(e.changePercent(), 2)))
                     .sorted((a, b) -> Double.compare(b.changePercent(), a.changePercent()))
                     .limit(4)
                     .toList();
 
             List<RankEntry> baixas = entries.stream()
-                    .filter(e -> e.changePercent() < 0)
+                    .filter(e -> UiNumbers.NEG.equals(UiNumbers.tone(e.changePercent(), 2)))
                     .sorted((a, b) -> Double.compare(a.changePercent(), b.changePercent()))
                     .limit(4)
                     .toList();
@@ -1241,7 +1259,7 @@ public final class DashboardPage implements ResponsivePage {
                     rankPanelBaixas.getChildren().add(buildRankRow(entry));
                 }
             }
-        }));
+        }), worker);
     }
 
     private HBox buildRankRow(RankEntry entry) {
@@ -1264,9 +1282,8 @@ public final class DashboardPage implements ResponsivePage {
         VBox rightBox = new VBox(1);
         rightBox.setAlignment(Pos.CENTER_RIGHT);
 
-        boolean positive = entry.changePercent() >= 0;
-        Label changeLabel = new Label(String.format("%s%.2f%%", positive ? "+" : "", entry.changePercent()));
-        changeLabel.getStyleClass().addAll("rent-value", positive ? "pos" : "neg");
+        Label changeLabel = new Label(UiNumbers.signedPct(entry.changePercent(), 2));
+        changeLabel.getStyleClass().addAll("rent-value", UiNumbers.tone(entry.changePercent(), 2));
 
         Label valueLabel = new Label(daily.brl(entry.valueCents()));
         valueLabel.getStyleClass().add("text-dim-xs");
@@ -1347,8 +1364,7 @@ public final class DashboardPage implements ResponsivePage {
         Label categoryName = new Label(category.getDisplayName());
         categoryName.getStyleClass().add("category-name");
 
-        Label categoryPercentLabel = new Label(String.format("%.1f%% • %s",
-                categoryPercent, daily.brl(categoryTotal)));
+        Label categoryPercentLabel = new Label(UiNumbers.pct(categoryPercent, 1) + " • " + daily.brl(categoryTotal));
         categoryPercentLabel.getStyleClass().add("category-percent");
 
         header.getChildren().addAll(circle, categoryName, UiSpacer.hGrow(), categoryPercentLabel);
@@ -1486,12 +1502,12 @@ public final class DashboardPage implements ResponsivePage {
         HBox secondary = new HBox(12);
         secondary.setAlignment(Pos.CENTER_LEFT);
         secondary.getStyleClass().add("inv-row-meta");
-        Label metaLabel = new Label("Qtd: " + qtdFinal
-                + "  ·  PM: R$ " + String.format("%.2f", precoMedioFinal));
+        Label metaLabel = new Label("Qtd: " + UiNumbers.integer(qtdFinal)
+                + "  ·  PM: " + UiNumbers.money(precoMedioFinal));
         metaLabel.getStyleClass().add("text-dim");
         LineFlow secondaryMetrics = metrics(
                 createInfoBox("Investido", daily.brl(totalInvestido)),
-                createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
+                createInfoBox("Alocação", UiNumbers.pct(alocacao, 1)));
         if (dataInvestimento != null) {
             secondaryMetrics.getChildren().add(createInfoBox("Data",
                     dataInvestimento.format(DateTimeFormatter.ofPattern("dd/MM/yy"))));
@@ -1503,14 +1519,14 @@ public final class DashboardPage implements ResponsivePage {
         row.getChildren().addAll(primary, secondary);
 
         // ─── Busca assíncrona do preço atual via Brapi ───
-        if (BrapiClient.hasToken() && qtdFinal > 0) {
+        if (quotes.hasToken() && qtdFinal > 0) {
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    return BrapiClient.fetchStockData(tickerFinal);
+                    return quotes.fetchStockData(tickerFinal);
                 } catch (Exception e) {
                     return null;
                 }
-            }).thenAcceptAsync(data -> Platform.runLater(() -> {
+            }, worker).thenAcceptAsync(data -> ui.execute(() -> {
                 if (data != null && data.isValid()) {
                     double precoAtual = data.regularMarketPrice();
                     long posicaoAtualCents = (long)(precoAtual * qtdFinal * 100);
@@ -1520,14 +1536,14 @@ public final class DashboardPage implements ResponsivePage {
 
                     posicaoLabel.setText(daily.brl(posicaoAtualCents));
 
-                    rentLabel.setText(String.format("%+.2f%%", rent));
+                    rentLabel.setText(UiNumbers.signedPct(rent, 2));
                     applyRentStyle(rentLabel, rent);
                 } else {
                     posicaoLabel.setText(daily.brl(totalValueCents));
                     rentLabel.setText("—");
                     applyRentDimmed(rentLabel);
                 }
-            }));
+            }), worker);
         } else {
             rentLabel.setText("—");
             applyRentDimmed(rentLabel);
@@ -1561,19 +1577,19 @@ public final class DashboardPage implements ResponsivePage {
             double precoMedio = inv.purchasePrice().doubleValue();
             double ultimoPreco = (currentValueCents / 100.0) / inv.quantity();
             Label rentLabel;
-            if (!BrapiClient.hasToken()) {
+            if (!quotes.hasToken()) {
                 rentLabel = new Label("—");
                 applyRentDimmed(rentLabel);
             } else {
                 double rent = ((ultimoPreco - precoMedio) / precoMedio) * 100;
-                rentLabel = new Label(String.format("%+.2f%%", rent));
+                rentLabel = new Label(UiNumbers.signedPct(rent, 2));
                 applyRentStyle(rentLabel, rent);
             }
             primaryMetrics.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
         } else if (!isStock && inv.investedValue() != null) {
             long investido = inv.investedValue().multiply(java.math.BigDecimal.valueOf(100)).longValue();
             double rent = investido > 0 ? ((currentValueCents - investido) * 100.0) / investido : 0;
-            Label rentLabel = new Label(String.format("%+.2f%%", rent));
+            Label rentLabel = new Label(UiNumbers.signedPct(rent, 2));
             applyRentStyle(rentLabel, rent);
             primaryMetrics.getChildren().add(createInfoBox("Rentabilidade", rentLabel));
         }
@@ -1589,22 +1605,20 @@ public final class DashboardPage implements ResponsivePage {
             secondary.getChildren().add(wrapLead(typeLabel));
         }
 
-        LineFlow secondaryMetrics = metrics(createInfoBox("Alocação", String.format("%.1f%%", alocacao)));
+        LineFlow secondaryMetrics = metrics(createInfoBox("Alocação", UiNumbers.pct(alocacao, 1)));
         secondary.getChildren().addAll(UiSpacer.hGrow(), secondaryMetrics);
 
         if (isStock && inv.quantity() != null && inv.purchasePrice() != null) {
             long valorInvestido = (long)(inv.purchasePrice().doubleValue() * inv.quantity() * 100);
             secondaryMetrics.getChildren().add(createInfoBox("Investido", daily.brl(valorInvestido)));
-            secondaryMetrics.getChildren().add(createInfoBox("PM", String.format("R$ %.2f",
-                    inv.purchasePrice().doubleValue())));
+            secondaryMetrics.getChildren().add(createInfoBox("PM", UiNumbers.moneyExact(inv.purchasePrice())));
         } else if (!isStock && inv.investedValue() != null) {
             long investido = inv.investedValue().multiply(java.math.BigDecimal.valueOf(100)).longValue();
             secondaryMetrics.getChildren().add(createInfoBox("Investido", daily.brl(investido)));
         }
 
         if (inv.profitability() != null) {
-            secondaryMetrics.getChildren().add(createInfoBox("Taxa",
-                    String.format("%.2f%% a.a.", inv.profitability())));
+            secondaryMetrics.getChildren().add(createInfoBox("Taxa", UiNumbers.ratePerYear(inv.profitability())));
         }
 
         if (inv.investmentDate() != null) {
@@ -1618,13 +1632,14 @@ public final class DashboardPage implements ResponsivePage {
         return row;
     }
 
+    /** The return of a position in the tone of its SHOWN percentage (zero is neutral). */
     private void applyRentStyle(Label label, double value) {
-        label.getStyleClass().removeAll("rent-value", "rent-dimmed", "pos", "neg");
-        label.getStyleClass().addAll("rent-value", value >= 0 ? "pos" : "neg");
+        label.getStyleClass().removeAll("rent-value", "rent-dimmed", "pos", "neg", "muted");
+        label.getStyleClass().addAll("rent-value", UiNumbers.tone(value, 2));
     }
 
     private void applyRentDimmed(Label label) {
-        label.getStyleClass().removeAll("rent-value", "rent-dimmed", "pos", "neg");
+        label.getStyleClass().removeAll("rent-value", "rent-dimmed", "pos", "neg", "muted");
         label.getStyleClass().add("rent-dimmed");
     }
 
@@ -1781,8 +1796,9 @@ public final class DashboardPage implements ResponsivePage {
             String who = tx.investmentName() != null ? tx.investmentName() : "Caixa";
             Label nameLabel = new Label(kind + " · " + who + (tx.reversed() ? " (estornado)" : ""));
             nameLabel.getStyleClass().add("text-sm");
-            Label valLabel = new Label((outflow ? "- " : "+ ") + daily.brl(Math.abs(tx.amountCents())));
-            valLabel.getStyleClass().addAll("text-sm", outflow ? "neg" : "pos");
+            // A cost-free adjustment (R$ 0,00) has no sign and no tone; the icon keeps the direction of the kind.
+            Label valLabel = new Label(UiNumbers.moneySign(outflow ? "- " : "+ ", tx.amountCents()) + daily.brl(Math.abs(tx.amountCents())));
+            valLabel.getStyleClass().addAll("text-sm", tx.amountCents() == 0 ? UiNumbers.MUTED : outflow ? "neg" : "pos");
             Label dateLabel = new Label(tx.date().format(fmt));
             dateLabel.getStyleClass().add("text-dim-xs");
             // V5 (r1 at 740 px of page: "- R$ 200,...", "15/..."): sign, amount and date keep their
@@ -1846,6 +1862,11 @@ public final class DashboardPage implements ResponsivePage {
         label.setWrapText(true);
         label.setMinWidth(0);
         return label;
+    }
+
+    /** What {@code CompletableFuture.supplyAsync} runs on when it is not given an executor. */
+    private static Executor defaultAsync() {
+        return ForkJoinPool.getCommonPoolParallelism() > 1 ? ForkJoinPool.commonPool() : r -> new Thread(r).start();
     }
 
     private record InvestmentValue(String name, String key, long valueCents) {}

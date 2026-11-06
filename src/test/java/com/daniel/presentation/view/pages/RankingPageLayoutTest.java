@@ -406,7 +406,7 @@ class RankingPageLayoutTest {
             assertTrue(labels.contains("Máx. do dia"), labels.toString());
             assertTrue(labels.contains("Volume"), labels.toString());
             Label headline = (Label) details.lookup(".details-value");
-            assertEquals("R$ 20,00", headline.getText());
+            assertEquals("R$ 20,00", headline.getText()); // BRK-12 v1: the no-break space of MoneyFormat
             details.requestClose();
             assertFalse(details.isVisible());
         });

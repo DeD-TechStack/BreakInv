@@ -23,6 +23,7 @@ import com.daniel.presentation.view.util.Dialogs;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.Motion;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.UiNumbers;
 import com.daniel.presentation.viewmodel.ScenarioCardController;
 import com.daniel.presentation.viewmodel.SimulationForm;
 
@@ -34,7 +35,6 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -164,6 +164,7 @@ public final class SimulationPage implements ResponsivePage {
         NumberAxis yAxis = new NumberAxis();
         xAxis.setLabel("Meses");
         yAxis.setLabel("Valor (R$)");
+        yAxis.setTickLabelFormatter(UiNumbers.axisConverter());
         projectionChart = new LineChart<>(xAxis, yAxis);
         projectionChart.setTitle(null);
         projectionChart.setMinHeight(280);
@@ -184,7 +185,7 @@ public final class SimulationPage implements ResponsivePage {
         resultHero.setContext(RESULT_IDLE);
         javafx.scene.layout.StackPane projWrapper = ChartCrosshair.installNumeric(projectionChart,
                 month -> "Mês " + month,
-                y -> "R$ " + String.format("%.2f", y).replace('.', ','));
+                UiNumbers::money);
         VBox.setVgrow(projWrapper, Priority.ALWAYS);
         var noProjection = javafx.beans.binding.Bindings.isEmpty(projectionChart.getData());
         projWrapper.visibleProperty().bind(noProjection.not());
@@ -284,16 +285,15 @@ public final class SimulationPage implements ResponsivePage {
             if (loaded != null && loaded.parameters().kind() == Kind.BENCHMARK_PERCENT) {
                 ToastHost.showInfo("Taxas atualizadas: o cenário carregado passa a usar premissas novas até ser salvo.");
                 scenarioStatusLabel.setText("Cenário \"" + loaded.name() + "\" com premissas alteradas (taxas "
-                        + frozenRates.origin() + " " + nvl(frozenRates.referenceDate()) + ") — clique em Salvar para manter ou recarregue o cenário para descartar.");
+                        + frozenRates.origin() + " " + UiNumbers.isoDate(frozenRates.referenceDate()) + ") — clique em Salvar para manter ou recarregue o cenário para descartar.");
             }
         }));
     }
 
     private void updateRatesStatus(String failure) {
-        String base = String.format("CDI %s | SELIC %s | IPCA %s — origem: %s%s",
-                pct(frozenRates.cdi()), pct(frozenRates.selic()), pct(frozenRates.ipca()),
-                frozenRates.origin(),
-                frozenRates.referenceDate() == null ? "" : " (" + frozenRates.referenceDate() + ")");
+        String base = "CDI " + pct(frozenRates.cdi()) + " | SELIC " + pct(frozenRates.selic()) + " | IPCA " + pct(frozenRates.ipca())
+                + " — origem: " + frozenRates.origin()
+                + (frozenRates.referenceDate() == null ? "" : " (" + UiNumbers.isoDate(frozenRates.referenceDate()) + ")");
         if (failure != null) {
             ratesStatusLabel.setText(base + " — " + failure);
             applyRatesStatusStyle("text-xs", "state-warning");
@@ -306,12 +306,9 @@ public final class SimulationPage implements ResponsivePage {
         }
     }
 
+    /** A rate stored as a fraction ({@code 0.135}) as a percentage with two places ({@code 13,50%}). */
     private static String pct(BigDecimal fraction) {
-        return fraction.movePointRight(2).setScale(2, RoundingMode.HALF_UP).toPlainString().replace('.', ',') + "%";
-    }
-
-    private static String nvl(String s) {
-        return s == null ? "" : s;
+        return UiNumbers.pctExact(fraction.movePointRight(2), 2);
     }
 
     // =====================================================================
@@ -397,8 +394,8 @@ public final class SimulationPage implements ResponsivePage {
         } else {
             SimulationScenario s = loadedScenario();
             SimulationParameters p = s.parameters();
-            String rates = p.rates() == null ? "" : " — taxas congeladas: " + p.rates().origin() + " " + nvl(p.rates().referenceDate());
-            String price = p.kind() == Kind.STOCK ? " — preço: " + p.priceOrigin() + " " + nvl(p.priceReferenceDate()) : "";
+            String rates = p.rates() == null ? "" : " — taxas congeladas: " + p.rates().origin() + " " + UiNumbers.isoDate(p.rates().referenceDate());
+            String price = p.kind() == Kind.STOCK ? " — preço: " + p.priceOrigin() + " " + UiNumbers.isoDate(p.priceReferenceDate()) : "";
             scenarioStatusLabel.setText("Cenário \"" + s.name() + "\" carregado (cálculo v"
                     + p.calculationVersion() + ")" + rates + price + ".");
         }
@@ -796,7 +793,7 @@ public final class SimulationPage implements ResponsivePage {
         priceVariationSlider.setMinorTickCount(5);
         priceVariationSlider.setBlockIncrement(1);
         priceVariationSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
-            sliderValueLabel.setText(String.format("%.1f%%", newVal.doubleValue()));
+            sliderValueLabel.setText(UiNumbers.pct(newVal.doubleValue(), 1));
             if (currentType == InvestmentTypeEnum.ACAO) {
                 calculateQuietly();
             }
@@ -909,7 +906,7 @@ public final class SimulationPage implements ResponsivePage {
 
     private void updatePriceOriginLabel() {
         priceOriginLabel.setText("Preço e dividendos: " + priceOrigin
-                + (priceReferenceDate == null ? "" : " (" + priceReferenceDate + ")")
+                + (priceReferenceDate == null ? "" : " (" + UiNumbers.isoDate(priceReferenceDate) + ")")
                 + " — edite os campos para usar valores manuais (funciona sem rede).");
     }
 
@@ -945,7 +942,7 @@ public final class SimulationPage implements ResponsivePage {
             priceOrigin = "Brapi";
             priceReferenceDate = LocalDate.now().toString();
             updatePriceOriginLabel();
-            ToastHost.showInfo("Cotação de " + ticker + " carregada (" + priceReferenceDate + ").");
+            ToastHost.showInfo("Cotação de " + ticker + " carregada (" + UiNumbers.isoDate(priceReferenceDate) + ").");
         }));
     }
 
@@ -1001,11 +998,11 @@ public final class SimulationPage implements ResponsivePage {
         String resultName = gain == null ? "Resultado" : gain ? "Lucro" : "Prejuízo";
         if (p.kind() == Kind.STOCK) {
             resultHero.setValue(Money.centsToText(r.finalCents()));
-            resultHero.setSecondary(String.format("%s total: %s (%.2f%%)", resultName, Money.centsToText(r.profitCents()), r.returnPercent())
-                    .replace('.', ','), tone);
-            resultHero.setContext(String.format("Estimativa — investido %s; dividendos %d × %s = %s. Sem efeito na carteira.",
-                    Money.centsToText(r.investedCents()), p.quantity(), Money.centsToText(p.dividendPerShareCents()),
-                    Money.centsToText(r.dividendsCents())));
+            resultHero.setSecondary(resultName + " total: " + Money.centsToText(r.profitCents()) + " ("
+                    + UiNumbers.pct(r.returnPercent(), 2) + ")", tone);
+            resultHero.setContext("Estimativa — investido " + Money.centsToText(r.investedCents()) + "; dividendos "
+                    + UiNumbers.integer(p.quantity()) + " × " + Money.centsToText(p.dividendPerShareCents()) + " = "
+                    + Money.centsToText(r.dividendsCents()) + ". Sem efeito na carteira.");
             applyResultStyle(gain);
             projectionChart.getData().clear();
             XYChart.Series<Number, Number> series = new XYChart.Series<>();
@@ -1017,15 +1014,15 @@ public final class SimulationPage implements ResponsivePage {
             Motion.chartRefresh(projectionChart);
         } else {
             String ratesNote = p.kind() == Kind.BENCHMARK_PERCENT
-                    ? " Taxas: " + p.rates().origin() + " " + nvl(p.rates().referenceDate()) + "."
+                    ? " Taxas: " + p.rates().origin() + " " + UiNumbers.isoDate(p.rates().referenceDate()) + "."
                     : "";
             // Negative rates are accepted (fixed −5 %, a negative frozen index): the tone follows the sign
             // of the profit here exactly as it does for stocks, never "always positive".
             resultHero.setValue(Money.centsToText(r.finalCents()));
-            resultHero.setSecondary(String.format("%s: %s (%.1f%%)", resultName, Money.centsToText(r.profitCents()), r.returnPercent())
-                    .replace('.', ','), tone);
-            resultHero.setContext(String.format("Estimativa em %d meses — taxa efetiva %.2f%% a.a.%s Sem efeito na carteira.",
-                    p.months(), r.effectiveAnnualRate() * 100, ratesNote).replace('.', ','));
+            resultHero.setSecondary(resultName + ": " + Money.centsToText(r.profitCents()) + " ("
+                    + UiNumbers.pct(r.returnPercent(), 1) + ")", tone);
+            String sentence = "Estimativa em " + UiNumbers.integer(p.months()) + " meses — taxa efetiva " + UiNumbers.pct(r.effectiveAnnualRate() * 100, 2) + " a.a." + ratesNote + " Sem efeito na carteira.";
+            resultHero.setContext(sentence);
             applyResultStyle(gain);
             updateChartMonths(r.seriesCents(), "Renda Fixa");
         }

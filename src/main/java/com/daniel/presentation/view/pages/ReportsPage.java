@@ -15,6 +15,7 @@ import com.daniel.presentation.view.util.Breakpoint;
 import com.daniel.presentation.view.util.DailySnapshotNotice;
 import com.daniel.presentation.view.util.Icons;
 import com.daniel.presentation.view.util.UiExecutor;
+import com.daniel.presentation.view.util.UiNumbers;
 import com.daniel.presentation.viewmodel.MovementForm;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
@@ -604,10 +605,10 @@ public final class ReportsPage implements ResponsivePage {
             type = (buy ? "Compra" : "Venda") + " · registro antigo";
             desc.append(buy ? "Compra" : "Venda").append(" de ").append(who);
             if (e.quantity() != null && e.unitPrice() != null) {
-                desc.append(" — ").append(e.quantity()).append(" x ").append(daily.brl(e.unitPrice().movePointRight(2).longValue()));
+                desc.append(" — ").append(UiNumbers.integer(e.quantity())).append(" x ").append(daily.brl(e.unitPrice().movePointRight(2).longValue()));
             }
             desc.append(" | do cadastro anterior, não entra no caixa nem nas posições");
-            value = (buy ? "- " : "+ ") + daily.brl(e.amountCents());
+            value = UiNumbers.moneySign(buy ? "- " : "+ ", e.amountCents()) + daily.brl(e.amountCents());
             muted = true;
             if (e.note() != null) desc.append(" | ").append(e.note());
             return new ExtractRow(e, e.date(), "—", type, desc.toString(), value, muted, false, true, null);
@@ -617,7 +618,7 @@ public final class ReportsPage implements ResponsivePage {
         switch (e.kind()) {
             case OPENING -> {
                 desc.append("Saldo inicial de ").append(who);
-                if (e.quantity() != null) desc.append(" — ").append(e.quantity()).append(" un.");
+                if (e.quantity() != null) desc.append(" — ").append(UiNumbers.integer(e.quantity())).append(" un.");
                 desc.append(" | não é aporte nem lucro");
                 desc.append(e.reconciliationFlag() ? " | saldo pendente de revisão" : "");
                 value = daily.brl(e.amountCents()); // the qualifier is in the description, not glued to the number
@@ -625,33 +626,33 @@ public final class ReportsPage implements ResponsivePage {
             }
             case RECONCILIATION -> {
                 desc.append("Revisão de saldo de ").append(who);
-                if (e.quantity() != null) desc.append(" — ").append(e.quantity()).append(" un.");
+                if (e.quantity() != null) desc.append(" — ").append(UiNumbers.integer(e.quantity())).append(" un.");
                 desc.append(" | saldo confirmado");
                 if (e.reason() != null) desc.append(" | motivo: ").append(e.reason());
                 value = daily.brl(e.amountCents());
                 muted = true;
             }
-            case DEPOSIT -> { desc.append("Aporte externo para o caixa"); value = "+ " + daily.brl(e.amountCents()); reversible = true; }
-            case WITHDRAWAL -> { desc.append("Retirada externa do caixa"); value = "- " + daily.brl(e.amountCents()); reversible = true; }
+            case DEPOSIT -> { desc.append("Aporte externo para o caixa"); value = UiNumbers.moneySign("+ ", e.amountCents()) + daily.brl(e.amountCents()); reversible = true; }
+            case WITHDRAWAL -> { desc.append("Retirada externa do caixa"); value = UiNumbers.moneySign("- ", e.amountCents()) + daily.brl(e.amountCents()); reversible = true; }
             case BUY -> {
                 desc.append("Compra de ").append(who);
-                if (e.quantity() != null && e.unitPrice() != null) desc.append(" — ").append(e.quantity()).append(" x R$ ").append(e.unitPrice().toPlainString());
-                value = "- " + daily.brl(e.amountCents());
+                if (e.quantity() != null && e.unitPrice() != null) desc.append(" — ").append(UiNumbers.integer(e.quantity())).append(" x ").append(UiNumbers.moneyExact(e.unitPrice()));
+                value = UiNumbers.moneySign("- ", e.amountCents()) + daily.brl(e.amountCents());
                 reversible = true;
             }
             case SELL -> {
                 desc.append("Venda de ").append(who);
-                if (e.quantity() != null && e.unitPrice() != null) desc.append(" — ").append(e.quantity()).append(" x R$ ").append(e.unitPrice().toPlainString());
+                if (e.quantity() != null && e.unitPrice() != null) desc.append(" — ").append(UiNumbers.integer(e.quantity())).append(" x ").append(UiNumbers.moneyExact(e.unitPrice()));
                 else desc.append(" — resgate ao custo");
-                value = "+ " + daily.brl(e.amountCents());
+                value = UiNumbers.moneySign("+ ", e.amountCents()) + daily.brl(e.amountCents());
                 reversible = true;
             }
             case ADJUSTMENT -> {
                 desc.append("Ajuste em ").append(who);
                 if (e.classification() != null) desc.append(" (").append(classificationLabel(e.classification())).append(")");
-                if (e.quantity() != null && e.quantity() != 0) desc.append(" — ").append(e.quantity() > 0 ? "+" : "").append(e.quantity()).append(" un.");
+                if (e.quantity() != null && e.quantity() != 0) desc.append(" — ").append(e.quantity() > 0 ? "+" : "").append(UiNumbers.integer(e.quantity())).append(" un.");
                 if (e.reason() != null) desc.append(" | motivo: ").append(e.reason());
-                value = (e.amountCents() < 0 ? "- " : "+ ") + daily.brl(Math.abs(e.amountCents()));
+                value = UiNumbers.moneySign(e.amountCents() < 0 ? "- " : "+ ", e.amountCents()) + daily.brl(Math.abs(e.amountCents()));
                 reversible = true;
             }
             case REVERSAL -> {
@@ -702,8 +703,8 @@ public final class ReportsPage implements ResponsivePage {
         details.addField("Identificação", identification);
         details.addField("Ativo", entry.investmentName() == null ? "Caixa" : entry.investmentName());
         if (entry.investmentTypeId() != null) details.addField("Nº do ativo", entry.investmentTypeId().toString());
-        if (entry.quantity() != null) details.addField("Quantidade", entry.quantity().toString());
-        if (entry.unitPrice() != null) details.addField("Preço unitário", "R$ " + entry.unitPrice().toPlainString());
+        if (entry.quantity() != null) details.addField("Quantidade", UiNumbers.integer(entry.quantity()));
+        if (entry.unitPrice() != null) details.addField("Preço unitário", UiNumbers.moneyExact(entry.unitPrice()));
         if (entry.classification() != null) details.addField("Classificação", classificationLabel(entry.classification()));
         if (entry.reason() != null) details.addField("Motivo", entry.reason());
         if (entry.note() != null) details.addField("Observação", entry.note());
