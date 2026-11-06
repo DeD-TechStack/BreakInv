@@ -24,6 +24,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.logging.Logger;
 
 /**
@@ -58,6 +59,7 @@ public final class DailyTrackingUseCase {
     private final ITransactionRepository txRepo;
     private final IStockPriceProvider priceProvider;
     private final LedgerAccess ledger;
+    private final Supplier<LocalDate> today;
 
     public DailyTrackingUseCase(
             IFlowRepository flowRepo,
@@ -75,6 +77,19 @@ public final class DailyTrackingUseCase {
             ITransactionRepository txRepo,
             IStockPriceProvider priceProvider,
             LedgerAccess ledger) {
+        this(flowRepo, typeRepo, snapshotRepo, txRepo, priceProvider, ledger, LocalDate::now);
+    }
+
+    /** Same wiring with an injectable "today" (tests that record snapshots of past days). */
+    public DailyTrackingUseCase(
+            IFlowRepository flowRepo,
+            IInvestmentTypeRepository typeRepo,
+            ISnapshotRepository snapshotRepo,
+            ITransactionRepository txRepo,
+            IStockPriceProvider priceProvider,
+            LedgerAccess ledger,
+            Supplier<LocalDate> today) {
+        this.today = Objects.requireNonNull(today, "today");
         this.flowRepo = flowRepo;
         this.typeRepo = typeRepo;
         this.snapshotRepo = snapshotRepo;
@@ -228,7 +243,7 @@ public final class DailyTrackingUseCase {
         if (ledger == null) return createInvestment(inv, null);
         PositionMode mode = (ticker != null && !ticker.isBlank()) || quantity != null ? PositionMode.QUANTITY : PositionMode.VALUE;
         return createInvestment(inv, OpeningSpec.zero(UUID.randomUUID().toString(),
-                investmentDate != null ? investmentDate : LocalDate.now(), mode));
+                investmentDate != null ? investmentDate : today.get(), mode));
     }
 
     /** Metadata update only: a recognised ledger position/cost is never touched here. */
@@ -388,7 +403,7 @@ public final class DailyTrackingUseCase {
      * included so series stay continuous); cash is written when the ledger owns it.
      */
     public void takeSnapshotIfNeeded(LocalDate date) {
-        if (!LocalDate.now().equals(date)) return;
+        if (!today.get().equals(date)) return;
         if (ledger == null) {
             for (InvestmentType inv : typeRepo.listAll()) {
                 long valueCents = getCurrentValue(inv, date);
@@ -661,7 +676,7 @@ public final class DailyTrackingUseCase {
 
         public CashStatus cashStatus() {
             PortfolioState s = state();
-            OpeningRequest legacy = PortfolioService.cashProposal(legacyCash, "cash-status-probe", LocalDate.now());
+            OpeningRequest legacy = PortfolioService.cashProposal(legacyCash, "cash-status-probe", today.get());
             boolean legacyPresent = !s.cashOpened() && legacy.reconciliationFlag();
             long cash = legacyPresent ? legacy.costCents() : s.cashCents();
             return new CashStatus(cash, s.cashOpened(), s.cashReconciliationPending(), legacyPresent);
