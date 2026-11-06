@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.logging.Logger;
 
 public final class BrapiClient {
@@ -18,16 +19,28 @@ public final class BrapiClient {
 
     public static final String SETTINGS_KEY_TOKEN = "brapi_token";
 
-    private static final OkHttpClient client = new OkHttpClient.Builder()
+    static final OkHttpClient DEFAULT_CLIENT = new OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .build();
 
+    // Costura de teste: os testes trocam o cliente HTTP.
+    static OkHttpClient client = DEFAULT_CLIENT;
+
     private static final Gson gson = new Gson();
     private static final AppSettingsRepository settingsRepo = new AppSettingsRepository();
 
+    static final Supplier<String> SETTINGS_TOKEN = () -> settingsRepo.get(SETTINGS_KEY_TOKEN).orElse(null);
+
+    // Costura de teste: os testes trocam a origem do token.
+    static Supplier<String> tokenSource = SETTINGS_TOKEN;
+
+    static void clearStockCache() {
+        stockCache.clear();
+    }
+
     private static String getToken() {
-        return settingsRepo.get(SETTINGS_KEY_TOKEN).orElse(null);
+        return tokenSource.get();
     }
 
     private static String appendToken(String url, String token) {
@@ -144,6 +157,7 @@ public final class BrapiClient {
         }
 
         String token = getToken();
+        boolean hasToken = token != null && !token.isBlank();
         String url = appendToken(BASE_URL + QUOTE_ENDPOINT + "/" + key, token);
         Request request = new Request.Builder()
                 .url(url)
@@ -153,38 +167,82 @@ public final class BrapiClient {
 
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                FailureReason reason = (token == null || token.isBlank())
-                        ? FailureReason.NO_TOKEN
-                        : FailureReason.HTTP_ERROR;
-                return new FetchResult.Failure<>(reason, String.valueOf(response.code()));
+                return new FetchResult.Failure<>(classify(response.code(), hasToken),
+                        String.valueOf(response.code()));
             }
             if (response.body() == null) {
                 return new FetchResult.Failure<>(FailureReason.NETWORK_ERROR, "Body nulo");
             }
-            JsonObject root;
+            // IOException ao ler o corpo é falha de rede e sobe para o catch de fora; uma
+            // RuntimeException ao LER ou INTERPRETAR o corpo vira PARSE_ERROR.
             try {
-                root = gson.fromJson(response.body().string(), JsonObject.class);
-            } catch (JsonSyntaxException e) {
-                return new FetchResult.Failure<>(FailureReason.PARSE_ERROR, e.getMessage());
+                String body = response.body().string();
+                return interpretQuote(key, body);
+            } catch (RuntimeException e) {
+                return new FetchResult.Failure<>(FailureReason.PARSE_ERROR, describe(e));
             }
-            if (root.has("error")) {
-                return new FetchResult.Failure<>(FailureReason.NOT_FOUND,
-                        root.get("error").getAsString());
-            }
-            JsonArray results = root.getAsJsonArray("results");
-            if (results == null || results.isEmpty()) {
-                return new FetchResult.Failure<>(FailureReason.NOT_FOUND, "Ação não encontrada");
-            }
-            StockData data = parseStockJson(results.get(0).getAsJsonObject());
-            if (data.isValid()) {
-                long now = System.currentTimeMillis();
-                stockCache.put(key, new CachedStock(data, now));
-                lastSuccessfulFetchMs = now;
-            }
-            return new FetchResult.Success<>(data);
-        } catch (IOException e) {
-            return new FetchResult.Failure<>(FailureReason.NETWORK_ERROR, e.getMessage());
+        } catch (IOException | RuntimeException e) {
+            // Qualquer exceção ao executar a chamada (inclusive uma RuntimeException de um
+            // interceptor ou do OkHttp) é falha de rede: nada escapa dos métodos Safe.
+            return new FetchResult.Failure<>(FailureReason.NETWORK_ERROR, describe(e));
         }
+    }
+
+    /**
+     * Motivo de uma resposta HTTP não-2xx. 401/403 → {@link FailureReason#NO_TOKEN};
+     * 404 → {@link FailureReason#NOT_FOUND}; o resto (400, 429, 5xx...) → {@link FailureReason#HTTP_ERROR}.
+     * A classificação é a mesma com ou sem token ({@code hasToken} não a altera).
+     */
+    static FailureReason classify(int code, boolean hasToken) {
+        return switch (code) {
+            case 401, 403 -> FailureReason.NO_TOKEN;
+            case 404 -> FailureReason.NOT_FOUND;
+            default -> FailureReason.HTTP_ERROR;
+        };
+    }
+
+    /** Texto de uma exceção (a mensagem, ou o nome simples da classe se não houver), nunca nulo. */
+    private static String describe(Exception e) {
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+    }
+
+    /**
+     * Campo {@code error} válido é um primitivo JSON (texto, booleano ou número) e significa
+     * "sem dados". Objeto, {@code null} ou array é resposta de forma errada: a
+     * {@link JsonParseException} sobe para o {@code catch} que a transforma em PARSE_ERROR.
+     */
+    private static void requirePrimitiveError(JsonObject root) {
+        JsonElement error = root.get("error");
+        if (!error.isJsonPrimitive()) {
+            throw new JsonParseException("campo error com forma inesperada: " + error);
+        }
+    }
+
+    /**
+     * Interpreta o corpo de uma resposta 2xx de uma cotação. Qualquer {@link RuntimeException}
+     * (JSON quebrado, corpo vazio, forma inesperada) sobe para quem chama virar PARSE_ERROR.
+     */
+    private static FetchResult<StockData> interpretQuote(String key, String body) {
+        JsonObject root = gson.fromJson(body, JsonObject.class);
+        if (root == null) {
+            throw new JsonSyntaxException("Resposta vazia");
+        }
+        if (root.has("error")) {
+            requirePrimitiveError(root);
+            return new FetchResult.Failure<>(FailureReason.NOT_FOUND, root.get("error").getAsString());
+        }
+        JsonArray results = root.getAsJsonArray("results");
+        if (results == null || results.isEmpty()) {
+            return new FetchResult.Failure<>(FailureReason.NOT_FOUND, "Ação não encontrada");
+        }
+        StockData data = parseStockJson(results.get(0).getAsJsonObject());
+        if (!data.isValid()) {
+            return new FetchResult.Failure<>(FailureReason.NOT_FOUND, "Ação sem preço");
+        }
+        long now = System.currentTimeMillis();
+        stockCache.put(key, new CachedStock(data, now));
+        lastSuccessfulFetchMs = now;
+        return new FetchResult.Success<>(data);
     }
 
     public static StockData fetchStockDataWithToken(String ticker, String token) throws IOException {
@@ -327,10 +385,15 @@ public final class BrapiClient {
      * Classifica a falha em FailureReason para exibição ao usuário.
      */
     public static FetchResult<Map<String, StockData>> fetchMultipleStocksSafe(String tickers) {
+        if (tickers == null || tickers.isBlank()) {
+            return new FetchResult.Failure<>(FailureReason.NOT_FOUND, "sem tickers");
+        }
         String token = getToken();
         boolean hasToken = token != null && !token.isBlank();
-        FailureReason failReason = hasToken ? FailureReason.NETWORK_ERROR : FailureReason.NO_TOKEN;
-        String failDetail = "";
+
+        // Motivo do lote: só vale se o fallback não tentar nenhum ticker.
+        FailureReason batchReason = FailureReason.NOT_FOUND;
+        String batchDetail = "Ação não encontrada";
 
         Map<String, StockData> results = new HashMap<>();
 
@@ -344,49 +407,93 @@ public final class BrapiClient {
                     .build();
             try (Response resp = client.newCall(req).execute()) {
                 if (!resp.isSuccessful()) {
-                    failReason = FailureReason.HTTP_ERROR;
-                    failDetail = String.valueOf(resp.code());
-                } else if (resp.body() != null) {
+                    batchReason = classify(resp.code(), hasToken);
+                    batchDetail = String.valueOf(resp.code());
+                } else if (resp.body() == null) {
+                    batchReason = FailureReason.NETWORK_ERROR;
+                    batchDetail = "Body nulo";
+                } else {
+                    // IOException ao ler o corpo sobe para o catch de fora (NETWORK_ERROR);
+                    // RuntimeException ao LER ou INTERPRETAR vira PARSE_ERROR.
                     try {
-                        JsonObject root = gson.fromJson(resp.body().string(), JsonObject.class);
-                        if (!root.has("error")) {
+                        String body = resp.body().string();
+                        JsonObject root = gson.fromJson(body, JsonObject.class);
+                        if (root == null) {
+                            throw new JsonSyntaxException("Resposta vazia");
+                        }
+                        if (root.has("error")) {
+                            requirePrimitiveError(root);
+                            batchDetail = String.valueOf(root.get("error"));
+                        } else {
                             JsonArray arr = root.getAsJsonArray("results");
                             if (arr != null) {
+                                Map<String, StockData> parsed = new HashMap<>();
                                 for (JsonElement el : arr) {
                                     JsonObject stock = el.getAsJsonObject();
                                     String sym = getStringOrNull(stock, "symbol");
-                                    if (sym != null) results.put(sym, parseStockJson(stock));
+                                    if (sym == null) continue;
+                                    StockData data = parseStockJson(stock);
+                                    // Preço 0 ou ausente nunca entra no resultado.
+                                    if (data.isValid()) parsed.put(sym, data);
                                 }
+                                results.putAll(parsed);
                             }
                         }
-                    } catch (JsonSyntaxException e) {
-                        failReason = FailureReason.PARSE_ERROR;
-                        failDetail = e.getMessage();
+                    } catch (RuntimeException e) {
+                        batchReason = FailureReason.PARSE_ERROR;
+                        batchDetail = describe(e);
                     }
                 }
             }
-        } catch (IOException e) {
-            failReason = FailureReason.NETWORK_ERROR;
-            failDetail = e.getMessage();
+        } catch (IOException | RuntimeException e) {
+            // O parse tem seu próprio catch (PARSE_ERROR); aqui só chega falha ao executar a chamada.
+            batchReason = FailureReason.NETWORK_ERROR;
+            batchDetail = describe(e);
         }
 
-        // Fallback individual quando o lote falha
+        // Fallback individual quando o lote não deu nenhum ticker utilizável.
+        // Se nada der certo, o motivo final vem só do fallback: o de maior prioridade
+        // (NO_TOKEN > HTTP_ERROR > NETWORK_ERROR > PARSE_ERROR > NOT_FOUND); em empate, o do
+        // primeiro ticker da lista.
+        FailureReason fallbackReason = null;
+        String fallbackDetail = null;
         if (results.isEmpty()) {
             for (String t : tickers.split(",")) {
                 String tk = t.trim().toUpperCase();
                 if (tk.isBlank()) continue;
-                try {
-                    StockData d = fetchStockData(tk);
-                    if (d.isValid()) results.put(tk, d);
-                } catch (Exception ignored) {}
+                FetchResult<StockData> one = fetchStockDataSafe(tk);
+                if (one.isSuccess() && one.getData().isValid()) {
+                    results.put(tk, one.getData());
+                    continue;
+                }
+                FailureReason reason = one.isSuccess() ? FailureReason.NOT_FOUND : one.getReason();
+                String detail = one.isSuccess() ? "Ação sem preço" : one.getDetail();
+                if (fallbackReason == null || priority(reason) < priority(fallbackReason)) {
+                    fallbackReason = reason;
+                    fallbackDetail = detail;
+                }
             }
         }
 
         if (results.isEmpty()) {
-            return new FetchResult.Failure<>(failReason, failDetail);
+            if (fallbackReason != null) {
+                return new FetchResult.Failure<>(fallbackReason, fallbackDetail);
+            }
+            return new FetchResult.Failure<>(batchReason, batchDetail);
         }
         lastSuccessfulFetchMs = System.currentTimeMillis();
         return new FetchResult.Success<>(results);
+    }
+
+    /** Ordem de prioridade do motivo final de um lote que falhou (menor = mais prioritário). */
+    private static int priority(FailureReason reason) {
+        return switch (reason) {
+            case NO_TOKEN -> 0;
+            case HTTP_ERROR -> 1;
+            case NETWORK_ERROR -> 2;
+            case PARSE_ERROR -> 3;
+            case NOT_FOUND -> 4;
+        };
     }
 
     /** Busca em lote — uma requisição para todos os tickers. */

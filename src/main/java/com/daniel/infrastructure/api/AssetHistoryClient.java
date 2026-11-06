@@ -1,6 +1,5 @@
 package com.daniel.infrastructure.api;
 
-import com.daniel.infrastructure.persistence.repository.AppSettingsRepository;
 import com.google.gson.*;
 import okhttp3.*;
 
@@ -30,15 +29,44 @@ public final class AssetHistoryClient {
     private static final String BASE_URL = "https://brapi.dev/api";
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
-    private static final OkHttpClient HTTP = new OkHttpClient.Builder()
+    static final OkHttpClient DEFAULT_HTTP = new OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .build();
 
+    // Costura de teste: os testes trocam o cliente HTTP.
+    static OkHttpClient HTTP = DEFAULT_HTTP;
+
     private static final Gson GSON = new Gson();
-    private static final AppSettingsRepository SETTINGS = new AppSettingsRepository();
 
     public record HistoryPoint(LocalDateTime dateTime, double close) {}
+
+    /**
+     * Falha de uma busca de histórico, com o motivo classificado.
+     *
+     * <p>Só a falha de rede leva causa (a exceção original): a tela de Análise mostra a
+     * mensagem da causa-raiz, então qualquer outra causa mudaria o texto exibido.</p>
+     */
+    public static final class HistoryFetchException extends IOException {
+
+        private static final long serialVersionUID = 1L;
+
+        private final BrapiClient.FailureReason reason;
+
+        public HistoryFetchException(BrapiClient.FailureReason reason, String message) {
+            super(message);
+            this.reason = reason;
+        }
+
+        public HistoryFetchException(BrapiClient.FailureReason reason, String message, Throwable cause) {
+            super(message, cause);
+            this.reason = reason;
+        }
+
+        public BrapiClient.FailureReason reason() {
+            return reason;
+        }
+    }
 
     /**
      * Resultado de uma busca de histórico.
@@ -106,10 +134,14 @@ public final class AssetHistoryClient {
      *   <li>Se ainda falhar (ex: ativo sem dados naquele range), tenta ranges menores
      *       em ordem decrescente até encontrar dados.</li>
      * </ol>
+     * A cascata só continua quando a falha é "sem dados" ({@code NOT_FOUND}). Falta de token,
+     * falha de rede, erro do servidor (inclusive 429) e resposta ilegível interrompem na hora
+     * com a primeira falha desse tipo.
      * Máximo de chamadas HTTP: 2 na maioria dos casos; até N se o ativo tiver dados
      * escassos dentro dos ranges permitidos.</p>
      *
-     * @throws IOException se nenhum range retornar dados válidos
+     * @throws HistoryFetchException (é uma {@link IOException}) com o motivo da falha, se nenhum
+     *                               range retornar dados válidos
      */
     public static HistoryResult fetchHistory(String ticker, Period period) throws IOException {
         if (ticker == null || ticker.isBlank())
@@ -121,7 +153,9 @@ public final class AssetHistoryClient {
             // Sucesso direto — não sabemos se ranges maiores existem, logo permittedRanges vazio
             return new HistoryResult(pts, period.range, Set.of());
         } catch (IOException primary) {
-            if (isAuthError(primary)) throw primary;
+            // Só "sem dados" (NOT_FOUND) justifica tentar outro range: sem token, sem rede,
+            // erro do servidor/limite (429) ou resposta ilegível se repetiriam em todos.
+            if (!isNoData(primary)) throw primary;
             LOG.info("[AssetHistory] range=" + period.range + " falhou para " + ticker
                     + ": " + primary.getMessage());
 
@@ -138,7 +172,7 @@ public final class AssetHistoryClient {
                             + " range=" + ri[0] + " interval=" + ri[1]);
                     return new HistoryResult(pts, ri[0], permittedSet);
                 } catch (IOException e) {
-                    if (isAuthError(e)) throw e;
+                    if (!isNoData(e)) throw e;
                     lastErr = e;
                     LOG.fine("[AssetHistory] fallback " + ri[0] + " falhou: " + e.getMessage());
                 }
@@ -170,7 +204,7 @@ public final class AssetHistoryClient {
                 LOG.warning("[AssetHistory] HTTP " + response.code() + " for " + ticker);
                 return List.of();
             }
-            return parseHistory(ticker, body).stream()
+            return parseHistoryLenient(ticker, body).stream()
                     .filter(p -> {
                         LocalDate d = p.dateTime().toLocalDate();
                         return !d.isBefore(from) && !d.isAfter(to);
@@ -243,9 +277,8 @@ public final class AssetHistoryClient {
         return found;
     }
 
-    private static boolean isAuthError(IOException e) {
-        String msg = e.getMessage();
-        return msg != null && (msg.contains("Token inválido") || msg.contains("sem permissão"));
+    private static boolean isNoData(IOException e) {
+        return e instanceof HistoryFetchException h && h.reason() == BrapiClient.FailureReason.NOT_FOUND;
     }
 
     // ── HTTP / Parse ──────────────────────────────────────────────────────
@@ -253,32 +286,53 @@ public final class AssetHistoryClient {
     private static List<HistoryPoint> doFetch(String ticker, String range, String interval)
             throws IOException {
         try (Response response = HTTP.newCall(buildRequest(ticker, range, interval)).execute()) {
-            if (response.body() == null) throw new IOException("Resposta vazia da API");
+            if (response.body() == null) {
+                throw new HistoryFetchException(BrapiClient.FailureReason.NETWORK_ERROR, "Resposta vazia da API");
+            }
 
             String body = response.body().string();
 
             if (!response.isSuccessful()) {
+                int code = response.code();
                 String apiMsg = tryParseErrorMessage(body);
-                String detail = apiMsg != null ? apiMsg : "HTTP " + response.code();
-                LOG.warning("[AssetHistory] " + response.code() + " for " + ticker
+                String detail = apiMsg != null ? apiMsg : "HTTP " + code;
+                LOG.warning("[AssetHistory] " + code + " for " + ticker
                         + " range=" + range + ": " + detail);
-                if (response.code() == 401 || response.code() == 403) {
-                    throw new IOException(
+                if (code == 401 || code == 403) {
+                    throw new HistoryFetchException(BrapiClient.FailureReason.NO_TOKEN,
                             "Token inválido ou sem permissão para este período. Verifique o token em Configurações.");
                 }
-                throw new IOException("Dados não disponíveis: " + detail);
+                // 400/404: o range ou o ativo não existe no plano (a cascata pode tentar outro).
+                // 429, 5xx e o resto: o servidor recusou; outro range não muda isso.
+                BrapiClient.FailureReason reason = (code == 400 || code == 404)
+                        ? BrapiClient.FailureReason.NOT_FOUND
+                        : BrapiClient.FailureReason.HTTP_ERROR;
+                throw new HistoryFetchException(reason, "Dados não disponíveis: " + detail);
             }
 
-            List<HistoryPoint> points = parseHistory(ticker, body);
+            List<HistoryPoint> points;
+            try {
+                points = parseHistory(ticker, body);
+            } catch (RuntimeException e) {
+                LOG.warning("[AssetHistory] parse error " + ticker + ": " + e);
+                throw new HistoryFetchException(BrapiClient.FailureReason.PARSE_ERROR,
+                        "Sem dados históricos para este período");
+            }
             if (points.isEmpty()) {
-                throw new IOException("Sem dados históricos para este período");
+                throw new HistoryFetchException(BrapiClient.FailureReason.NOT_FOUND,
+                        "Sem dados históricos para este período");
             }
             return points;
+        } catch (HistoryFetchException e) {
+            throw e;
+        } catch (IOException e) {
+            // Falha de rede ao enviar ou ler a resposta: mesma mensagem de antes, original como causa.
+            throw new HistoryFetchException(BrapiClient.FailureReason.NETWORK_ERROR, e.getMessage(), e);
         }
     }
 
     private static Request buildRequest(String ticker, String range, String interval) {
-        String token = SETTINGS.get(BrapiClient.SETTINGS_KEY_TOKEN).orElse(null);
+        String token = BrapiClient.tokenSource.get();
         HttpUrl.Builder url = HttpUrl.parse(BASE_URL + "/quote/" + ticker.toUpperCase().trim())
                 .newBuilder()
                 .addQueryParameter("range", range)
@@ -303,7 +357,72 @@ public final class AssetHistoryClient {
         return null;
     }
 
+    /**
+     * Lê os pontos de uma resposta 2xx. Devolve lista vazia quando a resposta é legível mas não
+     * traz pontos (campo {@code error}, {@code results} vazio, todos os pontos descartados).
+     *
+     * @throws RuntimeException quando o JSON está quebrado ou tem forma errada: quem chama
+     *                          decide o que fazer (não é engolida aqui).
+     */
     private static List<HistoryPoint> parseHistory(String ticker, String json) {
+        List<HistoryPoint> points = new ArrayList<>();
+        JsonObject root = GSON.fromJson(json, JsonObject.class);
+
+        if (root.has("error")) {
+            // "error" válido é um primitivo (texto, booleano ou número): significa "sem dados".
+            // Objeto, null ou array é forma errada e não pode ser tomado por "sem dados".
+            if (!root.get("error").isJsonPrimitive()) {
+                throw new JsonParseException("campo error com forma inesperada: " + root.get("error"));
+            }
+            String errMsg = tryParseErrorMessage(json);
+            LOG.warning("[AssetHistory] error field for " + ticker + ": "
+                    + (errMsg != null ? errMsg : json.substring(0, Math.min(json.length(), 200))));
+            return points;
+        }
+
+        JsonArray results = root.getAsJsonArray("results");
+        if (results == null || results.isEmpty()) {
+            LOG.warning("[AssetHistory] results vazio para " + ticker
+                    + " — body: " + json.substring(0, Math.min(json.length(), 200)));
+            return points;
+        }
+
+        JsonObject result = results.get(0).getAsJsonObject();
+        JsonArray hist = result.getAsJsonArray("historicalDataPrice");
+        if (hist == null || hist.isEmpty()) {
+            LOG.warning("[AssetHistory] historicalDataPrice vazio para " + ticker
+                    + " — chaves: " + result.keySet());
+            return points;
+        }
+
+        int skippedClose = 0, skippedDate = 0;
+        for (JsonElement el : hist) {
+            JsonObject entry = el.getAsJsonObject();
+            double close = getDoubleOrZero(entry, "close");
+            if (close <= 0) close = getDoubleOrZero(entry, "adjustedClose");
+            if (close <= 0) { skippedClose++; continue; }
+
+            LocalDateTime dt = parseEntryDateTime(entry);
+            if (dt == null) { skippedDate++; continue; }
+
+            points.add(new HistoryPoint(dt, close));
+        }
+
+        if (skippedClose > 0 || skippedDate > 0) {
+            LOG.warning("[AssetHistory] " + ticker + ": " + hist.size() + " entradas, "
+                    + skippedClose + " sem close, " + skippedDate + " sem data, "
+                    + points.size() + " válidas. Primeira: " + hist.get(0));
+        }
+        return points;
+    }
+
+    /**
+     * Parser de {@link #fetchHistoryByDateRange}: o corpo é o do parser original (antes do BRK-25).
+     * Engole qualquer exceção dentro do método e devolve os pontos lidos até ali, porque a média
+     * móvel depende de aproveitar os pontos válidos de uma resposta parcialmente quebrada.
+     * {@link #fetchHistory} usa o {@link #parseHistory} estrito.
+     */
+    private static List<HistoryPoint> parseHistoryLenient(String ticker, String json) {
         List<HistoryPoint> points = new ArrayList<>();
         try {
             JsonObject root = GSON.fromJson(json, JsonObject.class);
