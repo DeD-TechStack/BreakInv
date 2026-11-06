@@ -14,6 +14,7 @@ import com.daniel.infrastructure.persistence.backup.InstanceGuard;
 import com.daniel.infrastructure.persistence.backup.RestoreService;
 import com.daniel.infrastructure.persistence.backup.RetentionPolicy;
 import com.daniel.infrastructure.persistence.backup.SpaceProbe;
+import com.daniel.infrastructure.persistence.backup.SpaceRelease;
 import com.daniel.infrastructure.persistence.backup.StorageGuard;
 import com.daniel.infrastructure.persistence.backup.StoragePreferences;
 import com.daniel.infrastructure.persistence.backup.StorageReport;
@@ -92,7 +93,7 @@ public class AppConfig implements AutoCloseable {
             this.dataProtection = DataProtection.of(backupService, new RestoreService(backupService, guard),
                     new StorageReport(dbFile, BackupService.defaultFolder(dbFile), StorageGuard.sqliteTempFolder(),
                             SpaceProbe.fileStores(), preferences, backupService),
-                    preferences);
+                    preferences, new SpaceRelease(backupService, guard));
         } catch (RuntimeException | Error failure) {
             // BRK-31 u4c: an attempt that fails lets go of what it took, the instance lock and the connection
             releaseInstanceLock(held);

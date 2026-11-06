@@ -198,7 +198,8 @@ class WriteBoundariesTest {
     /** Files whose source runs SQL that writes; must match MAPA-ESCRITAS-BRK31. */
     static final Set<String> MAPPED = Set.of("AppSettingsRepository.java", "FlowRepository.java",
             "InvestmentTypeRepository.java", "TransactionRepository.java", "SnapshotRepository.java",
-            "SavedAnalysisRepository.java", "JdbcPortfolioRepository.java", "SchemaMigrator.java", "BackupService.java");
+            "SavedAnalysisRepository.java", "JdbcPortfolioRepository.java", "SchemaMigrator.java", "BackupService.java",
+            "SpaceRelease.java");
 
     static final Pattern WRITES = Pattern.compile("executeUpdate\\(|executeBatch\\("
             + "|\\.execute\\(\"\\s*(INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|VACUUM)"

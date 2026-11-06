@@ -1,6 +1,7 @@
 package com.daniel.infrastructure.persistence.backup;
 
 import java.nio.file.Path;
+import java.sql.SQLException;
 
 /** What the screen may ask about copies and restoration. Every call may block: run it off the FX thread. */
 public interface DataProtection {
@@ -43,6 +44,23 @@ public interface DataProtection {
     /** BRK-31 u5: what a restore needs per volume, with the choice of the estimate the restore itself makes. */
     default StorageGuard.Need restoreNeed(RestoreService.Preview preview, boolean overDamaged) {
         throw new UnsupportedOperationException("restoreNeed() is not wired");
+    }
+
+    /**
+     * BRK-32 S2: the pages of the current data (page size, page count, free pages). A reading error comes up as the
+     * exception and the caller decides. Only {@link #of(BackupService, RestoreService, StorageReport,
+     * StoragePreferences, SpaceRelease)} implements it.
+     */
+    default DatabasePages.Reading pages() throws SQLException {
+        throw new UnsupportedOperationException("pages() is not wired");
+    }
+
+    /**
+     * BRK-32 S2: "Liberar espaço", the whole flow of {@link SpaceRelease#release()}. It blocks (a copy and a compaction):
+     * run it off the FX thread. Only the overload of five arguments of {@code of} implements it.
+     */
+    default SpaceRelease.Result releaseSpace() {
+        throw new UnsupportedOperationException("releaseSpace() is not wired");
     }
 
     /**
@@ -150,6 +168,87 @@ public interface DataProtection {
             @Override
             public StorageGuard.Need restoreNeed(RestoreService.Preview preview, boolean overDamaged) {
                 return report.restoreNeed(preview, overDamaged);
+            }
+        };
+    }
+
+    /**
+     * Wires everything of the overload above and, on top of it, the two methods of BRK-32 S2: {@link #pages()} reads the
+     * pages of the current data and {@link #releaseSpace()} runs the given {@link SpaceRelease}.
+     */
+    static DataProtection of(BackupService backups, RestoreService restore, StorageReport report,
+                             StoragePreferences preferences, SpaceRelease space) {
+        DataProtection base = of(backups, restore, report, preferences);
+        DatabasePages currentPages = new DatabasePages(backups.databaseFile());
+        return new DataProtection() {
+            @Override
+            public BackupService.Status status() {
+                return base.status();
+            }
+
+            @Override
+            public BackupService.Result createManual() {
+                return base.createManual();
+            }
+
+            @Override
+            public BackupService.Result createIn(Path folder) {
+                return base.createIn(folder);
+            }
+
+            @Override
+            public RestoreService.Prepared prepareRestore(Path chosen) {
+                return base.prepareRestore(chosen);
+            }
+
+            @Override
+            public RestoreService.Result restore(RestoreService.Preview preview) {
+                return base.restore(preview);
+            }
+
+            @Override
+            public RestoreService.Result restoreOverDamaged(RestoreService.Preview preview) {
+                return base.restoreOverDamaged(preview);
+            }
+
+            @Override
+            public void discard(RestoreService.Preview preview) {
+                base.discard(preview);
+            }
+
+            @Override
+            public StorageReport.Reading storage() {
+                return base.storage();
+            }
+
+            @Override
+            public StoragePreferences.SaveResult saveLimits(StorageLimits limits) {
+                return base.saveLimits(limits);
+            }
+
+            @Override
+            public BackupService.Result createManual(boolean confirmedWithoutMeasure) {
+                return base.createManual(confirmedWithoutMeasure);
+            }
+
+            @Override
+            public BackupService.Result createIn(Path folder, boolean confirmedWithoutMeasure) {
+                return base.createIn(folder, confirmedWithoutMeasure);
+            }
+
+            @Override
+            public StorageGuard.Need restoreNeed(RestoreService.Preview preview, boolean overDamaged) {
+                return base.restoreNeed(preview, overDamaged);
+            }
+
+            @Override
+            public DatabasePages.Reading pages() throws SQLException {
+                return currentPages.read();
+            }
+
+            @Override
+            public SpaceRelease.Result releaseSpace() {
+                return space.release();
             }
         };
     }
